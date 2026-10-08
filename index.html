@@ -16,16 +16,14 @@
 
   <div id="hud">
     <div id="topbar">
-      <div class="pill"><span>🪙</span> <span id="coinCount">0</span></div>
-      <div class="pill" id="sceneLabel">🏠 Home</div>
-    </div>
-
-    <div id="dogPanel" class="card hidden">
-      <div id="dogName">Dog</div>
-      <div id="dogStatus">Content</div>
-      <div class="bar"><span>🍖</span><div class="track"><div class="fill hunger" id="barHunger"></div></div></div>
-      <div class="bar"><span>⚡</span><div class="track"><div class="fill energy" id="barEnergy"></div></div></div>
-      <div class="bar"><span>❤️</span><div class="track"><div class="fill happy" id="barHappy"></div></div></div>
+      <div id="pack"></div>
+      <div id="topRight">
+        <div class="trRow">
+          <div class="pill"><span>🪙</span> <span id="coinCount">0</span></div>
+          <button class="roundBtn" data-act="bag" aria-label="Toy bag">🎒</button>
+        </div>
+        <div class="pill small hidden" id="buildPill">🏗️ <span id="buildTime">10:00</span></div>
+      </div>
     </div>
 
     <div id="toast"></div>
@@ -33,24 +31,33 @@
 
     <div id="actions" class="actionbar">
       <button data-act="feed">🥣<small>Feed</small></button>
-      <button data-act="ball">🎾<small>Ball</small></button>
+      <button data-act="water">💧<small>Water</small></button>
+      <button data-act="ball"><span class="toyIcon">🎾</span><small>Throw</small></button>
       <button data-act="walk">🦮<small>Walk</small></button>
       <button data-act="decorate">🎨<small>Decorate</small></button>
       <button data-act="shop">🛒<small>Shop</small></button>
     </div>
 
     <div id="parkActions" class="actionbar hidden">
-      <button data-act="ball">🎾<small>Ball</small></button>
+      <button data-act="ball"><span class="toyIcon">🎾</span><small>Throw</small></button>
       <button data-act="home">🏠<small>Go home</small></button>
     </div>
 
     <div id="decoBar" class="card hidden">
-      <div id="decoHelp">Tap a floor tile to place · Tap an item to pick it up</div>
+      <div class="barHelp">Tap a floor tile to place · Tap an item to pick it up</div>
       <div id="invList"></div>
       <div class="decoBtns">
         <button data-act="rotate">🔄<small id="rotLabel">Rotate</small></button>
         <button data-act="shop">🛒<small>Shop</small></button>
         <button data-act="done">✅<small>Done</small></button>
+      </div>
+    </div>
+
+    <div id="buildBar" class="card hidden">
+      <div class="barTitle">Where should the new room go?</div>
+      <div class="barHelp">Tap a green ➕ area next to your home</div>
+      <div class="decoBtns">
+        <button data-act="cancelBuild">✖️<small>Cancel</small></button>
       </div>
     </div>
   </div>
@@ -68,10 +75,31 @@
     </div>
   </div>
 
+  <div id="bag" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead">
+        <h2>Toy bag</h2>
+        <div class="pill small" id="bagCount">1/10</div>
+        <button class="x" data-act="closeBag">✕</button>
+      </div>
+      <p class="sub">Tap a toy to throw it next. Some toys can only be found on walks.</p>
+      <div id="toyGrid"></div>
+    </div>
+  </div>
+
+  <div id="confirm" class="modal center hidden">
+    <div class="sheet">
+      <h2 id="cfTitle">Are you sure?</h2>
+      <p id="cfText" class="sub"></p>
+      <button id="cfYes" class="primary">Yes</button>
+      <button id="cfNo" class="ghost">Cancel</button>
+    </div>
+  </div>
+
   <div id="start" class="modal center hidden">
     <div class="sheet">
       <h1 id="startTitle">🐾 Voxel Paws</h1>
-      <p id="startSub">Pick your first dog and give it a name.</p>
+      <p id="startSub" class="sub">Pick your first dog and give it a name.</p>
       <div id="breeds"></div>
       <input id="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
       <button id="startBtn" class="primary">Let's go!</button>
