@@ -2740,7 +2740,7 @@
     return comfort;
   }
   function renderComfortChip() {
-    $('comfortChip').textContent = '🏡 ' + '🐾'.repeat(comfort.paws);
+    $('comfortPawsMini').textContent = '🐾'.repeat(comfort.paws);
   }
   function openComfort() {
     computeComfort();
@@ -2936,7 +2936,7 @@
   function openBath(d) {
     if (!d) return;
     const tub = state.furniture.find((f) => f.type === 'bathtub');
-    if (!tub) { toast('Place a 🛁 Bathtub first (🛒 Shop → Dog stuff)'); return; }
+    if (!tub) { toast('Place a 🛁 Bathtub first (🐾 Menu → 🛒 Shop → Dog stuff)'); return; }
     if (['fetch', 'return', 'trick', 'attend'].includes(d.state)) { toast('Wait a moment — they are busy'); return; }
     if (d.state === 'sleep' || d.state === 'hide') d.wake();
     d.releaseClaim();
@@ -3267,7 +3267,7 @@
         b.querySelector('b').textContent = A.name;
         b.querySelector('small').textContent = sub;
         b.addEventListener('click', () => {
-          if (!owned) { toast(A.unlock ? `Unlock it: ${D.UNLOCKS[A.unlock]}` : A.find ? `Keep exploring ${D.LOCATIONS[A.find].name}…` : A.vendor ? `Sold at the ${D.VENDORS[A.vendor].icon} ${D.VENDORS[A.vendor].name} in ${D.LOCATIONS[D.VENDORS[A.vendor].loc].name}` : 'Buy it in the 🛒 Shop → 👒 Boutique'); return; }
+          if (!owned) { toast(A.unlock ? `Unlock it: ${D.UNLOCKS[A.unlock]}` : A.find ? `Keep exploring ${D.LOCATIONS[A.find].name}…` : A.vendor ? `Sold at the ${D.VENDORS[A.vendor].icon} ${D.VENDORS[A.vendor].name} in ${D.LOCATIONS[D.VENDORS[A.vendor].loc].name}` : 'Buy it in 🐾 Menu → 🛒 Shop → 👒 Boutique'); return; }
           if (on) delete d.acc[slot];
           else d.acc[slot] = id;
           d.applyAccessories();
@@ -3353,7 +3353,7 @@
         b.className = 'toyCard';
         b.innerHTML = `<span class="big">${giftLabel(o).split(' ')[0]}</span><b></b><small>${o.kind}${o.n > 1 ? ' ×' + o.n : ''}</small>`;
         b.querySelector('b').textContent = giftLabel(o).split(' ').slice(1).join(' ');
-        b.addEventListener('click', () => { if (takeForGift(o)) { f.gift = { id: newId(), kind: o.kind, key: o.key, q: o.q }; afterGiftChange(); toast(`🎁 Packed ${giftLabel(f.gift)} — share your home from ⚙️ Settings`); } });
+        b.addEventListener('click', () => { if (takeForGift(o)) { f.gift = { id: newId(), kind: o.kind, key: o.key, q: o.q }; afterGiftChange(); toast(`🎁 Packed ${giftLabel(f.gift)} — share your home from 🐾 Menu → ⚙️ Settings`); } });
         grid.appendChild(b);
       }
       L.appendChild(grid);
@@ -4770,6 +4770,7 @@
     const b = $('dailyBadge');
     b.textContent = left;
     b.classList.toggle('hidden', !left);
+    document.querySelectorAll('.menuBtn .dot').forEach((d) => d.classList.toggle('hidden', !left));
   }
   function openDaily() {
     ensureDaily();
@@ -4939,7 +4940,7 @@
   let primary = null;
   let pinch = null;
   const joyBase = $('joyBase'), joyKnob = $('joyKnob');
-  const MODALS = ['shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album'];
+  const MODALS = ['hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album'];
   const modalOpen = () => MODALS.some((id) => !$(id).classList.contains('hidden'));
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -5257,7 +5258,7 @@
   // =====================================================================
   // Feeding & water
   // =====================================================================
-  function fillBowls(role) {
+  function fillBowls(role, quiet) {
     const bowls = state.furniture.filter((f) => roleOf(f) === role);
     const label = role === 'food' ? 'food bowl' : 'water bowl';
     if (!bowls.length) { toast(`Place a ${label} first (🎨 Decorate)`); return; }
@@ -5269,7 +5270,7 @@
         if (b) sendToBowl(d, b);
       }
     });
-    toast(role === 'food' ? (bowls.length > 1 ? 'Food bowls filled 🥣' : 'Food bowl filled 🥣') : (bowls.length > 1 ? 'Water bowls filled 💧' : 'Water bowl filled 💧'));
+    if (!quiet) toast(role === 'food' ? (bowls.length > 1 ? 'Food bowls filled 🥣' : 'Food bowl filled 🥣') : (bowls.length > 1 ? 'Water bowls filled 💧' : 'Water bowl filled 💧'));
     save();
   }
 
@@ -5298,10 +5299,14 @@
     const L = $('shopList');
     const scroll = L.parentElement.scrollTop;
     L.innerHTML = '';
-    $('shopCoins').textContent = state.coins;
     const V = shopVendor && D.VENDORS[shopVendor];
+    const tix = V && V.currency === 'tickets';
+    $('shopPurse').innerHTML = `${tix ? '🎟️' : '🪙'} <span id="shopCoins">${tix ? state.tickets : state.coins}</span>`;
     $('shopTitle').textContent = V ? `${V.icon} ${V.name}` : 'Shop';
-    const section = (t) => { const d = document.createElement('div'); d.className = 'section'; d.textContent = t; L.appendChild(d); };
+    const nav = $('shopNav');
+    nav.innerHTML = '';
+    const sections = [];
+    const section = (t) => { const d = document.createElement('div'); d.className = 'section'; d.textContent = t; L.appendChild(d); sections.push(d); };
     const row = (iconHTML, title, sub, price, onBuy, disabled, label) => {
       const r = document.createElement('div');
       r.className = 'row';
@@ -5463,7 +5468,16 @@
         }, locked, locked ? 'Locked' : null);
       }
     }
-    L.parentElement.scrollTop = scroll;
+    // jump chips in the header
+    const sheet = L.parentElement;
+    for (const sec of sections) {
+      const c = document.createElement('button');
+      c.className = 'navChip';
+      c.textContent = sec.textContent;
+      c.addEventListener('click', () => sheet.scrollTo({ top: sec.offsetTop - sheet.querySelector('.sheetHead').offsetHeight - 6, behavior: 'smooth' }));
+      nav.appendChild(c);
+    }
+    sheet.scrollTop = scroll;
   }
   function toyBlurb(t) {
     if (t.spin === 'flat') return 'Flies extra far';
@@ -5796,7 +5810,9 @@
   }
   function updateHud() {
     $('coinCount').textContent = state.coins;
-    if (!$('shop').classList.contains('hidden')) $('shopCoins').textContent = state.coins;
+    $('ticketCount').textContent = state.tickets || 0;
+    $('ticketStat').classList.toggle('hidden', !state.tickets);
+    if (!$('shop').classList.contains('hidden')) $('shopCoins').textContent = shopVendor && D.VENDORS[shopVendor].currency === 'tickets' ? state.tickets : state.coins;
     const b = state.build;
     $('buildPill').classList.toggle('hidden', !b);
     if (b) {
@@ -5806,15 +5822,86 @@
     }
     const W = curWeather();
     const icon = weatherId === 'sun' && nightLevel > 0.5 ? '🌙' : W.icon;
-    $('clockChip').textContent = `${icon} ${clockNow.hm}`;
+    $('clockIc').textContent = icon;
+    $('clockTime').textContent = clockNow.hm;
+    $('clockWx').textContent = icon === '🌙' ? 'Clear night' : W.name;
     updatePack();
+  }
+
+  // ----- wallet: hidden until your coins or tickets change, then it pops in and counts -----
+  const wallet = {};
+  for (const el of document.querySelectorAll('#wallet .wRow')) wallet[el.dataset.k] = { el, num: el.querySelector('.wNum'), delta: el.querySelector('.wDelta'), shown: null, from: 0, to: 0, t: 1, hold: 0, sum: 0 };
+  const walletValue = (k) => (k === 'tickets' ? state.tickets || 0 : state.coins);
+  function updateWallet(dt) {
+    for (const [k, w] of Object.entries(wallet)) {
+      const v = walletValue(k);
+      if (w.shown === null || visit) { w.shown = w.to = v; continue; }
+      if (v !== w.to) {
+        if (w.hold <= 0) w.sum = 0;
+        w.sum += v - w.to;
+        w.from = w.shown;
+        w.to = v;
+        w.t = 0;
+        w.hold = 2.2;
+        w.delta.textContent = (w.sum > 0 ? '+' : '−') + Math.abs(w.sum);
+        w.delta.className = 'wDelta ' + (w.sum > 0 ? 'up' : 'down');
+        w.el.classList.add('show');
+        w.el.classList.remove('bump');
+        void w.el.offsetWidth;
+        w.el.classList.add('bump');
+      }
+      if (w.t < 1) {
+        w.t = Math.min(1, w.t + dt / 0.7);
+        const e = 1 - Math.pow(1 - w.t, 3);
+        w.shown = Math.round(w.from + (w.to - w.from) * e);
+        w.num.textContent = w.shown;
+      } else if (w.hold > 0) {
+        w.hold -= dt;
+        if (w.hold <= 0) w.el.classList.remove('show');
+      }
+    }
   }
 
   $('hud').addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]');
+    if (b) doAct(b.dataset.act, b);
+  });
+  // the menu: stats on top, a grid of places to go below
+  function openHub() {
+    const home = place === 'home' && !visit;
+    $('tileDecorate').classList.toggle('hidden', !home);
+    $('hubTitle').textContent = place === 'park' ? `${LOC().icon} ${LOC().name}` : 'Menu';
+    $('tileBagSub').textContent = `${state.toys.length} toys · throwing ${(D.TOYS[state.toy] || D.TOYS.tennis).icon}`;
+    let all = 0, got = 0;
+    for (const [id] of BOOK_PAGES) { const pg = bookPage(id); all += pg.total; got += pg.done; }
+    $('tileAlbumSub').textContent = `${got} of ${all} collected`;
+    const left = state.daily ? state.daily.items.filter((c) => !c.done).length : 0;
+    $('tileDailySub').textContent = !state.daily ? "Today's goals" : left ? `${left} left today` : 'All done today 🎉';
+    computeComfort();
+    renderComfortChip();
+    updateHud();
+    $('hub').classList.remove('hidden');
+  }
+  const closeHub = () => $('hub').classList.add('hidden');
+  $('hub').addEventListener('click', (e) => {
+    if (e.target.id === 'hub' || e.target.closest('[data-act="closeHub"]')) { closeHub(); return; }
+    const b = e.target.closest('[data-act]');
     if (!b) return;
-    const act = b.dataset.act;
-    if (act === 'feed') fillBowls('food');
+    if (b.dataset.act !== 'clock') closeHub();
+    doAct(b.dataset.act, b);
+  });
+  // food and water at once (bowls are free to fill)
+  function fillAll() {
+    const has = (role) => state.furniture.some((f) => roleOf(f) === role);
+    if (!has('food') && !has('water')) { toast('Place a food or water bowl first (🐾 Menu → 🎨 Decorate)'); return; }
+    if (has('food')) fillBowls('food', true);
+    if (has('water')) fillBowls('water', true);
+    toast(has('food') && has('water') ? 'Bowls filled with food and water 🥣💧' : has('food') ? 'Food bowls filled 🥣' : 'Water bowls filled 💧');
+  }
+  function doAct(act, b) {
+    if (act === 'menu') openHub();
+    else if (act === 'bowls') fillAll();
+    else if (act === 'feed') fillBowls('food');
     else if (act === 'water') fillBowls('water');
     else if (act === 'ball') throwBall();
     else if (act === 'walk') openMap();
@@ -5838,7 +5925,7 @@
       const W = curWeather();
       toast(`${W.icon} ${W.name} in Germany, ${clockNow.hm}${W.muddy ? ' · walks get muddy' : ''}${W.lightning ? ' · shy dogs get scared' : ''}`);
     } else if (act === 'rotate') { placeRot = (placeRot + 1) % 4; renderInv(); toast(`Next item: ${rotNames[placeRot].toLowerCase()}`); }
-  });
+  }
   $('shop').addEventListener('click', (e) => {
     if (e.target.id === 'shop' || e.target.closest('[data-act="closeShop"]')) closeShop();
   });
@@ -6069,6 +6156,7 @@
     }
     for (const d of dogs) d.updateLeash();
     updateParticles(dt);
+    updateWallet(dt);
     let fxW = localWeather();
     if (place === 'park' && S.env && S.env.snowFall && !fxW.precip) fxW = D.WEATHER.snow;
     lightning = weatherFX.update(dt, fxW, camLook, (x, z) => place === 'home' && isHomeTile(Math.floor(x), Math.floor(z)) && !isGardenTile(Math.floor(x), Math.floor(z)));
