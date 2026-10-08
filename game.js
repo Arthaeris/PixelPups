@@ -61,8 +61,194 @@
     return l;
   }
   const pairKey = (a, b) => [a, b].sort().join('|');
-  const GLYPH = { T: '👆', H: '✊', S: '✋', u: '⬆️', d: '⬇️', l: '⬅️', r: '➡️', O: '⭕' };
-  const seqGlyphs = (seq) => seq.split('').map((c) => GLYPH[c] || c).join(' ');
+  const GLYPH = { T: 'tap', H: 'hold', S: 'press', u: 'up', d: 'down', l: 'left', r: 'right', O: 'circle' };
+  const seqGlyphs = (seq) => `<span class="seq">${seq.split('').map((c) => IC(GLYPH[c] || 'sparkle')).join('')}</span>`;
+
+  // =====================================================================
+  // UI kit: drawn icons, model thumbnails, no stray emoji in menus
+  // =====================================================================
+  const IC = (n, c) => ART.icon(n, c);
+  function fillIcons(root) {
+    (root || document).querySelectorAll('i[data-i]').forEach((el) => {
+      const svg = document.createElement('span');
+      svg.innerHTML = IC(el.dataset.i);
+      const node = svg.firstChild;
+      if (el.className) node.classList.add(...el.className.split(/\s+/).filter(Boolean));
+      el.replaceWith(node);
+    });
+  }
+  // <img> for a model thumbnail; drawn a few per frame so menus open instantly
+  const thumbWait = new Set();
+  function TH(kind, id, cls) {
+    const key = kind + ':' + id;
+    const ready = ART.hasThumb(kind, id);
+    const url = ready ? ART.thumbURL(kind, id) : null;
+    if (!ready) thumbWait.add(key);
+    return `<img class="th${cls ? ' ' + cls : ''}" data-th="${esc(key)}" alt=""${url ? ` src="${url}"` : ''}>`;
+  }
+  function pumpThumbs() {
+    if (!thumbWait.size) return;
+    // only pictures that are on the page, the ones you can see first
+    const imgs = [...document.querySelectorAll('img.th[data-th]:not([src]):not(.none)')];
+    if (!imgs.length) { thumbWait.clear(); return; }
+    const vis = imgs.filter((im) => im.offsetParent !== null);
+    const t0 = performance.now();
+    for (const im of vis.length ? vis : imgs) {
+      if (im.getAttribute('src') || im.classList.contains('none')) continue;
+      const key = im.dataset.th, i = key.indexOf(':');
+      const url = ART.thumbURL(key.slice(0, i), key.slice(i + 1));
+      document.querySelectorAll(`img[data-th="${CSS.escape(key)}"]`).forEach((el) => { if (url) el.src = url; else el.classList.add('none'); });
+      if (performance.now() - t0 > 12) return;
+    }
+    if (!vis.length) thumbWait.clear();
+  }
+  // which thumbnail shows a thing from data.js
+  const thumbOf = {
+    item: (id) => TH('item', id),
+    toy: (id) => TH('toy', id),
+    acc: (id) => TH('acc', id),
+    ing: (id) => TH('ing', id),
+    shampoo: (id) => TH('shampoo', id),
+    meal: (id) => TH('dish', id),
+    find: (id) => TH('pic', (D.FINDS[id] || {}).icon || '?'),
+    pic: (ch) => TH('pic', ch),
+  };
+  // Menus show drawn icons and models instead of emoji. Text from data.js still carries
+  // emoji (handy in the 3D world), so they are taken out of any text shown in a menu.
+  const EMOJI_RE = /(?:[#*0-9]\uFE0F?\u20E3)|(?:(?![\u2605\u00A9\u00AE\u2122\u2192\u2190])[\p{Extended_Pictographic}\p{Regional_Indicator}])(?:\uFE0F|\u200D[\p{Extended_Pictographic}\u2640\u2642\u2695]\uFE0F?|[\u{1F3FB}-\u{1F3FF}])*\uFE0F?/gu;
+  const MONEY = { '🪙': 'coin', '🎟️': 'ticket', '🎟': 'ticket' };
+  const EMOJI_SP = new RegExp(EMOJI_RE.source + ' ?', 'gu');
+  const plain = (t) => {
+    const src = String(t);
+    let out = src.replace(EMOJI_SP, (m) => (MONEY[m.trim()] ? m : '')).replace(/ {2,}/g, ' ').replace(/\( +/g, '(').replace(/ +([),.!?:;])/g, '$1').replace(/\(\)/g, '');
+    if (!/ $/.test(src)) out = out.replace(/ +$/, '');
+    return out;
+  };
+  function scrubText(node) {
+    const t = node.nodeValue;
+    if (!t || !EMOJI_RE.test(t)) return;
+    EMOJI_RE.lastIndex = 0;
+    const p = node.parentNode;
+    if (!p || p.closest && p.closest('textarea, input, [data-keep]')) return;
+    if (!/[🪙🎟]/u.test(t)) { node.nodeValue = plain(t); return; }
+    // money becomes a drawn coin or ticket
+    const frag = document.createDocumentFragment();
+    plain(t).split(/(🪙|🎟️|🎟)/u).forEach((part) => {
+      if (!part) return;
+      if (MONEY[part]) { const s = document.createElement('span'); s.innerHTML = IC(MONEY[part], 'inl'); frag.appendChild(s.firstChild); } else frag.appendChild(document.createTextNode(part));
+    });
+    p.replaceChild(frag, node);
+  }
+  function scrubTree(root) {
+    if (root.nodeType === 3) { scrubText(root); return; }
+    if (root.nodeType !== 1 || root.closest('textarea, input, [data-keep]')) return;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const list = [];
+    while (w.nextNode()) list.push(w.currentNode);
+    list.forEach(scrubText);
+  }
+  const scrubber = new MutationObserver((muts) => {
+    for (const m of muts) {
+      if (m.type === 'characterData') scrubText(m.target);
+      else m.addedNodes.forEach(scrubTree);
+    }
+  });
+  fillIcons();
+  scrubTree(document.body);
+  scrubber.observe(document.body, { childList: true, subtree: true, characterData: true });
+  const WX_ICON = { sun: 'sun', clouds: 'cloud', rain: 'rain', storm: 'storm', fog: 'fog', snow: 'snow' };
+  const setIcon = (el, name, cls) => { if (el.dataset.icon !== name) { el.dataset.icon = name; el.innerHTML = IC(name, cls); } };
+  const pawsHTML = (n, of = 5) => Array.from({ length: of }, (_, i) => IC('paw', i < n ? 'on' : 'off')).join('');
+
+  // ----- sheets: the header is the top edge; drag it down to tuck the sheet back into the dock -----
+  const dockTarget = () => {
+    const el = [...document.querySelectorAll('.dock:not(.hidden) .menuBtn, .dock:not(.hidden)')].find((e) => e.offsetParent !== null);
+    const r = el ? el.getBoundingClientRect() : { left: window.innerWidth / 2 - 20, top: window.innerHeight - 60, width: 40, height: 40 };
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  };
+  // a copy of the sheet that shrinks into the dock while the real one is already gone
+  function ghostClose(modal, fromY = 0) {
+    const sheet = modal.querySelector('.sheet');
+    if (!sheet || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const r = sheet.getBoundingClientRect();
+    const g = sheet.cloneNode(true);
+    g.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+    g.removeAttribute('id');
+    g.classList.add('sheetGhost');
+    Object.assign(g.style, { position: 'fixed', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px', margin: 0, maxHeight: 'none', transform: `translateY(${fromY}px)`, zIndex: 45 });
+    const shade = document.createElement('div');
+    shade.className = 'ghostShade';
+    document.body.append(shade, g);
+    const t = dockTarget();
+    const sx = 56 / r.width, sy = 56 / r.height;
+    const dx = t.x - (r.left + r.width / 2), dy = t.y - (r.top + r.height / 2);
+    requestAnimationFrame(() => {
+      g.style.transition = 'transform .42s cubic-bezier(.5,0,.2,1), opacity .42s ease-in, border-radius .42s';
+      g.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+      g.style.opacity = '0';
+      g.style.borderRadius = '40%';
+      shade.style.opacity = '0';
+    });
+    setTimeout(() => { g.remove(); shade.remove(); }, 460);
+  }
+  // closing a sheet the normal way: its own close button does the work
+  function dismissSheet(modal, fromY) {
+    const x = modal.querySelector('.sheetHead .x');
+    if (!x) return false;
+    ghostClose(modal, fromY);
+    x.click();
+    if (!modal.classList.contains('hidden')) { document.querySelectorAll('.sheetGhost, .ghostShade').forEach((n) => n.remove()); return false; }
+    return true;
+  }
+  document.addEventListener('click', (e) => {
+    if (!e.isTrusted) return;
+    const m = e.target.classList && e.target.classList.contains('modal') ? e.target : null;
+    const x = e.target.closest && e.target.closest('.sheetHead .x');
+    const modal = m || (x && x.closest('.modal'));
+    if (!modal || modal.classList.contains('hidden') || !modal.querySelector('.sheetHead .x')) return;
+    ghostClose(modal);
+    setTimeout(() => { if (!modal.classList.contains('hidden')) document.querySelectorAll('.sheetGhost, .ghostShade').forEach((n) => n.remove()); }, 0);
+  }, true);
+  (function sheetDrag() {
+    let drag = null;
+    document.addEventListener('pointerdown', (e) => {
+      const head = e.target.closest('.sheetHead');
+      if (!head || e.target.closest('button, input, textarea, .headRow')) return;
+      const sheet = head.closest('.sheet'), modal = head.closest('.modal');
+      drag = { id: e.pointerId, y0: e.clientY, sheet, modal, dy: 0, t: performance.now(), v: 0, ly: e.clientY };
+      sheet.style.transition = 'none';
+      try { head.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const raw = e.clientY - drag.y0;
+      drag.dy = raw > 0 ? raw : raw / 4;            // a little give upwards, free downwards
+      const now = performance.now();
+      drag.v = (e.clientY - drag.ly) / Math.max(1, now - drag.t);
+      drag.t = now; drag.ly = e.clientY;
+      drag.sheet.style.transform = `translateY(${drag.dy}px)`;
+      drag.modal.style.setProperty('--shade', String(Math.max(0, 1 - drag.dy / 400)));
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const d = drag;
+      drag = null;
+      d.modal.style.removeProperty('--shade');
+      const go = d.dy > Math.min(140, d.sheet.offsetHeight * 0.3) || (d.dy > 30 && d.v > 0.6);
+      if (go && dismissSheet(d.modal, d.dy)) { d.sheet.style.transform = ''; d.sheet.style.transition = ''; return; }
+      d.sheet.style.transition = 'transform .3s cubic-bezier(.2,.9,.3,1.2)';
+      d.sheet.style.transform = '';
+      setTimeout(() => { d.sheet.style.transition = ''; }, 320);
+    };
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+  })();
+  // the glass turns darker when the world behind it is dark, like iOS does
+  let dusk = false;
+  function updateDusk(level) {
+    const want = dusk ? level > 0.38 : level > 0.55;
+    if (want !== dusk) { dusk = want; document.body.classList.toggle('dusk', dusk); }
+  }
 
   // =====================================================================
   // Renderer, scene, camera, lights
@@ -75,6 +261,7 @@
   const world = new THREE.Scene();
   world.background = new THREE.Color(0xcfe6f2);
   const fog = new THREE.Fog(0xcfe6f2, 24, 50);
+  let fogPush = 0;   // fog distances follow the camera, so zooming out never fogs the view
 
   const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 300);
   const hemiLight = new THREE.HemisphereLight(0xffffff, 0xb9a88a, 0.85);
@@ -250,11 +437,12 @@
         fog.near = W.fog ? 4 : (S.fog ? S.fog.near : 24);
         fog.far = W.fog ? 20 : (S.fog ? S.fog.far : 50);
       }
+      fog.near += fogPush; fog.far += fogPush;
       world.fog = fog;
     } else if (W.fog) {
       fog.color.copy(L.sky);
-      fog.near = 10;
-      fog.far = 32;
+      fog.near = 10 + fogPush;
+      fog.far = 32 + fogPush;
       world.fog = fog;
     } else {
       world.fog = null;
@@ -2273,7 +2461,10 @@
   }
   function refreshLeashBtn() {
     const any = dogs.some((d) => d.offLeash);
-    $('leashBtn').innerHTML = any ? '📣<small>Come</small>' : '🔓<small>Unleash</small>';
+    const want = any ? 'come' : 'unleash';
+    if ($('leashBtn').dataset.k === want) return;
+    $('leashBtn').dataset.k = want;
+    $('leashBtn').innerHTML = any ? `${IC('call', 'dIc')}<small>Come</small>` : `${IC('unleash', 'dIc')}<small>Unleash</small>`;
   }
 
   // =====================================================================
@@ -2313,8 +2504,8 @@
     } else d.setState('attend');
     $('tmPortrait').src = ART.portraitURL(d.breed, d.coat);
     $('tmName').textContent = d.name;
-    $('tmSeq').textContent = '';
-    $('tmHint').textContent = d.obedience() ? 'Swipe, tap, hold or draw a circle · 📖 lists the tricks' : 'Try swiping down ⬇️ to ask for Sit · 📖 lists all tricks';
+    $('tmSeq').textContent = ''; $('tmSeq').dataset.seq = '';
+    $('tmHint').textContent = d.obedience() ? 'Swipe, tap, hold or draw a circle · the book lists every trick' : 'Try swiping down to ask for Sit · the book lists every trick';
     $('trickMode').classList.remove('hidden');
     refreshUI();
     if (place === 'park') refreshLeashBtn();
@@ -2368,7 +2559,7 @@
     const taps = tm.taps.slice();
     tm.seq = [];
     tm.taps = [];
-    setTimeout(() => { if (tm) $('tmSeq').textContent = ''; }, 500);
+    setTimeout(() => { if (tm) $('tmSeq').textContent = ''; $('tmSeq').dataset.seq = ''; }, 500);
     if (d.state !== 'attend') return;
     const night = clockNow.hour >= 21 || clockNow.hour < 5;
     let id = null;
@@ -2446,7 +2637,7 @@
   function renderBook() {
     const d = tm ? tm.dog : selected || dogs[0];
     if (!d) return;
-    $('bookSub').textContent = `${d.name} · 🎓 Obedience ${d.obedience()} · ✨ ${state.secrets.length}/${SECRETS.length} secret tricks found`;
+    $('bookSub').textContent = `${d.name} · Obedience ${d.obedience()} · ${state.secrets.length}/${SECRETS.length} secret tricks found`;
     const L = $('bookList');
     L.innerHTML = '';
     const stars = (l) => '★'.repeat(l) + '☆'.repeat(5 - l);
@@ -2455,11 +2646,11 @@
       const r = document.createElement('div');
       r.className = 'row trickRow' + (lvl ? '' : ' untrained');
       if (T.secret && !state.secrets.includes(id)) {
-        r.innerHTML = '<div class="ic">❔</div><div class="txt"><b>Secret trick</b><small>Discover it yourself…</small></div>';
+        r.innerHTML = `<div class="ic q">${IC('question')}</div><div class="txt"><b>Secret trick</b><small>Discover it yourself…</small></div>`;
       } else {
         const needs = (T.needs || []).filter((n) => d.trickLvl(n) < 1).map((n) => ALL_TRICKS[n].name);
         const sub = needs.length ? `Learn ${needs.join(' & ')} first` : T.secret ? T.hint : D.TRICK_LEVELS[lvl];
-        r.innerHTML = `<div class="ic">${T.icon}</div><div class="txt"><b></b><small></small></div><div class="gest">${seqGlyphs(T.seq)}<span class="stars">${stars(lvl)}</span></div>`;
+        r.innerHTML = `<div class="ic">${TH('pic', T.icon)}</div><div class="txt"><b></b><small></small></div><div class="gest">${seqGlyphs(T.seq)}<span class="stars">${stars(lvl)}</span></div>`;
         r.querySelector('b').textContent = T.name;
         r.querySelector('small').textContent = sub;
       }
@@ -2474,7 +2665,8 @@
     if (!tm) return;
     tm.seq.push(tok);
     if (tok === 'T') tm.taps.push(performance.now());
-    $('tmSeq').textContent = tm.seq.map((c) => GLYPH[c]).join(' ');
+    $('tmSeq').innerHTML = tm.seq.map((c) => IC(GLYPH[c])).join('');
+    $('tmSeq').dataset.seq = tm.seq.join('');
   }
   tmEl.addEventListener('pointerdown', (e) => {
     if (!tm || e.target.closest('button')) return;
@@ -2551,6 +2743,7 @@
   // Dog status bubbles (top left)
   // =====================================================================
   const levelClass = (v) => (v < CRITICAL ? 'red' : v < LOW ? 'on' : '');
+  const STAT_IC = { hunger: 'food', thirst: 'drop', energy: 'bolt', happy: 'heart', clean: 'bubbles' };
   function makePill(d) {
     const el = document.createElement('div');
     el.className = 'dogPill';
@@ -2562,9 +2755,9 @@
       '</div>' +
       '<div class="details">' +
         '<div class="chips"></div>' +
-        D.STATS.map((s) => `<div class="bar"><span class="bic">${s.ic}<i class="badge">!</i></span><div class="track"><div class="fill ${s.k}"></div></div></div>`).join('') +
+        D.STATS.map((s) => `<div class="bar ${s.k}"><span class="bic">${IC(STAT_IC[s.k])}<i class="badge">!</i></span><div class="track"><div class="fill ${s.k}"></div></div></div>`).join('') +
         '<div class="favs"></div>' +
-        '<div class="cardBtns"><button class="mini" data-dact="tricks">🎓 Tricks</button><button class="mini" data-dact="treat">🍲 Treat</button><button class="mini" data-dact="style">👒 Style</button><button class="mini" data-dact="bath">🛁 Bath</button><button class="mini" data-dact="towel">🧽 Towel</button></div>' +
+        `<div class="cardBtns"><button class="mini" data-dact="tricks">${IC('cap')}Tricks</button><button class="mini" data-dact="treat">${IC('treat')}Treat</button><button class="mini" data-dact="style">${IC('hat')}Style</button><button class="mini" data-dact="bath">${IC('bath')}Bath</button><button class="mini" data-dact="towel">${IC('towel')}Towel</button></div>` +
       '</div>';
     el.querySelector('.pName').textContent = d.name;
     d.ui = {
@@ -2604,14 +2797,14 @@
     const u = d.ui;
     if (!u) return;
     const g = d.growth();
-    const age = g < 1 ? `🐣 Puppy · grown in ${fmtDuration((1 - g) * CONFIG.PUPPY_DAYS * DAY)}` : `${D.BREEDS[d.breed].name}`;
+    const age = g < 1 ? `Puppy · grown in ${fmtDuration((1 - g) * CONFIG.PUPPY_DAYS * DAY)}` : `${D.BREEDS[d.breed].name}`;
     const T1 = D.TRAITS[d.traits[0]], T2 = D.TRAITS[d.traits[1]];
     const chip = (txt, tip) => `<span class="chip" data-tip="${esc(tip)}">${esc(txt)}</span>`;
     u.chips.innerHTML =
       `<span class="chip age">${esc(age)}</span>` +
-      chip(`${T1.icon} ${T1.name}`, `${T1.name}: ${T1.desc}`) +
-      (d.revealed ? chip(`${T2.icon} ${T2.name}`, `${T2.name}: ${T2.desc}`) : chip('❔ ???', 'Bond more with your dog to discover its second trait')) +
-      chip(`🎓 Obedience ${d.obedience()}`, `Obedience grows with every trick level. Teach tricks in 🎓 Trick Mode.${d.trickLvl('come') >= CONFIG.OFFLEASH_COME_LEVEL ? ' Can go off-leash on walks.' : ''}`);
+      chip(T1.name, `${T1.name}: ${T1.desc}`) +
+      (d.revealed ? chip(T2.name, `${T2.name}: ${T2.desc}`) : chip('???', 'Bond more with your dog to discover its second trait')) +
+      chip(`Obedience ${d.obedience()}`, `Obedience grows with every trick level. Teach tricks in Trick Mode.${d.trickLvl('come') >= CONFIG.OFFLEASH_COME_LEVEL ? ' Can go off-leash on walks.' : ''}`);
     const fav = d.favToy ? `${D.TOYS[d.favToy].icon} ${D.TOYS[d.favToy].name}${d.missing() ? ' (misses it!)' : ''}` : 'not yet';
     let spot = '';
     if (d.favSpot) {
@@ -2633,7 +2826,7 @@
       const key = lows.map((s) => s.k + levelClass(d[s.k])).join(',');
       if (key !== u.alertKey) {
         u.alertKey = key;
-        u.alerts.innerHTML = lows.map((s) => `<span class="al" data-k="${s.k}">${s.ic}<i class="badge ${levelClass(d[s.k])}">!</i></span>`).join('');
+        u.alerts.innerHTML = lows.map((s) => `<span class="al ${s.k}" data-k="${s.k}">${IC(STAT_IC[s.k])}<i class="badge ${levelClass(d[s.k])}">!</i></span>`).join('');
       }
       if (u.open) {
         D.STATS.forEach((s, i) => {
@@ -2739,12 +2932,14 @@
     comfort = { paws: clamp(paws, 1, 5), points, parts, found, missing: D.SYNERGIES.length - found.length };
     return comfort;
   }
+  const COMFORT_WORDS = ['Bare', 'Basic', 'Cozy', 'Snug', 'Dreamy'];
   function renderComfortChip() {
-    $('comfortPawsMini').textContent = '🐾'.repeat(comfort.paws);
+    $('comfortPawsMini').innerHTML = pawsHTML(comfort.paws);
+    $('comfortWord').textContent = COMFORT_WORDS[comfort.paws - 1] || 'Cozy';
   }
   function openComfort() {
     computeComfort();
-    $('comfortPaws').textContent = '🐾'.repeat(comfort.paws) + '·'.repeat(5 - comfort.paws);
+    $('comfortPaws').innerHTML = pawsHTML(comfort.paws);
     $('comfortSub').textContent = `${comfort.points} comfort points · next paw at ${D.COMFORT_PAWS[comfort.paws] ?? '—'}. Higher comfort keeps your dogs happier at home.`;
     $('comfortList').innerHTML = comfort.parts.map(([n, v]) => `<div class="row"><div class="txt"><b>${esc(n)}</b></div><b class="${v < 0 ? 'neg' : ''}">${v > 0 ? '+' : ''}${v}</b></div>`).join('') +
       `<div class="section">Combos found</div><p class="sub">${comfort.found.length ? comfort.found.map(esc).join(' · ') : 'None yet — try placing things that belong together near each other.'}${comfort.missing ? ` · ${comfort.missing} more to discover` : ''}</p>`;
@@ -2962,17 +3157,17 @@
     const d = bath.dog;
     const opts = Object.entries(D.SHAMPOOS).filter(([k]) => (state.shampoos[k] || 0) > 0).map(([k, S]) => [k, S, state.shampoos[k]]);
     const DD = D.DIRT[mainDirt(d)];
-    $('bathHint').textContent = d.clean > 95 ? `${d.name} is already clean — a bath just for fun?` : `${d.name} is mostly covered in ${DD.name.toLowerCase()} ${DD.icon}. The right shampoo cleans better.`;
+    $('bathHint').textContent = d.clean > 95 ? `${d.name} is already clean — a bath just for fun?` : `${d.name} is mostly covered in ${DD.name.toLowerCase()}. The right shampoo cleans better.`;
     for (const [k, S, n] of opts) {
       const b = document.createElement('button');
       b.className = 'toyCard';
-      b.innerHTML = `<span class="big">${S.icon}</span><b>${esc(S.name)}</b><small>×${n} · ${Math.round(dirtEfficiency(d, k) * 100)}% for ${esc(d.name)}</small>`;
+      b.innerHTML = `${thumbOf.shampoo(k)}<b>${esc(S.name)}</b><small>×${n} · ${Math.round(dirtEfficiency(d, k) * 100)}% for ${esc(d.name)}</small>`;
       b.addEventListener('click', () => startScrub(k));
       L.appendChild(b);
     }
     const w = document.createElement('button');
     w.className = 'toyCard';
-    w.innerHTML = `<span class="big">💧</span><b>Just water</b><small>${Math.round(D.WATER_ONLY * 100)}% · free</small>`;
+    w.innerHTML = `<span class="big">${IC('drop')}</span><b>Just water</b><small>${Math.round(D.WATER_ONLY * 100)}% · free</small>`;
     w.addEventListener('click', () => startScrub(null));
     L.appendChild(w);
   }
@@ -3110,15 +3305,16 @@
     $('cookGame').classList.add('hidden');
     const L = $('recipeList');
     L.classList.remove('hidden');
-    $('pantryLine').textContent = 'Pantry: ' + (Object.entries(state.pantry).filter(([, n]) => n > 0).map(([k, n]) => `${D.INGREDIENTS[k].icon}${n}`).join('  ') || 'empty — buy basics in the 🛒 Shop or find ingredients on walks');
+    const have = Object.entries(state.pantry).filter(([, n]) => n > 0);
+    $('pantryLine').innerHTML = have.length ? `<span class="lbl">Pantry</span>${have.map(([k, n]) => `<span class="ingr" title="${esc(D.INGREDIENTS[k].name)}">${thumbOf.ing(k)}<b>${n}</b></span>`).join('')}` : 'Your pantry is empty. Buy basics in the Shop or find ingredients on walks.';
     L.innerHTML = '';
     for (const [id, R] of Object.entries(D.RECIPES)) {
       if (!R.needs) continue; // treats from vendors can't be cooked
       const ok = haveFor(R);
       const r = document.createElement('div');
       r.className = 'row';
-      const needs = Object.entries(R.needs).map(([k, n]) => `${D.INGREDIENTS[k].icon}${n > 1 ? '×' + n : ''}${(state.pantry[k] || 0) < n ? '❌' : ''}`).join(' ');
-      r.innerHTML = `<div class="ic">${R.icon}</div><div class="txt"><b>${esc(R.name)}</b><small>${needs} · ${esc(R.desc)}</small></div>`;
+      const needs = Object.entries(R.needs).map(([k, n]) => `<span class="ingr${(state.pantry[k] || 0) < n ? ' miss' : ''}" title="${esc(D.INGREDIENTS[k].name)}">${thumbOf.ing(k)}${n > 1 ? `<b>×${n}</b>` : ''}</span>`).join('');
+      r.innerHTML = `<div class="ic">${thumbOf.meal(id)}</div><div class="txt"><b>${esc(R.name)}</b><small>${esc(R.desc)}</small><span class="needs">${needs}</span></div>`;
       const b = document.createElement('button');
       b.className = 'buy';
       b.textContent = 'Cook';
@@ -3128,7 +3324,7 @@
       L.appendChild(r);
     }
   }
-  const COOK_ROUNDS = ['🔪 Chop', '🥄 Stir', '🧂 Season'];
+  const COOK_ROUNDS = ['Chop', 'Stir', 'Season'];
   function startCooking(id) {
     const R = D.RECIPES[id];
     if (!haveFor(R)) return;
@@ -3178,10 +3374,10 @@
     if (R.effect.bowls) {
       const bowls = state.furniture.filter((f) => roleOf(f) === 'food');
       bowls.forEach((b) => { b.filled = true; b.gourmet = q; refreshBowl(b); });
-      toast(bowls.length ? `${R.icon} ${'⭐'.repeat(stars)} Gourmet kibble served in ${bowls.length} bowl${bowls.length > 1 ? 's' : ''}!` : `${R.icon} Made gourmet kibble — but you have no food bowl!`);
+      toast(bowls.length ? `${R.icon} ${'★'.repeat(stars)} Gourmet kibble served in ${bowls.length} bowl${bowls.length > 1 ? 's' : ''}!` : `${R.icon} Made gourmet kibble — but you have no food bowl!`);
     } else {
       state.meals.push({ id: cook.id, q: stars });
-      toast(`${R.icon} ${'⭐'.repeat(stars)} ${R.name} is ready! Give it from a dog's bubble → 🍲 Treat`);
+      toast(`${R.icon} ${'★'.repeat(stars)} ${R.name} is ready! Give it from a dog's bubble → 🍲 Treat`);
     }
     progress('cook');
     cook = null;
@@ -3207,7 +3403,7 @@
       if (!R) continue;
       const b = document.createElement('button');
       b.className = 'toyCard';
-      b.innerHTML = `<span class="big">${R.icon}</span><b>${esc(R.name)}</b><small>${'⭐'.repeat(+q)} ×${idxs.length}</small>`;
+      b.innerHTML = `${thumbOf.meal(id)}<b>${esc(R.name)}</b><small><span class="stars">${'★'.repeat(+q)}</span> ×${idxs.length}</small>`;
       b.addEventListener('click', () => giveMeal(d, idxs[0]));
       L.appendChild(b);
     }
@@ -3248,7 +3444,7 @@
     $('wardSub').textContent = `Dress up ${d.name}. One item per spot.`;
     const L = $('wardList');
     L.innerHTML = '';
-    for (const [slot, label] of [['head', '🎩 Head'], ['face', '🕶️ Face'], ['neck', '🎀 Neck'], ['body', '🧥 Body']]) {
+    for (const [slot, label] of [['head', 'Head'], ['face', 'Face'], ['neck', 'Neck'], ['body', 'Body']]) {
       const sec = document.createElement('div');
       sec.className = 'section';
       sec.textContent = label;
@@ -3261,13 +3457,14 @@
         const on = d.acc[slot] === id;
         const b = document.createElement('button');
         b.className = 'toyCard' + (owned ? '' : ' locked') + (on ? ' eq' : '');
-        const where = A.vendor ? `${D.VENDORS[A.vendor].icon} ${D.VENDORS[A.vendor].name}` : 'Boutique';
-        const sub = on ? 'Wearing' : owned ? 'Tap to wear' : A.unlock ? `🔒 ${D.UNLOCKS[A.unlock]}` : A.find ? `🔍 Found somewhere in ${D.LOCATIONS[A.find].name}` : A.tickets ? `${where} · 🎟️ ${A.tickets}` : `${where} · 🪙 ${A.price}`;
-        b.innerHTML = `<span class="big">${A.icon}</span><b></b><small></small>`;
+        const vloc = A.vendor ? D.VENDORS[A.vendor].loc : null;
+        const where = A.vendor ? (locUnlocked(vloc) ? D.VENDORS[A.vendor].name : 'A faraway shop') : 'Boutique';
+        const sub = on ? 'Wearing' : owned ? 'Tap to wear' : A.unlock ? D.UNLOCKS[A.unlock] : A.find ? (locUnlocked(A.find) ? `Found somewhere in ${D.LOCATIONS[A.find].name}` : 'Found somewhere new') : A.tickets ? `${where} · 🎟️ ${A.tickets}` : `${where} · 🪙 ${A.price}`;
+        b.innerHTML = `${thumbOf.acc(id)}<b></b><small></small>`;
         b.querySelector('b').textContent = A.name;
         b.querySelector('small').textContent = sub;
         b.addEventListener('click', () => {
-          if (!owned) { toast(A.unlock ? `Unlock it: ${D.UNLOCKS[A.unlock]}` : A.find ? `Keep exploring ${D.LOCATIONS[A.find].name}…` : A.vendor ? `Sold at the ${D.VENDORS[A.vendor].icon} ${D.VENDORS[A.vendor].name} in ${D.LOCATIONS[D.VENDORS[A.vendor].loc].name}` : 'Buy it in 🐾 Menu → 🛒 Shop → 👒 Boutique'); return; }
+          if (!owned) { toast(A.unlock ? `Unlock it: ${D.UNLOCKS[A.unlock]}` : A.find ? (locUnlocked(A.find) ? `Keep exploring ${D.LOCATIONS[A.find].name}…` : 'Found somewhere you haven’t been yet…') : A.vendor ? (locUnlocked(D.VENDORS[A.vendor].loc) ? `Sold at the ${D.VENDORS[A.vendor].name} in ${D.LOCATIONS[D.VENDORS[A.vendor].loc].name}` : 'Sold somewhere you haven’t been yet…') : 'Buy it in Menu → Shop → Boutique'); return; }
           if (on) delete d.acc[slot];
           else d.acc[slot] = id;
           d.applyAccessories();
@@ -3319,9 +3516,10 @@
     if (g.kind === 'toy') return `${D.TOYS[g.key].icon} ${D.TOYS[g.key].name}`;
     if (g.kind === 'ingredient') return `${D.INGREDIENTS[g.key].icon} ${D.INGREDIENTS[g.key].name}`;
     if (g.kind === 'shampoo') return `${D.SHAMPOOS[g.key].icon} ${D.SHAMPOOS[g.key].name}`;
-    if (g.kind === 'meal') return `${D.RECIPES[g.key].icon} ${D.RECIPES[g.key].name} ${'⭐'.repeat(g.q || 1)}`;
+    if (g.kind === 'meal') return `${D.RECIPES[g.key].icon} ${D.RECIPES[g.key].name} ${'★'.repeat(g.q || 1)}`;
     return '?';
   }
+  const giftThumb = (g) => (g.kind === 'item' ? thumbOf.item(g.key) : g.kind === 'toy' ? thumbOf.toy(g.key) : g.kind === 'ingredient' ? thumbOf.ing(g.key) : g.kind === 'shampoo' ? thumbOf.shampoo(g.key) : thumbOf.meal(g.key));
   function openGiftBox(f) {
     giftFurn = f;
     const L = $('giftList');
@@ -3351,8 +3549,8 @@
         seen.add(k);
         const b = document.createElement('button');
         b.className = 'toyCard';
-        b.innerHTML = `<span class="big">${giftLabel(o).split(' ')[0]}</span><b></b><small>${o.kind}${o.n > 1 ? ' ×' + o.n : ''}</small>`;
-        b.querySelector('b').textContent = giftLabel(o).split(' ').slice(1).join(' ');
+        b.innerHTML = `${giftThumb(o)}<b></b><small>${o.kind}${o.n > 1 ? ' ×' + o.n : ''}</small>`;
+        b.querySelector('b').textContent = plain(giftLabel(o));
         b.addEventListener('click', () => { if (takeForGift(o)) { f.gift = { id: newId(), kind: o.kind, key: o.key, q: o.q }; afterGiftChange(); toast(`🎁 Packed ${giftLabel(f.gift)} — share your home from 🐾 Menu → ⚙️ Settings`); } });
         grid.appendChild(b);
       }
@@ -3547,8 +3745,8 @@
     }
   }
   function updateToyIcons() {
-    const icon = (D.TOYS[state.toy] || D.TOYS.tennis).icon;
-    document.querySelectorAll('.toyIcon').forEach((el) => { el.textContent = icon; });
+    const k = D.TOYS[state.toy] ? state.toy : 'tennis';
+    document.querySelectorAll('.toyIcon').forEach((el) => { if (el.dataset.toy !== k) { el.dataset.toy = k; el.innerHTML = TH('toy', k); } });
   }
 
   // =====================================================================
@@ -3835,20 +4033,21 @@
   }
   function updateLocChip() {
     const el = $('locChip');
-    let txt = '';
+    let ic = '', txt = '', cls = '';
     if (place === 'park') {
-      if (loc === 'oldtown' && quirk.light) txt = quirk.light.green ? '🟢 Walk' : '🔴 Wait';
-      else if (loc === 'forest') txt = `🌿 ${state.glades.length}/3 glades`;
-      else if (loc === 'beach') { const t = tideLevel(); txt = t > 0.6 ? '🏝️ Low tide' : t < 0.3 ? '🌊 High tide' : tideFalling() ? '🌊 Tide going out' : '🌊 Tide coming in'; }
-      else if (loc === 'alpine') txt = `⛳ ${quirk.flags ? quirk.flags.filter(Boolean).length : 0}/4`;
-      else if (loc === 'caves') txt = '🔦 Dark caves';
-      else if (loc === 'snowy') txt = clockNow.month === 12 ? '🎄 Festive!' : '❄️ Snowy';
-      else if (loc === 'carnival') txt = `🎟️ ${state.tickets}`;
-      else if (loc === 'fairy') txt = '✨ Magic';
-      else if (loc === 'moon') txt = '🌕 Low gravity';
+      if (loc === 'oldtown' && quirk.light) { ic = 'dot'; txt = quirk.light.green ? 'Walk' : 'Wait'; cls = quirk.light.green ? 'go' : 'stop'; }
+      else if (loc === 'forest') { ic = 'sprout'; txt = `${state.glades.length}/3 glades`; }
+      else if (loc === 'beach') { const t = tideLevel(); ic = 'wave'; txt = t > 0.6 ? 'Low tide' : t < 0.3 ? 'High tide' : tideFalling() ? 'Tide going out' : 'Tide coming in'; }
+      else if (loc === 'alpine') { ic = 'flag'; txt = `${quirk.flags ? quirk.flags.filter(Boolean).length : 0}/4`; }
+      else if (loc === 'caves') { ic = 'lamp'; txt = 'Dark caves'; }
+      else if (loc === 'snowy') { ic = 'snow'; txt = clockNow.month === 12 ? 'Festive!' : 'Snowy'; }
+      else if (loc === 'carnival') { ic = 'ticket'; txt = String(state.tickets); }
+      else if (loc === 'fairy') { ic = 'sparkle'; txt = 'Magic'; }
+      else if (loc === 'moon') { ic = 'moon'; txt = 'Low gravity'; }
     }
     el.classList.toggle('hidden', !txt);
-    if (el.textContent !== txt) el.textContent = txt;
+    const key = ic + '|' + txt + '|' + cls;
+    if (el.dataset.k !== key) { el.dataset.k = key; el.className = 'chip glass' + (txt ? '' : ' hidden') + (cls ? ' ' + cls : ''); el.innerHTML = `${IC(ic)}<span>${esc(txt)}</span>`; }
   }
   function locChipInfo() {
     const msg = {
@@ -3883,14 +4082,14 @@
     setCtx(mode === 'normal' && place === 'park' ? want : null);
   }
   // the extra button in the walk bar changes with what's nearby
-  const CTX = { stay: ['✋', 'Stay'], echo: ['💬', 'Speak'], sled: ['🛷', 'Sled'], ferris: ['🎡', 'Ride'], portal: ['✨', 'Portal'], rocket: ['🚀', 'Rocket'] };
+  const CTX = { stay: ['hand', 'Stay'], echo: ['echo', 'Speak'], sled: ['sled', 'Sled'], ferris: ['ferris', 'Ride'], portal: ['portal', 'Portal'], rocket: ['rocket', 'Rocket'] };
   let ctxKind = null;
   function setCtx(k) {
     if (k === ctxKind) return;
     ctxKind = k;
     const b = $('ctxBtn');
     b.classList.toggle('hidden', !k);
-    if (k) b.innerHTML = `${CTX[k][0]}<small>${CTX[k][1]}</small>`;
+    if (k) b.innerHTML = `${IC(CTX[k][0], 'dIc')}<small>${CTX[k][1]}</small>`;
     placeToast();
   }
   function ctxAction() {
@@ -4647,7 +4846,7 @@
     if (W.precip === 'rain' && has('rain')) parts.push('🌧️ Rainy-day finds');
     if (W.precip === 'snow' && has('snow')) parts.push('❄️ Snow finds');
     const ids = Object.keys(D.FINDS).filter((k) => D.FINDS[k].loc === id);
-    parts.push(`📒 ${ids.filter((k) => state.finds[k]).length}/${ids.length} found`);
+    parts.push(`Collectibles ${ids.filter((k) => state.finds[k]).length}/${ids.length}`);
     return parts.join(' · ');
   }
   function openMap() {
@@ -4655,43 +4854,60 @@
     renderMap();
     $('map').classList.remove('hidden');
   }
+  // places a locked place depends on: until you have been there, its hint stays hidden
+  function locNeeds(id) {
+    const U = D.LOCATIONS[id].unlock;
+    if (!U) return [];
+    switch (U.kind) {
+      case 'locWalks': case 'loc': return [U.loc];
+      case 'glades': case 'portal': return ['forest'];
+      case 'treasure': return ['beach'];
+      case 'summits': return ['alpine'];
+      case 'acc': { const A = D.ACCESSORIES[U.id]; return A && A.vendor ? [D.VENDORS[A.vendor].loc] : []; }
+      case 'rocket': return ['snowy', 'caves'];
+      default: return [];
+    }
+  }
+  // locked, but everything it needs is already open: the very next things to unlock
+  const locNext = (id) => !locUnlocked(id) && locNeeds(id).every(locUnlocked);
   function renderMap() {
     const L = $('mapList');
     L.innerHTML = '';
+    let hidden = 0;
     for (const [id, P] of Object.entries(D.LOCATIONS)) {
       const open = locUnlocked(id);
+      if (!open && !locNext(id)) { hidden++; continue; }
       const card = document.createElement('div');
       card.className = 'locCard' + (open ? '' : ' locked');
       card.dataset.loc = id;
-      let note;
-      const closed = open && !canVisitNow(id);
-      if (open) note = closed ? `🌙 Closed now · open ${P.hours[0]}:00–midnight (German time)` : locNote(id);
-      else { const p = P.unlock.kind === 'portal' ? null : locProgress(id); note = `🔒 ${P.hint}${p && p[1] > 1 ? ` (${Math.min(p[0], p[1])}/${p[1]})` : ''}`; }
-      card.innerHTML = `<div class="lcIc">${open ? P.icon : '🔒'}</div><div class="txt"><b></b><small class="desc"></small><small class="note"></small></div>`;
-      card.querySelector('b').textContent = P.name;
-      card.querySelector('.desc').textContent = open ? P.desc : 'Not unlocked yet';
-      card.querySelector('.note').textContent = note;
-      if (open && !closed) {
-        const go = document.createElement('button');
-        go.className = 'buy';
-        go.textContent = 'Go';
-        go.addEventListener('click', () => { $('map').classList.add('hidden'); goWalk(id); });
-        card.appendChild(go);
+      if (open) {
+        const closed = !canVisitNow(id);
+        const note = closed ? `Closed now · opens at ${P.hours[0]}:00 (German time)` : locNote(id);
+        card.innerHTML = `<div class="lcIc">${TH('loc', id)}</div><div class="txt"><b></b><small class="desc"></small><small class="note"></small></div>`;
+        card.querySelector('b').textContent = P.name;
+        card.querySelector('.desc').textContent = P.desc;
+        card.querySelector('.note').textContent = note;
+        if (!closed) {
+          const go = document.createElement('button');
+          go.className = 'buy';
+          go.textContent = 'Go';
+          go.addEventListener('click', () => { $('map').classList.add('hidden'); goWalk(id); });
+          card.appendChild(go);
+        } else card.classList.add('closed');
+      } else {
+        // not named yet: only how to get there
+        const p = P.unlock.kind === 'portal' ? null : locProgress(id);
+        const frac = p ? Math.min(1, p[0] / p[1]) : 0;
+        card.innerHTML = `<div class="lcIc">${TH('locx', id)}<span class="lockMark">${IC('lock')}</span></div><div class="txt"><b>Undiscovered place</b><small class="note"></small>${p && p[1] > 1 ? `<div class="track"><div class="fill" style="width:${Math.round(frac * 100)}%"></div></div><small class="prog">${Math.min(p[0], p[1])} of ${p[1]}</small>` : ''}</div>`;
+        card.querySelector('.note').textContent = plain(P.hint);
       }
       L.appendChild(card);
     }
-    if (!D.FUTURE_LOCATIONS.length) return;
-    const sec = document.createElement('div');
-    sec.className = 'section';
-    sec.textContent = 'Coming in a later update';
-    L.appendChild(sec);
-    for (const F of D.FUTURE_LOCATIONS) {
-      const card = document.createElement('div');
-      card.className = 'locCard future';
-      card.innerHTML = `<div class="lcIc">${F.icon}</div><div class="txt"><b></b><small class="note"></small></div>`;
-      card.querySelector('b').textContent = F.name;
-      card.querySelector('.note').textContent = F.hint;
-      L.appendChild(card);
+    if (hidden) {
+      const more = document.createElement('p');
+      more.className = 'sub moreSoon';
+      more.innerHTML = `${IC('sparkle')}<span>${hidden === 1 ? 'One more place is' : `${hidden} more places are`} still hidden. Keep exploring.</span>`;
+      L.appendChild(more);
     }
   }
   $('map').addEventListener('click', (e) => { if (e.target.id === 'map' || e.target.closest('[data-act="closeMap"]')) $('map').classList.add('hidden'); });
@@ -4786,7 +5002,7 @@
     for (const c of state.daily.items) {
       const r = document.createElement('div');
       r.className = 'row challenge' + (c.done ? ' done' : '');
-      r.innerHTML = `<div class="ic">${c.done ? '✅' : '📋'}</div><div class="txt"><b></b><div class="track"><div class="fill happy"></div></div><small></small></div><b class="rw">🪙 ${c.reward}</b>`;
+      r.innerHTML = `<div class="ic chk">${IC(c.done ? 'check' : 'list')}</div><div class="txt"><b></b><div class="track"><div class="fill happy"></div></div><small></small></div><b class="rw">🪙 ${c.reward}</b>`;
       r.querySelector('b').textContent = c.text;
       r.querySelector('.fill').style.width = Math.round((c.got / c.n) * 100) + '%';
       r.querySelector('small').textContent = `${c.got}/${c.n}`;
@@ -4794,7 +5010,7 @@
     }
     const bonus = document.createElement('p');
     bonus.className = 'sub';
-    bonus.textContent = state.daily.bonus ? `🎉 Bonus collected — see you tomorrow!` : `Bonus for all three: 🪙 ${D.CHALLENGE_BONUS.coins}, sometimes a rare item 💎`;
+    bonus.textContent = state.daily.bonus ? 'Bonus collected. See you tomorrow!' : `Bonus for all three: 🪙 ${D.CHALLENGE_BONUS.coins}, sometimes a rare item`;
     L.appendChild(bonus);
   }
   $('daily').addEventListener('click', (e) => { if (e.target.id === 'daily' || e.target.closest('[data-act="closeDaily"]')) $('daily').classList.add('hidden'); });
@@ -4803,9 +5019,9 @@
   // 📒 Collectibles book. Known entries show as silhouettes, secret ones stay hidden until found.
   // A completed page unlocks an accessory.
   // =====================================================================
-  const BOOK_PAGES = [['toys', '🎾', 'Toys'], ['park', '🌳', 'Park'], ['oldtown', '🏘️', 'Old Town'], ['forest', '🌲', 'Forest'], ['beach', '🏖️', 'Beach'],
-    ['alpine', '🏔️', 'Alpine'], ['caves', '💎', 'Caves'], ['snowy', '⛄', 'Snowy'], ['carnival', '🎡', 'Carnival'], ['fairy', '🧚', 'Fairy'], ['moon', '🚀', 'Moon'],
-    ['rare', '💍', 'Rare'], ['tricks', '🎓', 'Tricks'], ['breeds', '🐶', 'Breeds'], ['records', '🏆', 'Records']];
+  const BOOK_PAGES = [['toys', ['toy', 'tennis'], 'Toys'], ['park', null, 'Park'], ['oldtown', null, 'Old Town'], ['forest', null, 'Forest'], ['beach', null, 'Beach'],
+    ['alpine', null, 'Alpine'], ['caves', null, 'Caves'], ['snowy', null, 'Snowy'], ['carnival', null, 'Carnival'], ['fairy', null, 'Fairy'], ['moon', null, 'Moon'],
+    ['rare', ['item', 'goldstatue'], 'Rare'], ['tricks', ['pic', '🎓'], 'Tricks'], ['breeds', ['dog', 'retriever|golden'], 'Breeds'], ['records', ['pic', '🏆'], 'Records']];
   const WHEN_TEXT = { night: 'Only at night', rain: 'Only in the rain', snow: 'Only when it snows', sun: 'Only on sunny days', day: 'Only by day', december: 'Only in December' };
   function recordValue(stat) {
     const st = state.stats;
@@ -4823,20 +5039,20 @@
   function bookPage(id) {
     const E = [];
     if (id === 'toys') {
-      for (const [k, t] of Object.entries(D.TOYS)) E.push({ icon: t.icon, name: t.name, got: state.seen.toys.includes(k) || state.toys.includes(k), secret: !!t.secret, sub: t.price == null ? 'Found on walks' : t.vendor ? D.VENDORS[t.vendor].name : 'Shop' });
+      for (const [k, t] of Object.entries(D.TOYS)) E.push({ thk: ['toy', k], name: t.name, got: state.seen.toys.includes(k) || state.toys.includes(k), secret: !!t.secret, sub: t.price == null ? 'Found on walks' : t.vendor ? D.VENDORS[t.vendor].name : 'Shop' });
     } else if (D.LOCATIONS[id]) {
       for (const [k, F] of Object.entries(D.FINDS)) {
         if (F.loc !== id) continue;
-        E.push({ icon: F.icon, name: F.name, got: !!state.finds[k], secret: !!F.secret, sub: state.finds[k] > 1 ? `×${state.finds[k]}` : F.where === 'pool' ? 'In tide pools' : F.where === 'treasure' ? (F.loc === 'moon' ? 'In a space capsule' : 'In buried treasure') : F.where === 'crystal' ? 'In glowing crystals' : F.where === 'prize' ? 'Prize booth' : F.where === 'puzzle' ? 'A puzzle reward' : F.glade ? 'In a hidden glade' : WHEN_TEXT[F.when] || '' });
+        E.push({ thk: ['pic', F.icon], name: F.name, got: !!state.finds[k], secret: !!F.secret, sub: state.finds[k] > 1 ? `×${state.finds[k]}` : F.where === 'pool' ? 'In tide pools' : F.where === 'treasure' ? (F.loc === 'moon' ? 'In a space capsule' : 'In buried treasure') : F.where === 'crystal' ? 'In glowing crystals' : F.where === 'prize' ? 'Prize booth' : F.where === 'puzzle' ? 'A puzzle reward' : F.glade ? 'In a hidden glade' : WHEN_TEXT[F.when] || '' });
       }
     } else if (id === 'rare') {
-      for (const [k, it] of Object.entries(D.ITEMS)) if (it.rare) E.push({ icon: it.icon, name: it.name, got: state.seen.rares.includes(k), secret: false, sub: 'Found or gifted' });
+      for (const [k, it] of Object.entries(D.ITEMS)) if (it.rare) E.push({ thk: ['item', k], name: it.name, got: state.seen.rares.includes(k), secret: false, sub: 'Found or gifted' });
     } else if (id === 'tricks') {
-      for (const [k, T] of Object.entries(ALL_TRICKS)) E.push({ icon: T.icon, name: T.name, got: state.learned.includes(k) || dogs.some((d) => d.trickLvl(k) >= 1), secret: !!T.secret, sub: T.secret ? 'Secret trick' : seqGlyphs(T.seq) });
+      for (const [k, T] of Object.entries(ALL_TRICKS)) E.push({ thk: ['pic', T.icon], name: T.name, got: state.learned.includes(k) || dogs.some((d) => d.trickLvl(k) >= 1), secret: !!T.secret, sub: T.secret ? 'Secret trick' : '', subHTML: T.secret ? '' : seqGlyphs(T.seq) });
     } else if (id === 'breeds') {
       for (const [b, B] of Object.entries(D.BREEDS)) for (const c of B.coats) if (!c.legacy) E.push({ img: ART.portraitURL(b, c.id), name: `${c.name} ${B.name}`, got: state.seen.coats.includes(b + ':' + c.id), secret: false, sub: 'Adopt one' });
     } else if (id === 'records') {
-      for (const R of D.RECORDS) { const v = recordValue(R.stat); E.push({ icon: R.icon, name: R.name, got: v >= R.n, secret: !!R.secret, sub: v >= R.n ? R.text : `${R.text} · ${Math.min(v, R.n)}/${R.n}` }); }
+      for (const R of D.RECORDS) { const v = recordValue(R.stat); E.push({ thk: ['pic', R.icon], name: R.name, got: v >= R.n, secret: !!R.secret, sub: v >= R.n ? R.text : `${R.text} · ${Math.min(v, R.n)}/${R.n}` }); }
     }
     return { entries: E, done: E.filter((e) => e.got).length, total: E.length };
   }
@@ -4855,8 +5071,9 @@
       got += p.done;
       const b = document.createElement('button');
       b.className = 'pageTab' + (id === albumPage ? ' sel' : '') + (p.done === p.total ? ' full' : '');
-      b.innerHTML = `<span>${icon}</span><small></small>`;
-      b.querySelector('small').textContent = `${name} ${p.done}/${p.total}`;
+      const isLoc = !!D.LOCATIONS[id], known = !isLoc || locUnlocked(id);
+      b.innerHTML = `${isLoc ? TH(known ? 'loc' : 'locx', id) : TH(icon[0], icon[1])}<small></small>`;
+      b.querySelector('small').textContent = `${known ? name : '???'} ${p.done}/${p.total}`;
       b.addEventListener('click', () => { albumPage = id; renderAlbum(); });
       tabs.appendChild(b);
     }
@@ -4865,19 +5082,20 @@
     const reward = Object.entries(D.ACCESSORIES).find(([, A]) => A.unlock === 'page_' + albumPage);
     const head = $('albumHead');
     const owned = reward && state.accessories.includes(reward[0]);
-    head.textContent = reward ? (owned ? `✅ Page reward unlocked: ${reward[1].icon} ${reward[1].name}` : `Complete this page: ${reward[1].icon} ${reward[1].name} (${page.done}/${page.total})`) : '';
-    if (D.LOCATIONS[albumPage] && !locUnlocked(albumPage)) head.textContent += ` · 🔒 ${D.LOCATIONS[albumPage].name} is still locked — neighbors sometimes bring souvenirs`;
+    head.innerHTML = reward ? `<span class="rwd">${thumbOf.acc(reward[0])}</span><span>${owned ? `Page reward unlocked: ${esc(reward[1].name)}` : `Complete this page for the ${esc(reward[1].name)} (${page.done}/${page.total})`}</span>` : '';
+    if (D.LOCATIONS[albumPage] && !locUnlocked(albumPage)) head.insertAdjacentText('beforeend', ' · A place you haven’t found yet. Neighbors sometimes bring souvenirs.');
     const G = $('albumGrid');
     G.innerHTML = '';
     for (const e of page.entries) {
       const c = document.createElement('div');
       c.className = 'toyCard' + (e.got ? '' : e.secret ? ' secret' : ' sil');
-      const pic = e.img ? `<img class="bkImg" src="${e.img}" alt="">` : `<span class="big">${e.icon}</span>`;
-      if (!e.got && e.secret) c.innerHTML = '<span class="big">❔</span><b>Secret</b><small>Keep exploring…</small>';
+      const pic = e.img ? `<img class="bkImg" src="${e.img}" alt="">` : TH(e.thk[0], e.thk[1]);
+      if (!e.got && e.secret) c.innerHTML = `<span class="big q">${IC('question')}</span><b>Secret</b><small>Keep exploring…</small>`;
       else {
         c.innerHTML = `${pic}<b></b><small></small>`;
         c.querySelector('b').textContent = e.got ? e.name : '???';
-        c.querySelector('small').textContent = e.sub;
+        if (e.subHTML) c.querySelector('small').innerHTML = e.subHTML;
+        else c.querySelector('small').textContent = e.sub;
       }
       G.appendChild(c);
     }
@@ -4929,6 +5147,7 @@
     const k = snap ? 1 : damp(camFocus ? 0.005 : 0.02, dt);
     camLook.set(lerp(camLook.x, tx, k), 0.5, lerp(camLook.z, tz, k));
     camDist = lerp(camDist, dist, snap ? 1 : damp(0.05, dt));
+    fogPush = Math.max(0, camDist - 12);
     camera.position.set(camLook.x + camOffsetDir.x * camDist, camLook.y + camOffsetDir.y * camDist, camLook.z + camOffsetDir.z * camDist);
     camera.lookAt(camLook);
   }
@@ -5132,7 +5351,7 @@
           const b = document.createElement('button');
           const isSel = selStyle && selStyle.kind === kind && selStyle.id === id;
           b.className = 'inv sw' + (isSel ? ' sel' : '');
-          b.innerHTML = `<img src="${ART.swatchURL(kind, id)}" alt=""><small>${kind === 'wall' ? '🧱' : '🟫'} ${esc(defs[id].name)}</small>`;
+          b.innerHTML = `${TH(kind, id)}<small>${esc(defs[id].name)}</small><em>${kind === 'wall' ? 'Wall' : 'Floor'}</em>`;
           b.addEventListener('click', () => { selStyle = { kind, id }; renderInv(); });
           list.appendChild(b);
         }
@@ -5142,13 +5361,13 @@
     $('rotLabel').textContent = rotNames[placeRot];
     const types = Object.keys(D.ITEMS).filter((t) => state.inventory[t] > 0);
     if (!types.length) {
-      list.innerHTML = '<div class="empty">Nothing to place. Tap an item in the room to pick it up, or buy more in the 🛒 Shop.</div>';
+      list.innerHTML = '<div class="empty">Nothing to place. Tap an item in the room to pick it up, or buy more in the Shop.</div>';
       return;
     }
     for (const t of types) {
       const b = document.createElement('button');
       b.className = 'inv' + (t === selectedInv ? ' sel' : '');
-      b.innerHTML = `<span>${D.ITEMS[t].icon}</span><small>${esc(D.ITEMS[t].name)}</small><b>×${state.inventory[t]}</b>`;
+      b.innerHTML = `${thumbOf.item(t)}<small>${esc(D.ITEMS[t].name)}</small><b>×${state.inventory[t]}</b>`;
       b.addEventListener('click', () => { selectedInv = t; renderInv(); });
       list.appendChild(b);
     }
@@ -5295,190 +5514,154 @@
     const best = Object.entries(S.eff).filter(([, v]) => v >= 0.99).map(([k]) => D.DIRT[k].name.toLowerCase());
     return `${state.shampoos[id] ? `You have ${state.shampoos[id]} · ` : ''}${best.length ? `Best for ${best.join(' & ')}` : S.fancy ? 'Good on everything · Pampered dogs adore it' : 'Mild, works on anything'} · 1 per bath`;
   }
+  let shopTab = 'all';
+  // every shop is a grid of cards; the home shop also has tabs, one of them for everything
   function renderShop() {
     const L = $('shopList');
-    const scroll = L.parentElement.scrollTop;
-    L.innerHTML = '';
+    const body = L.parentElement;
+    const scroll = body.scrollTop;
     const V = shopVendor && D.VENDORS[shopVendor];
-    const tix = V && V.currency === 'tickets';
-    $('shopPurse').innerHTML = `${tix ? '🎟️' : '🪙'} <span id="shopCoins">${tix ? state.tickets : state.coins}</span>`;
-    $('shopTitle').textContent = V ? `${V.icon} ${V.name}` : 'Shop';
-    const nav = $('shopNav');
-    nav.innerHTML = '';
-    const sections = [];
-    const section = (t) => { const d = document.createElement('div'); d.className = 'section'; d.textContent = t; L.appendChild(d); sections.push(d); };
-    const row = (iconHTML, title, sub, price, onBuy, disabled, label) => {
-      const r = document.createElement('div');
-      r.className = 'row';
-      r.innerHTML = `<div class="ic">${iconHTML}</div><div class="txt"><b></b><small></small></div>`;
-      r.querySelector('b').textContent = title;
-      r.querySelector('small').textContent = sub;
-      const b = document.createElement('button');
-      b.className = 'buy';
-      b.textContent = label || (price == null ? '—' : `🪙 ${price}`);
-      b.disabled = !!disabled || price == null || state.coins < price;
-      b.addEventListener('click', () => { if (!b.disabled && state.coins >= price) onBuy(price); });
-      r.appendChild(b);
-      L.appendChild(r);
-    };
-    if (V && V.currency === 'tickets') {
-      // the prize booth takes carnival tickets instead of coins
-      const p = document.createElement('p');
-      p.className = 'sub';
-      p.textContent = `${V.greet} You have 🎟️ ${state.tickets}.`;
-      L.appendChild(p);
-      const trow = (icon, title, sub, price, owned, onBuy) => {
-        row(icon, title, sub, price, () => {}, true, owned ? 'Owned' : `🎟️ ${price}`);
-        const b = L.lastChild.querySelector('.buy');
-        b.disabled = owned || state.tickets < price;
-        b.addEventListener('click', () => { if (b.disabled || state.tickets < price) return; state.tickets -= price; onBuy(); updateHud(); save(); renderShop(); });
-      };
-      for (const [kind, key, price] of V.stock) {
-        if (kind === 'find') { const F = D.FINDS[key]; trow(F.icon, F.name, 'A prize for your 📒 book', price, !!state.finds[key], () => grantFind(key, null)); }
-        else if (kind === 'acc') { const A = D.ACCESSORIES[key]; trow(A.icon, A.name, `For the ${A.slot}`, A.tickets, state.accessories.includes(key), () => { state.accessories.push(key); toast(`${A.icon} ${A.name} won! Open a dog bubble → 👒 Style`); }); }
-        else if (kind === 'toy') { const t = D.TOYS[key]; trow(t.icon, t.name, toyBlurb(t), t.tickets, state.toys.includes(key), () => { state.toys.push(key); state.toy = key; updateToyIcons(); toast(`${t.name} ${t.icon} is ready to throw!`); }); }
-        else if (kind === 'meal') { const R = D.RECIPES[key]; trow(R.icon, R.name, `${R.desc} · give it via a dog bubble → 🍲 Treat`, R.tickets, false, () => { state.meals.push({ id: key, q: 2 }); toast(`${R.icon} ${R.name} — give it from a dog's bubble → 🍲 Treat`); }); }
-        else if (kind === 'shampoo') { const Sh = D.SHAMPOOS[key]; trow(Sh.icon, Sh.name, shampooBlurb(key), Sh.tickets, false, () => { state.shampoos[key] = (state.shampoos[key] || 0) + 1; }); }
-      }
-      L.parentElement.scrollTop = scroll;
-      return;
-    }
+    const tix = !!(V && V.currency === 'tickets');
+    $('shopPurse').innerHTML = `${IC(tix ? 'ticket' : 'coin')}<span id="shopCoins">${tix ? state.tickets : state.coins}</span>`;
+    $('shopTitle').textContent = V ? V.name : 'Shop';
+    const secs = [];
+    let cur = null;
+    const section = (id, label) => { cur = { id, label, cards: [] }; secs.push(cur); };
+    // one card: picture, name, a short line, and the price button
+    const card = (th, title, sub, price, onBuy, opts = {}) => cur.cards.push({ th, title, sub, price, onBuy, ...opts });
+    const done = () => { updateHud(); save(); renderShop(); };
+    const pay = (price) => { if (tix) state.tickets -= price; else state.coins -= price; };
+
     if (V) {
-      const p = document.createElement('p');
-      p.className = 'sub';
-      p.textContent = V.greet;
-      L.appendChild(p);
-      const buy = (fn) => (price) => { state.coins -= price; fn(); updateHud(); save(); renderShop(); };
-      for (const [kind, key, price] of V.stock) {
+      section('stock', V.name);
+      for (const [kind, key, p0] of V.stock) {
         if (kind === 'meal') {
           const R = D.RECIPES[key], have = state.meals.filter((m) => m.id === key).length;
-          row(R.icon, R.name, `${R.desc}${have ? ` · you have ${have}` : ''} · give it via a dog bubble → 🍲 Treat`, R.price, buy(() => { state.meals.push({ id: key, q: 2 }); toast(`${R.icon} ${R.name} bought! Give it from a dog's bubble → 🍲 Treat`); }));
+          const price = tix ? R.tickets : R.price;
+          card(thumbOf.meal(key), R.name, `${R.desc}${have ? ` · you have ${have}` : ''}`, price, () => { pay(price); state.meals.push({ id: key, q: 2 }); toast(`${R.name} — give it from a dog's bubble → Treat`); done(); });
         } else if (kind === 'shampoo') {
-          const Sh = D.SHAMPOOS[key];
-          row(Sh.icon, Sh.name, shampooBlurb(key), Sh.price, buy(() => { state.shampoos[key] = (state.shampoos[key] || 0) + 1; }));
+          const Sh = D.SHAMPOOS[key], price = tix ? Sh.tickets : Sh.price;
+          card(thumbOf.shampoo(key), Sh.name, shampooBlurb(key), price, () => { pay(price); state.shampoos[key] = (state.shampoos[key] || 0) + 1; done(); });
         } else if (kind === 'acc') {
-          const A = D.ACCESSORIES[key], owned = state.accessories.includes(key);
-          row(A.icon, A.name, owned ? 'In your wardrobe · dress up from a dog bubble' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, A.price, buy(() => { state.accessories.push(key); toast(`${A.icon} ${A.name} bought! Open a dog bubble → 👒 Style`); }), owned, owned ? 'Owned' : null);
+          const A = D.ACCESSORIES[key], owned = state.accessories.includes(key), price = tix ? A.tickets : A.price;
+          card(thumbOf.acc(key), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, price, () => { pay(price); state.accessories.push(key); toast(`${A.name} ${tix ? 'won' : 'bought'}! Open a dog bubble → Style`); done(); }, { owned });
         } else if (kind === 'toy') {
-          const t = D.TOYS[key], owned = state.toys.includes(key);
-          row(t.icon, t.name, owned ? 'In your 🎒 bag' : toyBlurb(t), t.price, buy(() => { state.toys.push(key); state.toy = key; updateToyIcons(); toast(`${t.name} ${t.icon} is ready to throw!`); }), owned, owned ? 'Owned' : null);
+          const t = D.TOYS[key], owned = state.toys.includes(key), price = tix ? t.tickets : t.price;
+          card(thumbOf.toy(key), t.name, owned ? 'In your bag' : toyBlurb(t), price, () => { pay(price); state.toys.push(key); state.toy = key; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned });
         } else if (kind === 'ingredient') {
           const I = D.INGREDIENTS[key];
-          row(I.icon, I.name, `You have ${state.pantry[key] || 0} · cook at a 🍳 Stove`, price, buy(() => { state.pantry[key] = (state.pantry[key] || 0) + 1; }));
+          card(thumbOf.ing(key), I.name, `You have ${state.pantry[key] || 0} · cook at a Stove`, p0, () => { pay(p0); state.pantry[key] = (state.pantry[key] || 0) + 1; done(); });
+        } else if (kind === 'find') {
+          const F = D.FINDS[key], owned = !!state.finds[key];
+          card(thumbOf.find(key), F.name, 'A prize for your book', p0, () => { pay(p0); grantFind(key, null); done(); }, { owned });
         }
       }
-      L.parentElement.scrollTop = scroll;
-      return;
-    }
+    } else {
+      section('home', 'Home');
+      const n = state.chunks.length;
+      if (state.build) card(TH('loc', 'room'), 'Add a room', `Building… ready in ${fmtTime(state.build.readyAt - Date.now())}`, null, null, { label: 'Busy' });
+      else if (n >= CONFIG.MAX_CHUNKS) card(TH('loc', 'room'), 'Add a room', 'Your home is as big as it gets', null, null, { label: 'Max' });
+      else card(TH('loc', 'room'), 'Add a room', `You have ${n} · +1 dog · ${CONFIG.BUILD_MINUTES} min to build`, expandPrice(n), () => { closeShop(); enterBuildMode(); }, { keep: true });
+      const cap = capacity(), full = dogs.length >= cap;
+      const pup = todayLitter().pups.find((x) => !x.taken) || todayLitter().pups[0];
+      card(TH('dog', `${pup.breed}|${pup.coat}`), 'Adopt a puppy', full ? `Home is full (${dogs.length}/${cap}). Add a room first` : `${dogs.length}/${cap} dogs · a new litter every day`, adoptPrice(), () => { closeShop(); openLitter(); }, { keep: true, disabled: full, label: full ? null : 'See litter' });
 
-    section('🏡 Home');
-    const n = state.chunks.length;
-    if (state.build) row('🏗️', 'Add a room', `Building… ready in ${fmtTime(state.build.readyAt - Date.now())}`, null, null, true, 'Busy');
-    else if (n >= CONFIG.MAX_CHUNKS) row('📐', 'Add a room', 'Your home is as big as it gets', null, null, true, 'Max');
-    else row('📐', 'Add a room', `You have ${n} · +1 dog space · ${CONFIG.BUILD_MINUTES} min to build`, expandPrice(n), () => { closeShop(); enterBuildMode(); });
-    const cap = capacity(), full = dogs.length >= cap;
-    row('🐶', 'Adopt a puppy', full ? `Home is full (${dogs.length}/${cap}) — add a room first` : `${dogs.length}/${cap} dogs · a new litter every day`, adoptPrice(), () => {
-      closeShop();
-      openLitter();
-    }, full, full ? null : 'See litter');
-
-    section('🎾 Toys');
-    for (const [k, t] of Object.entries(D.TOYS)) {
-      if (t.price == null || k === 'tennis' || t.vendor) continue;
-      const owned = state.toys.includes(k);
-      row(t.icon, t.name, owned ? 'In your 🎒 bag' : toyBlurb(t), t.price, (p) => {
-        state.coins -= p;
-        state.toys.push(k);
-        state.toy = k;
-        updateToyIcons();
-        toast(`${t.name} ${t.icon} is ready to throw!`);
-        updateHud();
-        save();
-        renderShop();
-      }, owned, owned ? 'Owned' : null);
-    }
-
-    section('🎨 Walls & floors');
-    for (const kind of ['wall', 'floor']) {
-      const defs = kind === 'wall' ? D.WALLS : D.FLOORS;
-      for (const [id, s] of Object.entries(defs)) {
-        if (!s.price) continue;
-        const owned = state.styles.includes(id);
-        row(`<img class="sw" src="${ART.swatchURL(kind, id)}" alt="">`, s.name, `${kind === 'wall' ? 'Wallpaper' : 'Floor'}${owned ? ' · apply it in 🎨 Decorate' : ''}`, s.price, (p) => {
-          state.coins -= p;
-          state.styles.push(id);
-          selStyle = { kind, id };
-          toast(`${s.name} unlocked — apply it in 🎨 Decorate → Walls & floors`);
-          updateHud();
-          save();
-          renderShop();
-        }, owned, owned ? 'Owned' : null);
+      section('toys', 'Toys');
+      for (const [k, t] of Object.entries(D.TOYS)) {
+        if (t.price == null || k === 'tennis' || t.vendor) continue;
+        const owned = state.toys.includes(k);
+        card(thumbOf.toy(k), t.name, owned ? 'In your bag' : toyBlurb(t), t.price, () => { pay(t.price); state.toys.push(k); state.toy = k; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned });
+      }
+      section('styles', 'Walls & floors');
+      for (const kind of ['wall', 'floor']) {
+        const defs = kind === 'wall' ? D.WALLS : D.FLOORS;
+        for (const [id, st] of Object.entries(defs)) {
+          if (!st.price) continue;
+          const owned = state.styles.includes(id);
+          card(TH(kind, id), st.name, kind === 'wall' ? 'Wallpaper' : 'Floor', st.price, () => { pay(st.price); state.styles.push(id); selStyle = { kind, id }; toast(`${st.name} unlocked. Apply it in Decorate → Walls & floors`); done(); }, { owned });
+        }
+      }
+      section('boutique', 'Boutique');
+      for (const [id, A] of Object.entries(D.ACCESSORIES)) {
+        if (A.unlock || A.vendor) continue;
+        const owned = state.accessories.includes(id);
+        card(thumbOf.acc(id), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, A.price, () => { pay(A.price); state.accessories.push(id); toast(`${A.name} bought! Open a dog bubble → Style`); done(); }, { owned });
+      }
+      section('bath', 'Shampoo');
+      for (const [id, Sh] of Object.entries(D.SHAMPOOS)) {
+        if (Sh.vendor) continue;
+        card(thumbOf.shampoo(id), Sh.name, shampooBlurb(id), Sh.price, () => { pay(Sh.price); state.shampoos[id] = (state.shampoos[id] || 0) + 1; done(); });
+      }
+      cur.note = 'More shampoos are sold by vendors on walks.';
+      section('pantry', 'Pantry');
+      for (const [id, I] of Object.entries(D.INGREDIENTS)) {
+        if (I.price == null) continue;
+        card(thumbOf.ing(id), I.name, `You have ${state.pantry[id] || 0} · cook at a Stove`, I.price, () => { pay(I.price); state.pantry[id] = (state.pantry[id] || 0) + 1; done(); });
+      }
+      for (const [cat, title] of D.CATS) {
+        section(cat, plain(title));
+        const locked = cat === 'garden' && !gardensUnlocked();
+        if (locked) cur.note = `Unlocks with gardens: a home with ${D.GARDEN_UNLOCK_SECTIONS} rooms.`;
+        for (const [t, it] of Object.entries(D.ITEMS)) {
+          if (it.cat !== cat || it.price == null) continue;
+          const owned = (state.inventory[t] || 0) + state.furniture.filter((f) => f.type === t).length;
+          const kind = locked ? 'Needs gardens' : it.use === 'bath' ? 'Tap it for bath time' : it.use === 'cook' ? 'Tap it to cook' : it.use === 'gift' ? 'Pack gifts for visitors' : it.auto ? 'Refills itself' : it.role === 'bed' ? (it.regen ? 'Dogs rest extra fast' : 'Dogs nap on it') : it.role === 'food' ? 'Fill it with Bowls' : it.role === 'water' ? 'Fill it with Bowls' : it.use ? 'Tap it to use' : it.lounge ? 'Couch Potatoes love it' : it.garden ? 'For gardens' : it.solid ? 'Decoration' : 'Dogs can walk on it';
+          card(thumbOf.item(t), it.name, owned ? `You have ${owned} · ${kind}` : kind, it.price, () => { pay(it.price); state.inventory[t] = (state.inventory[t] || 0) + 1; selectedInv = t; toast(`${it.name} added. Place it in Decorate`); done(); }, { disabled: locked, label: locked ? 'Locked' : null, count: owned });
+        }
       }
     }
 
-    section('👒 Boutique');
-    for (const [id, A] of Object.entries(D.ACCESSORIES)) {
-      if (A.unlock || A.vendor) continue;
-      const owned = state.accessories.includes(id);
-      row(A.icon, A.name, owned ? 'In your wardrobe · dress up from a dog bubble' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, A.price, (p) => {
-        state.coins -= p;
-        state.accessories.push(id);
-        toast(`${A.icon} ${A.name} bought! Open a dog bubble → 👒 Style`);
-        updateHud(); save(); renderShop();
-      }, owned, owned ? 'Owned' : null);
-    }
-    section('🧴 Shampoos');
-    const more = document.createElement('p');
-    more.className = 'sub';
-    more.textContent = 'Shampoos for city grime, sap, sand and snow are sold by vendors on walks 🗺️';
-    L.appendChild(more);
-    for (const [id, S] of Object.entries(D.SHAMPOOS)) {
-      if (S.vendor) continue;
-      row(S.icon, S.name, shampooBlurb(id), S.price, (p) => {
-        state.coins -= p;
-        state.shampoos[id] = (state.shampoos[id] || 0) + 1;
-        updateHud(); save(); renderShop();
-      });
-    }
-    section('🥕 Pantry');
-    for (const [id, I] of Object.entries(D.INGREDIENTS)) {
-      if (I.price == null) continue;
-      row(I.icon, I.name, `You have ${state.pantry[id] || 0} · cook at a 🍳 Stove`, I.price, (p) => {
-        state.coins -= p;
-        state.pantry[id] = (state.pantry[id] || 0) + 1;
-        updateHud(); save(); renderShop();
-      });
-    }
-
-    for (const [cat, title] of D.CATS) {
-      section(title);
-      const locked = cat === 'garden' && !gardensUnlocked();
-      for (const [t, it] of Object.entries(D.ITEMS)) {
-        if (it.cat !== cat || it.price == null) continue;
-        const owned = (state.inventory[t] || 0) + state.furniture.filter((f) => f.type === t).length;
-        const kind = locked ? `Unlocks with gardens (home with ${D.GARDEN_UNLOCK_SECTIONS} sections)` : it.use === 'bath' ? 'Tap it for bath time' : it.use === 'cook' ? 'Tap it to cook' : it.use === 'gift' ? 'Pack gifts for visitors' : it.auto ? 'Refills itself' : it.role === 'bed' ? (it.regen ? 'Dogs rest extra fast' : 'Dogs nap on it') : it.role === 'food' ? 'Fill it with 🥣 Feed' : it.role === 'water' ? 'Fill it with 💧 Water' : it.use ? 'Tap it to use' : it.lounge ? 'Couch Potatoes love it' : it.garden ? 'For gardens' : it.solid ? 'Decoration' : 'Dogs can walk on it';
-        row(it.icon, it.name, owned ? `You have ${owned} · ${kind}` : kind, it.price, (p) => {
-          state.coins -= p;
-          state.inventory[t] = (state.inventory[t] || 0) + 1;
-          selectedInv = t;
-          toast(`${it.name} added — place it in 🎨 Decorate`);
-          updateHud();
-          save();
-          renderShop();
-        }, locked, locked ? 'Locked' : null);
+    // tabs (home shop only): All first, then each section
+    const nav = $('shopNav');
+    const tabbed = !V;
+    if (tabbed && !secs.some((x) => x.id === shopTab)) shopTab = 'all';
+    nav.classList.toggle('hidden', !tabbed);
+    if (tabbed) {
+      const tabs = [['all', 'All'], ...secs.map((x) => [x.id, x.label])];
+      if (nav.dataset.built !== tabs.map((t) => t[0]).join()) {
+        nav.dataset.built = tabs.map((t) => t[0]).join();
+        nav.innerHTML = tabs.map(([id, label]) => `<button class="seg" data-tab="${id}">${esc(label)}</button>`).join('');
       }
+      nav.querySelectorAll('.seg').forEach((b) => b.classList.toggle('sel', b.dataset.tab === shopTab));
     }
-    // jump chips in the header
-    const sheet = L.parentElement;
-    for (const sec of sections) {
-      const c = document.createElement('button');
-      c.className = 'navChip';
-      c.textContent = sec.textContent;
-      c.addEventListener('click', () => sheet.scrollTo({ top: sec.offsetTop - sheet.querySelector('.sheetHead').offsetHeight - 6, behavior: 'smooth' }));
-      nav.appendChild(c);
+    const show = !tabbed || shopTab === 'all' ? secs : secs.filter((x) => x.id === shopTab);
+    const money = tix ? state.tickets : state.coins;
+    L.innerHTML = '';
+    if (V && V.greet) { const g = document.createElement('p'); g.className = 'sub greet'; g.textContent = plain(V.greet); L.appendChild(g); }
+    for (const sec of show) {
+      if (show.length > 1) { const h = document.createElement('div'); h.className = 'section'; h.textContent = sec.label; L.appendChild(h); }
+      if (sec.note) { const nn = document.createElement('p'); nn.className = 'sub'; nn.textContent = sec.note; L.appendChild(nn); }
+      const grid = document.createElement('div');
+      grid.className = 'shopGrid';
+      for (const c of sec.cards) {
+        const el = document.createElement('div');
+        el.className = 'card' + (c.owned ? ' owned' : '');
+        el.innerHTML = `<div class="cardPic">${c.th}${c.count ? `<i class="cnt">${c.count}</i>` : ''}</div><b></b><small></small>`;
+        el.querySelector('b').textContent = c.title;
+        el.querySelector('small').textContent = c.sub;
+        const b = document.createElement('button');
+        b.className = 'buy';
+        if (c.owned) b.textContent = 'Owned';
+        else if (c.label) b.textContent = c.label;
+        else if (c.price == null) b.textContent = '—';
+        else b.innerHTML = `${IC(tix ? 'ticket' : 'coin')}<span>${c.price}</span>`;
+        b.disabled = !!c.owned || !!c.disabled || c.price == null || money < c.price;
+        b.addEventListener('click', () => { if (!b.disabled && (tix ? state.tickets : state.coins) >= c.price) c.onBuy(c.price); });
+        el.appendChild(b);
+        grid.appendChild(el);
+      }
+      L.appendChild(grid);
     }
-    sheet.scrollTop = scroll;
+    body.scrollTop = scroll;
   }
+  $('shopNav').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg');
+    if (!b) return;
+    shopTab = b.dataset.tab;
+    renderShop();
+    $('shopList').parentElement.scrollTop = 0;
+    b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  });
   function toyBlurb(t) {
     if (t.spin === 'flat') return 'Flies extra far';
     if ((t.bounce || 0) > 0.6) return 'Super bouncy';
@@ -5498,12 +5681,13 @@
       const favOf = dogs.filter((d) => d.favToy === k).map((d) => d.name);
       const b = document.createElement('button');
       b.className = 'toyCard' + (owned ? '' : ' locked') + (k === state.toy ? ' eq' : '');
-      const sub = owned ? (favOf.length ? `💞 ${favOf.join(', ')}` : k === state.toy ? 'Throwing next' : 'Tap to use') : t.price == null ? 'Found on walks' : t.vendor ? `${D.VENDORS[t.vendor].name} · 🪙 ${t.price}` : `Shop · 🪙 ${t.price}`;
-      b.innerHTML = `<span class="big">${owned || t.price != null ? t.icon : '❓'}</span><b></b><small></small>`;
+      const vKnown = t.vendor && locUnlocked(D.VENDORS[t.vendor].loc);
+      const sub = owned ? (favOf.length ? `Favorite of ${favOf.join(', ')}` : k === state.toy ? 'Throwing next' : 'Tap to use') : t.price == null ? 'Found on walks' : t.vendor ? (vKnown ? `${D.VENDORS[t.vendor].name} · 🪙 ${t.price}` : 'Sold somewhere new') : `Shop · 🪙 ${t.price}`;
+      b.innerHTML = owned || t.price != null ? `${thumbOf.toy(k)}<b></b><small></small>` : `<span class="big q">${IC('question')}</span><b></b><small></small>`;
       b.querySelector('b').textContent = owned || t.price != null ? t.name : '???';
       b.querySelector('small').textContent = sub;
       b.addEventListener('click', () => {
-        if (!owned) { toast(t.price == null ? 'Keep walking — maybe you’ll find one!' : t.vendor ? `Sold at the ${D.VENDORS[t.vendor].icon} ${D.VENDORS[t.vendor].name}` : 'You can buy this in the 🛒 Shop'); return; }
+        if (!owned) { toast(t.price == null ? 'Keep walking — maybe you’ll find one!' : t.vendor ? (vKnown ? `Sold at the ${D.VENDORS[t.vendor].name}` : 'Sold somewhere you haven’t been yet…') : 'You can buy this in the Shop'); return; }
         state.toy = k;
         updateToyIcons();
         renderBag();
@@ -5558,7 +5742,9 @@
       const b = document.createElement('button');
       b.className = 'breed' + (id === pickState.breed ? ' sel' : '');
       const coat = id === pickState.breed ? pickState.coat : standardCoats(id)[0].id;
-      b.innerHTML = `<img src="${ART.portraitURL(id, coat)}" alt="">${esc(B.name)}`;
+      b.title = B.name;
+      b.setAttribute('aria-label', B.name);
+      b.innerHTML = `<img src="${ART.portraitURL(id, coat)}" alt="">`;
       b.addEventListener('click', () => { pickState.breed = id; pickState.coat = standardCoats(id)[0].id; renderStart(); });
       bg.appendChild(b);
     }
@@ -5576,11 +5762,15 @@
     for (const [id, T] of Object.entries(D.TRAITS)) {
       const b = document.createElement('button');
       b.className = 'trait' + (id === pickState.trait ? ' sel' : '');
-      b.innerHTML = `<span>${T.icon}</span><small>${esc(T.name)}</small>`;
+      b.innerHTML = `${thumbOf.pic(T.icon)}<small>${esc(T.name)}</small>`;
       b.addEventListener('click', () => { pickState.trait = id; renderStart(); });
       tg.appendChild(b);
     }
     $('traitDesc').textContent = D.TRAITS[pickState.trait].desc;
+    $('startBreed').textContent = D.BREEDS[pickState.breed].name;
+    $('startCoat').textContent = ART.coatOf(pickState.breed, pickState.coat).name;
+    const url = ART.thumbURL('dog', `${pickState.breed}|${pickState.coat}`);
+    if (url) $('startDog').src = url;
   }
   function openStart() {
     pickState.breed = pick(Object.keys(D.BREEDS));
@@ -5625,7 +5815,7 @@
       const B = D.BREEDS[p.breed], C = ART.coatOf(p.breed, p.coat), T = D.TRAITS[p.trait];
       const b = document.createElement('button');
       b.className = 'pup' + (i === litterPick ? ' sel' : '') + (p.taken ? ' taken' : '');
-      b.innerHTML = `<img src="${ART.portraitURL(p.breed, p.coat)}" alt=""><b>${esc(B.name)}</b><small>${esc(C.name)}</small><span class="chip">${T.icon} ${esc(T.name)}</span>${p.taken ? '<em>Adopted ❤️</em>' : ''}`;
+      b.innerHTML = `${TH('dog', `${p.breed}|${p.coat}`)}<b>${esc(B.name)}</b><small>${esc(C.name)}</small><span class="chip">${esc(T.name)}</span>${p.taken ? '<em>Adopted</em>' : ''}`;
       b.addEventListener('click', () => {
         if (p.taken) return;
         litterPick = i;
@@ -5636,7 +5826,7 @@
     });
     const P = L.pups[litterPick];
     $('pupPick').classList.toggle('hidden', !P);
-    if (P) $('pupDesc').textContent = `${D.TRAITS[P.trait].icon} ${D.TRAITS[P.trait].name}: ${D.TRAITS[P.trait].desc}`;
+    if (P) $('pupDesc').textContent = `${D.TRAITS[P.trait].name}: ${D.TRAITS[P.trait].desc}`;
     const price = adoptPrice();
     $('adoptBtn').textContent = `Adopt for 🪙 ${price}`;
     $('adoptBtn').disabled = !P || state.coins < price || dogs.length >= capacity();
@@ -5781,6 +5971,7 @@
   }
   function toast(msg) {
     const t = $('toast');
+    t.dataset.raw = msg;
     t.textContent = msg;
     placeToast();
     t.classList.add('show');
@@ -5821,10 +6012,10 @@
       if (siteLabel) setSpriteText(siteLabel, '🏗️ ' + left);
     }
     const W = curWeather();
-    const icon = weatherId === 'sun' && nightLevel > 0.5 ? '🌙' : W.icon;
-    $('clockIc').textContent = icon;
+    const night = weatherId === 'sun' && nightLevel > 0.5;
+    setIcon($('clockIc'), night ? 'moon' : WX_ICON[weatherId] || 'sun');
     $('clockTime').textContent = clockNow.hm;
-    $('clockWx').textContent = icon === '🌙' ? 'Clear night' : W.name;
+    $('clockWx').textContent = night ? 'Clear night' : W.name;
     updatePack();
   }
 
@@ -5870,13 +6061,13 @@
   function openHub() {
     const home = place === 'home' && !visit;
     $('tileDecorate').classList.toggle('hidden', !home);
-    $('hubTitle').textContent = place === 'park' ? `${LOC().icon} ${LOC().name}` : 'Menu';
-    $('tileBagSub').textContent = `${state.toys.length} toys · throwing ${(D.TOYS[state.toy] || D.TOYS.tennis).icon}`;
+    $('hubTitle').textContent = place === 'park' ? LOC().name : 'Menu';
+    $('tileBagSub').textContent = `${state.toys.length} toys · throwing the ${(D.TOYS[state.toy] || D.TOYS.tennis).name.toLowerCase()}`;
     let all = 0, got = 0;
     for (const [id] of BOOK_PAGES) { const pg = bookPage(id); all += pg.total; got += pg.done; }
     $('tileAlbumSub').textContent = `${got} of ${all} collected`;
     const left = state.daily ? state.daily.items.filter((c) => !c.done).length : 0;
-    $('tileDailySub').textContent = !state.daily ? "Today's goals" : left ? `${left} left today` : 'All done today 🎉';
+    $('tileDailySub').textContent = !state.daily ? "Today's goals" : left ? `${left} left today` : 'All done today';
     computeComfort();
     renderComfortChip();
     updateHud();
@@ -5896,7 +6087,7 @@
     if (!has('food') && !has('water')) { toast('Place a food or water bowl first (🐾 Menu → 🎨 Decorate)'); return; }
     if (has('food')) fillBowls('food', true);
     if (has('water')) fillBowls('water', true);
-    toast(has('food') && has('water') ? 'Bowls filled with food and water 🥣💧' : has('food') ? 'Food bowls filled 🥣' : 'Water bowls filled 💧');
+    toast(has('food') && has('water') ? 'Bowls filled with food and water' : has('food') ? 'Food bowls filled' : 'Water bowls filled');
   }
   function doAct(act, b) {
     if (act === 'menu') openHub();
@@ -5923,7 +6114,7 @@
     else if (act === 'tab') { decoTab = b.dataset.tab; renderInv(); }
     else if (act === 'clock') {
       const W = curWeather();
-      toast(`${W.icon} ${W.name} in Germany, ${clockNow.hm}${W.muddy ? ' · walks get muddy' : ''}${W.lightning ? ' · shy dogs get scared' : ''}`);
+      toast(`${W.name} in Germany, ${clockNow.hm}${W.muddy ? ' · walks get muddy' : ''}${W.lightning ? ' · shy dogs get scared' : ''}`);
     } else if (act === 'rotate') { placeRot = (placeRot + 1) % 4; renderInv(); toast(`Next item: ${rotNames[placeRot].toLowerCase()}`); }
   }
   $('shop').addEventListener('click', (e) => {
@@ -6157,10 +6348,12 @@
     for (const d of dogs) d.updateLeash();
     updateParticles(dt);
     updateWallet(dt);
+    pumpThumbs();
     let fxW = localWeather();
     if (place === 'park' && S.env && S.env.snowFall && !fxW.precip) fxW = D.WEATHER.snow;
     lightning = weatherFX.update(dt, fxW, camLook, (x, z) => place === 'home' && isHomeTile(Math.floor(x), Math.floor(z)) && !isGardenTile(Math.floor(x), Math.floor(z)));
     applyEnvironment();
+    updateDusk(Math.max(nightLevel, place === 'park' && S && S.env && S.env.dark ? 1 : 0));
 
     if (tapT > 0) {
       tapT -= dt;
@@ -6256,15 +6449,16 @@
     for (const dd of state.dogs) addDog(dd, false);
     selected = dogs[0] || null;
     updateToyIcons();
+    refreshLeashBtn();
     refreshUI();
     tickClock();
     applyEnvironment();
     if (!dogs.length) openStart();
     else if (notes.has('v3')) toast('New: breeds, personalities, weather & more! Tap a dog bubble to meet them 🐾');
-    else if (notes.has('v4')) toast('New: 🎓 Trick Mode, neighbors on walks & friendships! Open a dog bubble → 🎓 Tricks');
+    else if (notes.has('v4')) toast('New: Trick Mode, neighbors on walks & friendships! Open a dog bubble → Tricks');
     else if (notes.has('v5')) toast('New: baths, cooking, outfits, gardens, comfort & visit links! 🏡');
-    else if (notes.has('v6')) toast('New: 🗺️ new places to walk, 📋 daily challenges & a 📒 collectibles book!');
-    else if (notes.has('v7')) toast('New: caves, a snowy village, a carnival, a fairy realm & the moon! 🗺️');
+    else if (notes.has('v6')) toast('New: new places to walk, daily challenges & a collectibles book!');
+    else if (notes.has('v7')) toast('New: new places to discover, and a fresh new look!');
     else toast(`Welcome back! ${dogs[0].name} missed you 🐾`);
     noteSeen();
     ensureDaily();
@@ -6290,7 +6484,7 @@
       grantFind, rollFind, walkLoot, beachDig, askStay, tideLevel, setTide(v) { tideOverride = v; }, openShop, get shopVendor() { return shopVendor; },
       startVendor, tapVendor, ensureDaily, progress, openDaily, openAlbum, bookPage, get albumPage() { return albumPage; }, set albumPage(v) { albumPage = v; },
       noteSeen, mainDirt, addDirt, walkDirt, isSolid, quirkSolid, inPlaza, plazaPerformance, performTrick, spawnWalkers,
-      setZoom(z) { zoom = z; }, snapCam() { updateCamera(0, true); },
+      setZoom(z) { zoom = z; }, snapCam() { updateCamera(0, true); }, get thumbWait() { return [...thumbWait]; }, pumpThumbs,
       doEcho, startSled, useRocket, usePortal, rideWheel, carnivalTrick, turnStatue, catchFloater, craterDig, travel, canVisitNow, ctxAction, get ctxKind() { return ctxKind; },
     };
   }
