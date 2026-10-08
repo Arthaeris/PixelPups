@@ -1,6 +1,17 @@
 'use strict';
-/* Voxel Paws — a tiny voxel dog game. Uses three.js r128 (loaded in index.html). */
+/* Voxel Paws — a cozy voxel dog game. Uses three.js r128 (loaded in index.html). */
 (function () {
+  // =====================================================================
+  // Settings (easy to tweak later)
+  // =====================================================================
+  const CHUNK = 6;            // one home section is CHUNK × CHUNK tiles
+  const BUILD_MINUTES = 10;   // how long a new section takes to build
+  const MAX_CHUNKS = 16;      // the biggest a home can get
+  const LOW = 25;             // a need below this shows a yellow badge
+  const CRITICAL = 10;        // … and below this a red one
+  const expandPrice = (n) => Math.round((80 * Math.pow(1.6, n - 1)) / 5) * 5; // n = sections you already own
+  const SAVE_KEY = 'voxelpaws-save-v1';
+
   // =====================================================================
   // Utilities
   // =====================================================================
@@ -24,8 +35,12 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+  function fmtTime(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
 
-  // Shared geometry + material caches keep draw setup cheap on phones
+  // Shared geometry + material caches keep things cheap on phones
   const geoCache = new Map();
   const matCache = new Map();
   function geo(w, h, d) {
@@ -78,6 +93,11 @@
     emojiTex.set(e, t);
     return t;
   }
+  function emojiSprite(e, size) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexture(e), transparent: true, depthWrite: false }));
+    s.scale.set(size, size, 1);
+    return s;
+  }
   function roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -88,6 +108,14 @@
     ctx.closePath();
   }
   function textSprite(text, height = 0.6) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
+    s.userData.h = height;
+    setSpriteText(s, text);
+    return s;
+  }
+  function setSpriteText(s, text) {
+    if (s.userData.text === text) return;
+    s.userData.text = text;
     const c = document.createElement('canvas');
     const ctx = c.getContext('2d');
     const font = 'bold 40px -apple-system, "Segoe UI", sans-serif';
@@ -102,9 +130,10 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, w / 2, 38);
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
-    s.scale.set(height * w / 72, height, 1);
-    return s;
+    if (s.material.map) s.material.map.dispose();
+    s.material.map = new THREE.CanvasTexture(c);
+    s.material.needsUpdate = true;
+    s.scale.set((s.userData.h * w) / 72, s.userData.h, 1);
   }
 
   // =====================================================================
@@ -120,7 +149,7 @@
   world.background = new THREE.Color(SKY);
   const parkFog = new THREE.Fog(SKY, 24, 50);
 
-  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 300);
   world.add(new THREE.HemisphereLight(0xffffff, 0xb9a88a, 0.85));
   const sun = new THREE.DirectionalLight(0xffffff, 0.55);
   sun.position.set(6, 12, 8);
@@ -128,33 +157,82 @@
 
   const homeRoot = pivot(world);
   const roomGroup = pivot(homeRoot);
+  const gridGroup = pivot(homeRoot);
   const furnGroup = pivot(homeRoot);
+  const siteGroup = pivot(homeRoot);
+  const candGroup = pivot(homeRoot);
   const parkRoot = pivot(world);
   parkRoot.visible = false;
+  gridGroup.visible = false;
+  box(homeRoot, 260, 0.1, 260, '#a3d18b', 0, -0.17, 0); // the yard around the house
 
   window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+    placeToast();
   });
+
+  // Special materials
+  const lampMat = new THREE.MeshLambertMaterial({ color: '#fff0c4', emissive: '#ffcf6b', emissiveIntensity: 0.65 });
+  const waterMat = new THREE.MeshLambertMaterial({ color: '#7cc8f0', emissive: '#3a8fd0', emissiveIntensity: 0.25 });
+  const screenMat = new THREE.MeshLambertMaterial({ color: '#8fc4ff', emissive: '#4a90e2', emissiveIntensity: 0.6 });
+  const fireMat = new THREE.MeshLambertMaterial({ color: '#ffb347', emissive: '#ff7a1a', emissiveIntensity: 0.9 });
+  const fireMat2 = new THREE.MeshLambertMaterial({ color: '#ffe066', emissive: '#ffcc33', emissiveIntensity: 0.9 });
+  const glassMat = new THREE.MeshLambertMaterial({ color: '#bfe6ff', transparent: true, opacity: 0.35, depthWrite: false });
+  const goldMat = new THREE.MeshLambertMaterial({ color: '#ffd34d', emissive: '#c99a00', emissiveIntensity: 0.35 });
 
   // =====================================================================
   // Game data
   // =====================================================================
-  const SAVE_KEY = 'voxelpaws-save-v1';
-  const MAX_ROOM = 14;
-  const EXPAND_PRICE = { 6: 60, 8: 120, 10: 200, 12: 320 };
-
+  // role: 'bed' = dogs sleep there, 'food' / 'water' = bowls that can be filled
   const ITEMS = {
-    bed:    { name: 'Dog bed',   icon: '🛏️', price: 35, solid: false },
-    bowl:   { name: 'Food bowl', icon: '🥣', price: 20, solid: false },
-    rug:    { name: 'Rug',       icon: '🧶', price: 15, solid: false },
-    plant:  { name: 'Plant',     icon: '🪴', price: 20, solid: true },
-    lamp:   { name: 'Lamp',      icon: '💡', price: 25, solid: true },
-    table:  { name: 'Table',     icon: '🍽️', price: 30, solid: true },
-    toybox: { name: 'Toy box',   icon: '🧸', price: 30, solid: true },
-    shelf:  { name: 'Bookshelf', icon: '📚', price: 40, solid: true },
-    sofa:   { name: 'Sofa',      icon: '🛋️', price: 45, solid: true },
+    // Dog stuff
+    bed:       { name: 'Dog bed',        icon: '🛏️', price: 35, cat: 'dog', solid: false, role: 'bed', sleepY: 0.1 },
+    bowl:      { name: 'Food bowl',      icon: '🥣', price: 20, cat: 'dog', solid: false, role: 'food' },
+    water:     { name: 'Water bowl',     icon: '💧', price: 20, cat: 'dog', solid: false, role: 'water' },
+    cushion:   { name: 'Floor cushion',  icon: '🟪', price: 25, cat: 'dog', solid: false, role: 'bed', sleepY: 0.08 },
+    kennel:    { name: 'Dog house',      icon: '🏠', price: 70, cat: 'dog', solid: true },
+    toybox:    { name: 'Toy box',        icon: '🧸', price: 30, cat: 'dog', solid: true },
+    hurdle:    { name: 'Agility hurdle', icon: '🚧', price: 40, cat: 'dog', solid: true },
+    // Living room
+    sofa:      { name: 'Sofa',           icon: '🛋️', price: 45, cat: 'living', solid: true },
+    armchair:  { name: 'Armchair',       icon: '💺', price: 40, cat: 'living', solid: true },
+    beanbag:   { name: 'Bean bag',       icon: '🟠', price: 30, cat: 'living', solid: true },
+    tv:        { name: 'TV stand',       icon: '📺', price: 60, cat: 'living', solid: true },
+    shelf:     { name: 'Bookshelf',      icon: '📚', price: 40, cat: 'living', solid: true },
+    lamp:      { name: 'Floor lamp',     icon: '💡', price: 25, cat: 'living', solid: true },
+    rug:       { name: 'Rug',            icon: '🧶', price: 15, cat: 'living', solid: false },
+    fireplace: { name: 'Fireplace',      icon: '🔥', price: 90, cat: 'living', solid: true },
+    piano:     { name: 'Piano',          icon: '🎹', price: 85, cat: 'living', solid: true },
+    // Kitchen
+    table:     { name: 'Table',          icon: '🍽️', price: 30, cat: 'kitchen', solid: true },
+    chair:     { name: 'Chair',          icon: '🪑', price: 15, cat: 'kitchen', solid: true },
+    fridge:    { name: 'Fridge',         icon: '🧊', price: 55, cat: 'kitchen', solid: true },
+    stove:     { name: 'Stove',          icon: '🍳', price: 50, cat: 'kitchen', solid: true },
+    // Decor
+    plant:     { name: 'Plant',          icon: '🪴', price: 20, cat: 'decor', solid: true },
+    cactus:    { name: 'Cactus',         icon: '🌵', price: 15, cat: 'decor', solid: true },
+    sunflower: { name: 'Sunflower',      icon: '🌻', price: 18, cat: 'decor', solid: true },
+    aquarium:  { name: 'Aquarium',       icon: '🐠', price: 65, cat: 'decor', solid: true },
+    clock:     { name: 'Grandfather clock', icon: '🕰️', price: 50, cat: 'decor', solid: true },
+    dresser:   { name: 'Dresser',        icon: '🗄️', price: 40, cat: 'decor', solid: true },
+    desk:      { name: 'Desk',           icon: '💻', price: 45, cat: 'decor', solid: true },
+  };
+  const CATS = [['dog', '🐶 Dog stuff'], ['living', '🛋️ Living room'], ['kitchen', '🍳 Kitchen'], ['decor', '🪴 Decor']];
+
+  // price: null = can only be found on walks. weight = how often it's found.
+  const TOYS = {
+    tennis:  { name: 'Tennis ball',  icon: '🎾', price: 0,    dist: 1,    arc: 1.6, bounce: 0.3,  spin: 'roll',   restY: 0.1,  weight: 10 },
+    redball: { name: 'Rubber ball',  icon: '🔴', price: 25,   dist: 1.1,  arc: 1.7, bounce: 0.45, spin: 'roll',   restY: 0.11, weight: 8 },
+    bouncy:  { name: 'Bouncy ball',  icon: '🟣', price: 40,   dist: 1,    arc: 1.9, bounce: 0.9,  spin: 'roll',   restY: 0.1,  weight: 6, decay: 0.9 },
+    bone:    { name: 'Squishy bone', icon: '🦴', price: 35,   dist: 0.8,  arc: 1.3, bounce: 0.1,  spin: 'tumble', restY: 0.05, weight: 8, happy: 22, squeak: true },
+    duck:    { name: 'Rubber duck',  icon: '🐤', price: 30,   dist: 0.85, arc: 1.4, bounce: 0.15, spin: 'tumble', restY: 0.08, weight: 8, squeak: true },
+    rope:    { name: 'Rope toy',     icon: '🪢', price: 30,   dist: 0.9,  arc: 1.3, bounce: 0,    spin: 'tumble', restY: 0.05, weight: 8, happy: 18 },
+    donut:   { name: 'Plush donut',  icon: '🍩', price: 45,   dist: 0.85, arc: 1.4, bounce: 0.05, spin: 'tumble', restY: 0.05, weight: 6, happy: 20 },
+    frisbee: { name: 'Flying disc',  icon: '🥏', price: 60,   dist: 1.5,  arc: 1.0, bounce: 0,    spin: 'flat',   restY: 0.03, weight: 6, time: 1.1, happy: 20 },
+    stick:   { name: 'Stick',        icon: '🪵', price: null, dist: 1,    arc: 1.5, bounce: 0.05, spin: 'tumble', restY: 0.04, weight: 40 },
+    golden:  { name: 'Golden ball',  icon: '🌟', price: null, dist: 1.1,  arc: 1.7, bounce: 0.4,  spin: 'roll',   restY: 0.11, weight: 2, happy: 25, coins: 2 },
   };
 
   const BREEDS = [
@@ -166,24 +244,35 @@
     { name: 'Ginger', body: '#d2652d', dark: '#9c4519', light: '#f4c9a2' },
   ];
   const DOG_NAMES = ['Biscuit', 'Pixel', 'Mochi', 'Pepper', 'Waffles', 'Nugget', 'Luna', 'Bean', 'Ziggy', 'Noodle', 'Maple', 'Cosmo', 'Pretzel', 'Juno', 'Toast'];
+  const STATS = [
+    { k: 'hunger', ic: '🍖' },
+    { k: 'thirst', ic: '💧' },
+    { k: 'energy', ic: '⚡' },
+    { k: 'happy', ic: '❤️' },
+  ];
 
   function defaultState() {
     return {
+      v: 2,
       coins: 20,
-      roomSize: 6,
+      chunks: [[0, 0]],
+      build: null,
       furniture: [
         { type: 'bed', i: 0, j: 3, rot: 1 },
         { type: 'bowl', i: 3, j: 0, rot: 0, filled: true },
+        { type: 'water', i: 2, j: 0, rot: 0, filled: true },
         { type: 'rug', i: 3, j: 3, rot: 0 },
       ],
       inventory: { plant: 1 },
+      toys: ['tennis'],
+      toy: 'tennis',
       dogs: [],
     };
   }
   let state = defaultState();
 
   let place = 'home';      // 'home' | 'park'
-  let mode = 'normal';     // 'normal' | 'decorate'
+  let mode = 'normal';     // 'normal' | 'decorate' | 'build'
   const dogs = [];
   let selected = null;
   let selectedInv = null;
@@ -192,11 +281,11 @@
   let walkEarn = 0;
   let tiredWarned = false;
   let zoom = 1;
+  let animT = 0;
 
   // =====================================================================
-  // Furniture builders (each item fits in one 1×1 tile, facing +z)
+  // Furniture builders (each item fits in one 1×1 tile, front faces +z)
   // =====================================================================
-  const lampMat = new THREE.MeshLambertMaterial({ color: '#fff0c4', emissive: '#ffcf6b', emissiveIntensity: 0.65 });
   const BUILDERS = {
     bed(g) {
       box(g, 0.86, 0.1, 0.86, '#7b5ea7', 0, 0.05, 0);
@@ -208,37 +297,40 @@
     bowl(g) {
       box(g, 0.42, 0.12, 0.42, '#d64545', 0, 0.06, 0);
       box(g, 0.3, 0.02, 0.3, '#7d2323', 0, 0.115, 0);
-      const food = pivot(g);
-      box(food, 0.3, 0.05, 0.3, '#b0703a', 0, 0.13, 0);
-      box(food, 0.08, 0.05, 0.08, '#8f5428', 0.06, 0.165, -0.05);
-      box(food, 0.07, 0.05, 0.07, '#c98a4e', -0.07, 0.165, 0.06);
-      g.userData.food = food;
+      const c = pivot(g);
+      box(c, 0.3, 0.05, 0.3, '#b0703a', 0, 0.13, 0);
+      box(c, 0.08, 0.05, 0.08, '#8f5428', 0.06, 0.165, -0.05);
+      box(c, 0.07, 0.05, 0.07, '#c98a4e', -0.07, 0.165, 0.06);
+      g.userData.content = c;
     },
-    rug(g) {
-      box(g, 0.98, 0.03, 0.98, '#b84a5a', 0, 0.015, 0);
-      box(g, 0.74, 0.035, 0.74, '#f0c27b', 0, 0.018, 0);
-      box(g, 0.42, 0.04, 0.42, '#b84a5a', 0, 0.02, 0);
+    water(g) {
+      box(g, 0.42, 0.12, 0.42, '#3d7fd6', 0, 0.06, 0);
+      box(g, 0.3, 0.02, 0.3, '#1f4f8f', 0, 0.115, 0);
+      box(g, 0.08, 0.06, 0.02, '#ffffff', 0, 0.06, 0.215);
+      const c = pivot(g);
+      box(c, 0.3, 0.03, 0.3, waterMat, 0, 0.125, 0);
+      g.userData.content = c;
     },
-    plant(g) {
-      box(g, 0.36, 0.32, 0.36, '#c0693f', 0, 0.16, 0);
-      box(g, 0.4, 0.06, 0.4, '#a6532f', 0, 0.33, 0);
-      box(g, 0.3, 0.03, 0.3, '#5b3b25', 0, 0.36, 0);
-      [[0, 0.6, 0, 0.3, 0.42, 0.3, '#4caf50'], [0.14, 0.76, 0.05, 0.22, 0.3, 0.22, '#66bb6a'],
-       [-0.13, 0.8, -0.04, 0.2, 0.34, 0.2, '#43a047'], [0.02, 1.0, -0.02, 0.18, 0.22, 0.18, '#81c784'],
-       [-0.05, 0.55, 0.15, 0.2, 0.2, 0.2, '#388e3c']]
-        .forEach(([x, y, z, w, h, d, c]) => box(g, w, h, d, c, x, y, z));
+    cushion(g) {
+      box(g, 0.82, 0.12, 0.82, '#e98aa8', 0, 0.06, 0);
+      box(g, 0.62, 0.05, 0.62, '#f6b9cc', 0, 0.135, 0);
+      for (const [x, z] of [[-0.36, -0.36], [0.36, -0.36], [-0.36, 0.36], [0.36, 0.36]]) box(g, 0.12, 0.08, 0.12, '#d46f90', x, 0.12, z);
     },
-    lamp(g) {
-      box(g, 0.32, 0.06, 0.32, '#3d3a40', 0, 0.03, 0);
-      box(g, 0.06, 1.1, 0.06, '#3d3a40', 0, 0.6, 0);
-      box(g, 0.42, 0.3, 0.42, lampMat, 0, 1.25, 0);
-    },
-    table(g) {
-      box(g, 0.88, 0.08, 0.88, '#a67c52', 0, 0.62, 0);
-      for (const [x, z] of [[-0.36, -0.36], [0.36, -0.36], [-0.36, 0.36], [0.36, 0.36]]) box(g, 0.08, 0.58, 0.08, '#8a6440', x, 0.29, z);
-      box(g, 0.12, 0.2, 0.12, '#5c8fd6', 0.15, 0.76, -0.1);
-      box(g, 0.12, 0.1, 0.12, '#f06292', 0.15, 0.91, -0.1);
-      box(g, 0.22, 0.05, 0.16, '#e57373', -0.18, 0.685, 0.12);
+    kennel(g) {
+      const wall = '#d9a066', roof = '#c0392b';
+      box(g, 0.92, 0.06, 0.92, '#8a6440', 0, 0.03, 0);
+      box(g, 0.8, 0.6, 0.08, wall, 0, 0.36, -0.36);
+      box(g, 0.08, 0.6, 0.72, wall, -0.36, 0.36, 0);
+      box(g, 0.08, 0.6, 0.72, wall, 0.36, 0.36, 0);
+      box(g, 0.22, 0.6, 0.08, wall, -0.29, 0.36, 0.36);
+      box(g, 0.22, 0.6, 0.08, wall, 0.29, 0.36, 0.36);
+      box(g, 0.36, 0.16, 0.08, wall, 0, 0.58, 0.36);
+      box(g, 0.64, 0.5, 0.02, '#3b2a1e', 0, 0.31, 0.3);
+      box(g, 0.98, 0.1, 0.98, roof, 0, 0.71, 0);
+      box(g, 0.74, 0.1, 0.98, roof, 0, 0.81, 0);
+      box(g, 0.5, 0.1, 0.98, '#a93226', 0, 0.91, 0);
+      box(g, 0.26, 0.1, 0.98, roof, 0, 1.01, 0);
+      box(g, 0.28, 0.08, 0.02, '#f4efe6', 0, 0.58, 0.405);
     },
     toybox(g) {
       box(g, 0.76, 0.42, 0.52, '#e8b84a', 0, 0.21, 0);
@@ -247,6 +339,47 @@
       box(g, 0.3, 0.07, 0.08, '#f5f0e6', 0.13, 0.46, 0.05);
       box(g, 0.08, 0.12, 0.13, '#f5f0e6', -0.02, 0.46, 0.05);
       box(g, 0.08, 0.12, 0.13, '#f5f0e6', 0.28, 0.46, 0.05);
+    },
+    hurdle(g) {
+      for (const x of [-0.4, 0.4]) {
+        box(g, 0.08, 0.62, 0.08, '#f4efe6', x, 0.31, 0);
+        box(g, 0.1, 0.04, 0.42, '#3d3a40', x, 0.02, 0);
+      }
+      for (let k = 0; k < 4; k++) {
+        box(g, 0.18, 0.06, 0.06, k % 2 ? '#f4efe6' : '#e2453c', -0.27 + k * 0.18, 0.42, 0);
+        box(g, 0.18, 0.05, 0.05, k % 2 ? '#e2453c' : '#f4efe6', -0.27 + k * 0.18, 0.2, 0);
+      }
+    },
+    sofa(g) {
+      box(g, 0.94, 0.3, 0.62, '#4f8a8b', 0, 0.2, 0.04);
+      box(g, 0.72, 0.08, 0.5, '#6aa6a7', 0, 0.39, 0.08);
+      box(g, 0.94, 0.44, 0.16, '#3f7273', 0, 0.53, -0.3);
+      box(g, 0.12, 0.24, 0.62, '#3f7273', -0.41, 0.46, 0.04);
+      box(g, 0.12, 0.24, 0.62, '#3f7273', 0.41, 0.46, 0.04);
+      box(g, 0.22, 0.2, 0.08, '#f2c14e', -0.25, 0.54, -0.18);
+    },
+    armchair(g) {
+      box(g, 0.74, 0.28, 0.66, '#c96f53', 0, 0.2, 0.02);
+      box(g, 0.5, 0.08, 0.5, '#e08b6f', 0, 0.38, 0.07);
+      box(g, 0.74, 0.5, 0.16, '#a8573f', 0, 0.55, -0.3);
+      box(g, 0.12, 0.24, 0.62, '#a8573f', -0.31, 0.46, 0.02);
+      box(g, 0.12, 0.24, 0.62, '#a8573f', 0.31, 0.46, 0.02);
+      for (const [x, z] of [[-0.3, -0.25], [0.3, -0.25], [-0.3, 0.3], [0.3, 0.3]]) box(g, 0.07, 0.06, 0.07, '#5a3620', x, 0.03, z);
+    },
+    beanbag(g) {
+      box(g, 0.8, 0.24, 0.8, '#f2a541', 0, 0.12, 0);
+      box(g, 0.66, 0.16, 0.66, '#f4b55f', 0, 0.3, 0.04);
+      box(g, 0.64, 0.34, 0.22, '#e8952b', 0, 0.4, -0.28);
+      box(g, 0.4, 0.08, 0.4, '#f6c27a', 0, 0.41, 0.08);
+    },
+    tv(g) {
+      box(g, 0.92, 0.36, 0.42, '#6d4c33', 0, 0.18, -0.2);
+      box(g, 0.4, 0.26, 0.02, '#5a3d28', -0.21, 0.18, 0.015);
+      box(g, 0.4, 0.26, 0.02, '#5a3d28', 0.21, 0.18, 0.015);
+      box(g, 0.12, 0.06, 0.1, '#333333', 0, 0.39, -0.25);
+      box(g, 0.84, 0.5, 0.06, '#26242b', 0, 0.67, -0.27);
+      box(g, 0.76, 0.42, 0.02, screenMat, 0, 0.67, -0.235);
+      box(g, 0.12, 0.1, 0.1, '#f2c14e', 0.36, 0.41, -0.1);
     },
     shelf(g) {
       const wood = '#7a5232';
@@ -269,13 +402,163 @@
         }
       }
     },
-    sofa(g) {
-      box(g, 0.94, 0.3, 0.62, '#4f8a8b', 0, 0.2, 0.04);
-      box(g, 0.72, 0.08, 0.5, '#6aa6a7', 0, 0.39, 0.08);
-      box(g, 0.94, 0.44, 0.16, '#3f7273', 0, 0.53, -0.3);
-      box(g, 0.12, 0.24, 0.62, '#3f7273', -0.41, 0.46, 0.04);
-      box(g, 0.12, 0.24, 0.62, '#3f7273', 0.41, 0.46, 0.04);
-      box(g, 0.22, 0.2, 0.08, '#f2c14e', -0.25, 0.54, -0.18);
+    lamp(g) {
+      box(g, 0.32, 0.06, 0.32, '#3d3a40', 0, 0.03, 0);
+      box(g, 0.06, 1.1, 0.06, '#3d3a40', 0, 0.6, 0);
+      box(g, 0.42, 0.3, 0.42, lampMat, 0, 1.25, 0);
+    },
+    rug(g) {
+      box(g, 0.98, 0.03, 0.98, '#b84a5a', 0, 0.015, 0);
+      box(g, 0.74, 0.035, 0.74, '#f0c27b', 0, 0.018, 0);
+      box(g, 0.42, 0.04, 0.42, '#b84a5a', 0, 0.02, 0);
+    },
+    fireplace(g) {
+      const stone = '#a29d96';
+      box(g, 0.96, 0.86, 0.36, stone, 0, 0.43, -0.3);
+      box(g, 0.52, 0.42, 0.06, '#2b2220', 0, 0.27, -0.1);
+      box(g, 1.02, 0.08, 0.46, '#7a5232', 0, 0.9, -0.26);
+      box(g, 0.56, 0.6, 0.3, stone, 0, 1.24, -0.33);
+      box(g, 0.98, 0.06, 0.24, '#8c877f', 0, 0.03, 0.0);
+      const fire = pivot(g, 0, 0, -0.04);
+      box(fire, 0.36, 0.06, 0.08, '#5a3a22', 0, 0.09, 0);
+      box(fire, 0.16, 0.18, 0.05, fireMat, -0.07, 0.2, 0.01);
+      box(fire, 0.14, 0.26, 0.05, fireMat, 0.07, 0.24, 0);
+      box(fire, 0.08, 0.12, 0.05, fireMat2, 0, 0.18, 0.03);
+      g.userData.anim = (t) => { fire.scale.y = 1 + Math.sin(t * 11) * 0.08 + Math.sin(t * 17) * 0.05; };
+    },
+    piano(g) {
+      const wood = '#2b2730';
+      box(g, 0.96, 0.92, 0.36, wood, 0, 0.46, -0.3);
+      box(g, 0.96, 0.06, 0.26, wood, 0, 0.62, -0.02);
+      box(g, 0.88, 0.04, 0.16, '#f5f5f5', 0, 0.66, 0.0);
+      for (const x of [-0.33, -0.21, -0.03, 0.09, 0.21, 0.37]) box(g, 0.05, 0.03, 0.09, '#111111', x, 0.69, -0.03);
+      box(g, 0.07, 0.6, 0.07, wood, -0.42, 0.3, 0.06);
+      box(g, 0.07, 0.6, 0.07, wood, 0.42, 0.3, 0.06);
+      box(g, 0.3, 0.22, 0.02, '#f7f1e3', 0, 0.82, -0.11);
+      box(g, 0.08, 0.1, 0.08, '#ffd54f', 0.36, 0.97, -0.3);
+    },
+    table(g) {
+      box(g, 0.88, 0.08, 0.88, '#a67c52', 0, 0.62, 0);
+      for (const [x, z] of [[-0.36, -0.36], [0.36, -0.36], [-0.36, 0.36], [0.36, 0.36]]) box(g, 0.08, 0.58, 0.08, '#8a6440', x, 0.29, z);
+      box(g, 0.12, 0.2, 0.12, '#5c8fd6', 0.15, 0.76, -0.1);
+      box(g, 0.12, 0.1, 0.12, '#f06292', 0.15, 0.91, -0.1);
+      box(g, 0.22, 0.05, 0.16, '#e57373', -0.18, 0.685, 0.12);
+    },
+    chair(g) {
+      const w = '#b98a5a', leg = '#9a6f45';
+      box(g, 0.5, 0.06, 0.5, w, 0, 0.42, 0.04);
+      for (const [x, z] of [[-0.2, -0.17], [0.2, -0.17], [-0.2, 0.25], [0.2, 0.25]]) box(g, 0.06, 0.42, 0.06, leg, x, 0.21, z);
+      box(g, 0.06, 0.48, 0.06, leg, -0.2, 0.69, -0.18);
+      box(g, 0.06, 0.48, 0.06, leg, 0.2, 0.69, -0.18);
+      box(g, 0.46, 0.2, 0.05, w, 0, 0.82, -0.18);
+      box(g, 0.4, 0.05, 0.4, '#e57373', 0, 0.47, 0.05);
+    },
+    fridge(g) {
+      box(g, 0.72, 1.56, 0.62, '#e9eff3', 0, 0.78, -0.16);
+      box(g, 0.73, 0.02, 0.02, '#b8c2c9', 0, 1.06, 0.155);
+      box(g, 0.04, 0.3, 0.04, '#9aa5ad', 0.28, 1.28, 0.17);
+      box(g, 0.04, 0.4, 0.04, '#9aa5ad', 0.28, 0.7, 0.17);
+      box(g, 0.08, 0.08, 0.02, '#e57373', -0.18, 1.3, 0.155);
+      box(g, 0.08, 0.08, 0.02, '#64b5f6', -0.05, 1.22, 0.155);
+      box(g, 0.14, 0.18, 0.02, '#fff8e1', -0.12, 0.8, 0.155);
+    },
+    stove(g) {
+      box(g, 0.94, 0.82, 0.6, '#f2efe9', 0, 0.41, -0.18);
+      box(g, 0.98, 0.06, 0.64, '#5a5560', 0, 0.85, -0.18);
+      for (const [x, z] of [[-0.22, -0.32], [0.22, -0.32], [-0.22, -0.05], [0.22, -0.05]]) box(g, 0.2, 0.02, 0.2, '#222222', x, 0.89, z);
+      box(g, 0.6, 0.42, 0.02, '#3d3a40', 0, 0.36, 0.125);
+      box(g, 0.4, 0.18, 0.02, '#ffb06b', 0, 0.4, 0.135);
+      box(g, 0.5, 0.04, 0.04, '#9aa5ad', 0, 0.62, 0.14);
+      for (const x of [-0.3, -0.1, 0.1, 0.3]) box(g, 0.06, 0.06, 0.03, '#333333', x, 0.74, 0.13);
+      box(g, 0.24, 0.16, 0.24, '#d64545', 0.22, 0.98, -0.05);
+      box(g, 0.26, 0.03, 0.26, '#b83b3b', 0.22, 1.07, -0.05);
+    },
+    plant(g) {
+      box(g, 0.36, 0.32, 0.36, '#c0693f', 0, 0.16, 0);
+      box(g, 0.4, 0.06, 0.4, '#a6532f', 0, 0.33, 0);
+      box(g, 0.3, 0.03, 0.3, '#5b3b25', 0, 0.36, 0);
+      [[0, 0.6, 0, 0.3, 0.42, 0.3, '#4caf50'], [0.14, 0.76, 0.05, 0.22, 0.3, 0.22, '#66bb6a'],
+       [-0.13, 0.8, -0.04, 0.2, 0.34, 0.2, '#43a047'], [0.02, 1.0, -0.02, 0.18, 0.22, 0.18, '#81c784'],
+       [-0.05, 0.55, 0.15, 0.2, 0.2, 0.2, '#388e3c']]
+        .forEach(([x, y, z, w, h, d, c]) => box(g, w, h, d, c, x, y, z));
+    },
+    cactus(g) {
+      const c = '#5c9e4f';
+      box(g, 0.32, 0.26, 0.32, '#d9825b', 0, 0.13, 0);
+      box(g, 0.26, 0.03, 0.26, '#5b3b25', 0, 0.27, 0);
+      box(g, 0.16, 0.62, 0.16, c, 0, 0.58, 0);
+      box(g, 0.12, 0.1, 0.1, c, 0.13, 0.52, 0);
+      box(g, 0.1, 0.22, 0.1, c, 0.2, 0.62, 0);
+      box(g, 0.12, 0.1, 0.1, c, -0.13, 0.66, 0);
+      box(g, 0.1, 0.18, 0.1, c, -0.2, 0.74, 0);
+      box(g, 0.1, 0.06, 0.1, '#f06292', 0, 0.92, 0);
+    },
+    sunflower(g) {
+      box(g, 0.34, 0.3, 0.34, '#5c8fd6', 0, 0.15, 0);
+      box(g, 0.28, 0.03, 0.28, '#5b3b25', 0, 0.31, 0);
+      box(g, 0.06, 0.8, 0.06, '#4caf50', 0, 0.72, 0);
+      box(g, 0.2, 0.05, 0.1, '#66bb6a', 0.1, 0.6, 0);
+      box(g, 0.2, 0.05, 0.1, '#66bb6a', -0.1, 0.8, 0);
+      box(g, 0.42, 0.42, 0.06, '#ffcc33', 0, 1.18, 0.05);
+      box(g, 0.2, 0.2, 0.08, '#6b4226', 0, 1.18, 0.07);
+    },
+    aquarium(g) {
+      box(g, 0.92, 0.42, 0.5, '#4a3a2c', 0, 0.21, -0.2);
+      box(g, 0.84, 0.05, 0.44, '#d9c38f', 0, 0.445, -0.2);
+      box(g, 0.05, 0.24, 0.05, '#43a047', -0.28, 0.58, -0.28);
+      box(g, 0.05, 0.16, 0.05, '#66bb6a', -0.22, 0.54, -0.3);
+      box(g, 0.14, 0.1, 0.12, '#9e9e9e', 0.25, 0.52, -0.3);
+      const fish = [['#ff8c42', 0.66, -0.15], ['#ffd54f', 0.76, -0.25], ['#64b5f6', 0.58, -0.1]].map(([c, y, z]) => {
+        const f = pivot(g, 0, y, z);
+        box(f, 0.11, 0.07, 0.04, c, 0, 0, 0);
+        box(f, 0.04, 0.06, 0.03, c, -0.07, 0, 0);
+        return f;
+      });
+      box(g, 0.9, 0.5, 0.48, glassMat, 0, 0.67, -0.2);
+      box(g, 0.94, 0.04, 0.5, '#333333', 0, 0.94, -0.2);
+      g.userData.anim = (t) => fish.forEach((f, k) => {
+        const p = t * (0.5 + k * 0.17) + k * 2;
+        f.position.x = Math.sin(p) * 0.3;
+        f.rotation.y = Math.cos(p) > 0 ? 0 : Math.PI;
+      });
+    },
+    clock(g) {
+      const w = '#6b4226';
+      box(g, 0.5, 0.26, 0.36, w, 0, 0.13, -0.28);
+      box(g, 0.4, 1.0, 0.3, w, 0, 0.76, -0.28);
+      box(g, 0.52, 0.46, 0.38, w, 0, 1.49, -0.28);
+      box(g, 0.56, 0.08, 0.4, '#5a3620', 0, 1.75, -0.28);
+      box(g, 0.34, 0.34, 0.02, '#f7f1e3', 0, 1.49, -0.08);
+      box(g, 0.03, 0.13, 0.01, '#222222', 0, 1.53, -0.065);
+      box(g, 0.1, 0.03, 0.01, '#222222', 0.04, 1.49, -0.065);
+      box(g, 0.24, 0.6, 0.02, '#3a2a1a', 0, 0.78, -0.125);
+      const pend = pivot(g, 0, 1.04, -0.11);
+      box(pend, 0.03, 0.4, 0.02, '#c9a227', 0, -0.2, 0);
+      box(pend, 0.12, 0.12, 0.03, '#ffd34d', 0, -0.42, 0);
+      g.userData.anim = (t) => { pend.rotation.z = Math.sin(t * 3) * 0.28; };
+    },
+    dresser(g) {
+      box(g, 0.92, 0.72, 0.46, '#b07d4f', 0, 0.4, -0.24);
+      for (const y of [0.18, 0.4, 0.62]) {
+        box(g, 0.84, 0.18, 0.02, '#c48f5e', 0, y, -0.005);
+        box(g, 0.1, 0.04, 0.03, '#ffd54f', 0, y, 0.01);
+      }
+      for (const x of [-0.4, 0.4]) box(g, 0.08, 0.06, 0.08, '#6b4226', x, 0.03, -0.06);
+      box(g, 0.22, 0.28, 0.04, '#8a5a3b', -0.22, 0.92, -0.38);
+      box(g, 0.17, 0.22, 0.02, '#a7b8f5', -0.22, 0.92, -0.355);
+      box(g, 0.14, 0.16, 0.14, '#ba68c8', 0.24, 0.84, -0.26);
+      box(g, 0.08, 0.12, 0.08, '#ef6f8e', 0.24, 0.98, -0.26);
+    },
+    desk(g) {
+      box(g, 0.94, 0.06, 0.56, '#c49a6c', 0, 0.72, -0.18);
+      box(g, 0.06, 0.69, 0.5, '#a67c52', -0.42, 0.345, -0.18);
+      box(g, 0.3, 0.6, 0.5, '#a67c52', 0.29, 0.39, -0.18);
+      box(g, 0.24, 0.02, 0.02, '#7a5232', 0.29, 0.55, 0.075);
+      box(g, 0.24, 0.02, 0.02, '#7a5232', 0.29, 0.35, 0.075);
+      box(g, 0.42, 0.03, 0.28, '#9aa0a8', -0.1, 0.765, -0.12);
+      box(g, 0.42, 0.28, 0.03, '#9aa0a8', -0.1, 0.92, -0.27);
+      box(g, 0.38, 0.24, 0.01, screenMat, -0.1, 0.92, -0.25);
+      box(g, 0.08, 0.1, 0.08, '#ef6f8e', 0.3, 0.8, -0.05);
     },
   };
   function buildItem(type) {
@@ -284,12 +567,109 @@
     return g;
   }
 
+  // Toy builders (centered on their middle, long axis along x)
+  const TOY_BUILD = {
+    tennis(g) { box(g, 0.2, 0.2, 0.2, '#c9e04a'); box(g, 0.21, 0.04, 0.21, '#f4f7e6'); },
+    redball(g) { box(g, 0.22, 0.22, 0.22, '#e2453c'); box(g, 0.23, 0.05, 0.23, '#ffd54f'); },
+    bouncy(g) { box(g, 0.2, 0.2, 0.2, '#9b59d0'); box(g, 0.21, 0.21, 0.06, '#f06292'); box(g, 0.06, 0.21, 0.21, '#64b5f6'); },
+    bone(g) {
+      const c = '#8fd3f4';
+      box(g, 0.3, 0.08, 0.08, c);
+      for (const x of [-0.16, 0.16]) for (const z of [-0.05, 0.05]) box(g, 0.09, 0.09, 0.09, c, x, 0, z);
+    },
+    duck(g) {
+      box(g, 0.2, 0.14, 0.24, '#ffd93b');
+      box(g, 0.13, 0.13, 0.13, '#ffd93b', 0, 0.11, 0.07);
+      box(g, 0.08, 0.04, 0.07, '#ff8c1a', 0, 0.1, 0.16);
+      box(g, 0.03, 0.03, 0.01, '#222222', 0.04, 0.14, 0.136);
+      box(g, 0.03, 0.03, 0.01, '#222222', -0.04, 0.14, 0.136);
+      box(g, 0.08, 0.06, 0.06, '#f5c400', 0, 0.05, -0.13);
+    },
+    rope(g) {
+      for (let k = 0; k < 5; k++) box(g, 0.07, 0.07, 0.07, k % 2 ? '#f4efe6' : '#4f8fe6', -0.14 + k * 0.07, 0, 0);
+      box(g, 0.1, 0.1, 0.1, '#e2453c', -0.2, 0, 0);
+      box(g, 0.1, 0.1, 0.1, '#e2453c', 0.2, 0, 0);
+    },
+    donut(g) {
+      for (const [x, z, w, d] of [[0, -0.1, 0.28, 0.08], [0, 0.1, 0.28, 0.08], [-0.1, 0, 0.08, 0.12], [0.1, 0, 0.08, 0.12]]) {
+        box(g, w, 0.06, d, '#d9a066', x, -0.02, z);
+        box(g, w, 0.04, d, '#f48fb1', x, 0.03, z);
+      }
+      box(g, 0.03, 0.02, 0.03, '#64b5f6', 0.08, 0.06, -0.1);
+      box(g, 0.03, 0.02, 0.03, '#ffd54f', -0.1, 0.06, 0.05);
+    },
+    frisbee(g) {
+      box(g, 0.34, 0.04, 0.34, '#ff7043');
+      box(g, 0.38, 0.05, 0.06, '#ff5722', 0, 0, 0.16);
+      box(g, 0.38, 0.05, 0.06, '#ff5722', 0, 0, -0.16);
+      box(g, 0.06, 0.05, 0.38, '#ff5722', 0.16, 0, 0);
+      box(g, 0.06, 0.05, 0.38, '#ff5722', -0.16, 0, 0);
+      box(g, 0.12, 0.05, 0.12, '#ffd54f', 0, 0.005, 0);
+    },
+    stick(g) {
+      box(g, 0.46, 0.06, 0.06, '#8a5a3b');
+      box(g, 0.12, 0.05, 0.05, '#7a4e33', 0.08, 0.04, 0.04);
+      box(g, 0.04, 0.06, 0.04, '#7cb342', -0.2, 0.05, 0);
+    },
+    golden(g) { box(g, 0.22, 0.22, 0.22, goldMat); box(g, 0.23, 0.04, 0.23, '#fff3c4'); },
+  };
+  function buildToy(type) {
+    const g = new THREE.Group();
+    (TOY_BUILD[type] || TOY_BUILD.tennis)(g);
+    return g;
+  }
+
   // =====================================================================
-  // Home: room + furniture
+  // Dog portraits (little pixel-art faces for the status bubbles)
   // =====================================================================
-  let floorMat = null;
-  let grid = null;
-  function makeFloorMaterial(N) {
+  const portraitCache = new Map();
+  function portraitURL(bi) {
+    if (portraitCache.has(bi)) return portraitCache.get(bi);
+    const b = BREEDS[bi] || BREEDS[0];
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const x = c.getContext('2d');
+    const px = (col, X, Y, w = 1, h = 1) => { x.fillStyle = col; x.fillRect(X * 4, Y * 4, w * 4, h * 4); };
+    px(b.body, 4, 3, 8, 1);
+    px(b.body, 3, 4, 10, 10);
+    px(b.dark, 1, 3, 3, 8);
+    px(b.dark, 12, 3, 3, 8);
+    px(b.dark, 2, 11, 2, 1);
+    px(b.dark, 12, 11, 2, 1);
+    px(b.light, 5, 9, 6, 5);
+    px('#1a1a1a', 5, 6, 2, 2);
+    px('#1a1a1a', 9, 6, 2, 2);
+    px('#ffffff', 5, 6);
+    px('#ffffff', 9, 6);
+    px('#1a1a1a', 7, 9, 2, 2);
+    px('#f07f8f', 7, 12, 2, 2);
+    const url = c.toDataURL();
+    portraitCache.set(bi, url);
+    return url;
+  }
+
+  // =====================================================================
+  // Home: sections ("chunks"), walls, furniture
+  // =====================================================================
+  const chunkKey = (cx, cz) => cx + ',' + cz;
+  let chunkSet = new Set();
+  let homeBounds = { x0: 0, x1: CHUNK, z0: 0, z1: CHUNK };
+  function syncChunkSet() {
+    chunkSet = new Set(state.chunks.map(([x, z]) => chunkKey(x, z)));
+    homeBounds = extentOf(state.chunks);
+  }
+  function extentOf(list) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [cx, cz] of list) {
+      x0 = Math.min(x0, cx * CHUNK); x1 = Math.max(x1, (cx + 1) * CHUNK);
+      z0 = Math.min(z0, cz * CHUNK); z1 = Math.max(z1, (cz + 1) * CHUNK);
+    }
+    return { x0, x1, z0, z1 };
+  }
+  const hasChunk = (cx, cz) => chunkSet.has(chunkKey(cx, cz));
+  const isHomeTile = (i, j) => hasChunk(Math.floor(i / CHUNK), Math.floor(j / CHUNK));
+
+  function makeFloorMaterial() {
     const c = document.createElement('canvas');
     c.width = c.height = 2;
     const x = c.getContext('2d');
@@ -299,93 +679,160 @@
     t.magFilter = THREE.NearestFilter;
     t.minFilter = THREE.NearestFilter;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(N / 2, N / 2);
+    t.repeat.set(CHUNK / 2, CHUNK / 2);
     return new THREE.MeshLambertMaterial({ map: t });
   }
+  const floorMat = makeFloorMaterial();
+  const ARTS = ['#f6a5c0', '#9ad0a7', '#ffd27a', '#a7b8f5'];
 
   function buildRoom() {
     roomGroup.clear();
-    const N = state.roomSize;
-    if (floorMat) { floorMat.map.dispose(); floorMat.dispose(); }
-    floorMat = makeFloorMaterial(N);
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(N, 0.12, N), floorMat);
-    floor.position.set(N / 2, -0.06, N / 2);
-    roomGroup.add(floor);
+    gridGroup.clear();
+    const wall = '#f3dfc1', trim = '#c99f72', lip = '#b98d5f', C = CHUNK, h = C / 2;
+    state.chunks.forEach(([cx, cz], n) => {
+      const x0 = cx * C, z0 = cz * C;
+      const floor = new THREE.Mesh(geo(C, 0.12, C), floorMat);
+      floor.position.set(x0 + h, -0.06, z0 + h);
+      roomGroup.add(floor);
 
-    const wall = '#f3dfc1', trim = '#c99f72';
-    // back wall (z = 0) and left wall (x = 0); the front stays open toward the camera
-    box(roomGroup, N + 0.2, 2.4, 0.2, wall, N / 2 - 0.1, 1.2, -0.1);
-    box(roomGroup, 0.2, 2.4, N, wall, -0.1, 1.2, N / 2);
-    box(roomGroup, N + 0.2, 0.16, 0.26, trim, N / 2 - 0.1, 0.08, -0.1);
-    box(roomGroup, 0.26, 0.16, N, trim, -0.1, 0.08, N / 2);
-    box(roomGroup, N + 0.24, 0.1, 0.26, trim, N / 2 - 0.12, 2.43, -0.1);
-    box(roomGroup, 0.26, 0.1, N, trim, -0.1, 2.43, N / 2);
-    box(roomGroup, N, 0.14, 0.08, '#b98d5f', N / 2, -0.06, N + 0.04);
-    box(roomGroup, 0.08, 0.14, N + 0.08, '#b98d5f', N + 0.04, -0.06, N / 2 + 0.04);
+      const grid = new THREE.GridHelper(C, C, 0x7a5a3a, 0x7a5a3a);
+      grid.material.transparent = true;
+      grid.material.opacity = 0.35;
+      grid.position.set(x0 + h, 0.012, z0 + h);
+      gridGroup.add(grid);
 
-    // windows on the back wall
-    for (let x = 2; x <= N - 1; x += 4) {
-      box(roomGroup, 1.2, 0.95, 0.06, '#ffffff', x, 1.45, 0.02);
-      box(roomGroup, 1.02, 0.77, 0.07, '#a9d8f5', x, 1.45, 0.03);
-      box(roomGroup, 0.06, 0.77, 0.08, '#ffffff', x, 1.45, 0.035);
-      box(roomGroup, 1.02, 0.06, 0.08, '#ffffff', x, 1.45, 0.035);
-    }
-    // pictures on the left wall
-    const arts = ['#f6a5c0', '#9ad0a7', '#ffd27a', '#a7b8f5'];
-    let n = 0;
-    for (let z = 2; z <= N - 1; z += 4) {
-      box(roomGroup, 0.06, 0.66, 0.86, '#8a5a3b', 0.03, 1.5, z);
-      box(roomGroup, 0.07, 0.5, 0.7, arts[n++ % arts.length], 0.035, 1.5, z);
-      box(roomGroup, 0.08, 0.16, 0.16, '#ffffff', 0.04, 1.58, z + 0.15);
-    }
-
-    if (grid) { homeRoot.remove(grid); grid.geometry.dispose(); }
-    grid = new THREE.GridHelper(N, N, 0x7a5a3a, 0x7a5a3a);
-    grid.material.transparent = true;
-    grid.material.opacity = 0.35;
-    grid.position.set(N / 2, 0.012, N / 2);
-    grid.visible = mode === 'decorate';
-    homeRoot.add(grid);
+      const westOpen = hasChunk(cx - 1, cz);
+      // Walls only on the sides facing away from the camera (north = -z, west = -x)
+      if (!hasChunk(cx, cz - 1)) {
+        const xs = westOpen ? x0 : x0 - 0.2, len = x0 + C - xs, mid = xs + len / 2;
+        box(roomGroup, len, 2.4, 0.2, wall, mid, 1.2, z0 - 0.1);
+        box(roomGroup, len, 0.16, 0.26, trim, mid, 0.08, z0 - 0.1);
+        box(roomGroup, len + 0.04, 0.1, 0.26, trim, mid, 2.43, z0 - 0.1);
+        box(roomGroup, 1.2, 0.95, 0.06, '#ffffff', x0 + h, 1.45, z0 + 0.02);
+        box(roomGroup, 1.02, 0.77, 0.07, '#a9d8f5', x0 + h, 1.45, z0 + 0.03);
+        box(roomGroup, 0.06, 0.77, 0.08, '#ffffff', x0 + h, 1.45, z0 + 0.035);
+        box(roomGroup, 1.02, 0.06, 0.08, '#ffffff', x0 + h, 1.45, z0 + 0.035);
+      }
+      if (!westOpen) {
+        box(roomGroup, 0.2, 2.4, C, wall, x0 - 0.1, 1.2, z0 + h);
+        box(roomGroup, 0.26, 0.16, C, trim, x0 - 0.1, 0.08, z0 + h);
+        box(roomGroup, 0.26, 0.1, C, trim, x0 - 0.1, 2.43, z0 + h);
+        box(roomGroup, 0.06, 0.66, 0.86, '#8a5a3b', x0 + 0.03, 1.5, z0 + h);
+        box(roomGroup, 0.07, 0.5, 0.7, ARTS[(n + cx + cz + 8) % ARTS.length], x0 + 0.035, 1.5, z0 + h);
+        box(roomGroup, 0.08, 0.16, 0.16, '#ffffff', x0 + 0.04, 1.58, z0 + h + 0.15);
+      }
+      // Low edges on the open sides
+      if (!hasChunk(cx, cz + 1)) box(roomGroup, C, 0.14, 0.08, lip, x0 + h, -0.06, z0 + C + 0.04);
+      if (!hasChunk(cx + 1, cz)) box(roomGroup, 0.08, 0.14, C + 0.08, lip, x0 + C + 0.04, -0.06, z0 + h + 0.04);
+    });
   }
 
-  const furnRT = new Map(); // furniture entry -> { group, claim }
+  const furnRT = new Map();   // furniture entry -> { group, claim }
+  let furnMap = new Map();    // 'i,j' -> furniture entry
   function rebuildFurniture() {
     furnGroup.clear();
     furnRT.clear();
+    furnMap = new Map();
     for (const f of state.furniture) {
       const g = buildItem(f.type);
       g.position.set(f.i + 0.5, 0, f.j + 0.5);
       g.rotation.y = (f.rot || 0) * Math.PI / 2;
       furnGroup.add(g);
       furnRT.set(f, { group: g, claim: null });
-      if (f.type === 'bowl') g.userData.food.visible = !!f.filled;
+      furnMap.set(f.i + ',' + f.j, f);
+      if (g.userData.content) g.userData.content.visible = !!f.filled;
     }
   }
   function refreshBowl(f) {
     const r = furnRT.get(f);
-    if (r) r.group.userData.food.visible = !!f.filled;
+    if (r && r.group.userData.content) r.group.userData.content.visible = !!f.filled;
   }
-  const furnitureAt = (i, j) => state.furniture.find((f) => f.i === i && f.j === j);
+  const furnitureAt = (i, j) => furnMap.get(i + ',' + j);
   const tileCenter = (f) => new V3(f.i + 0.5, 0, f.j + 0.5);
+  const roleOf = (f) => ITEMS[f.type] && ITEMS[f.type].role;
+
+  // ----- construction site -----
+  let siteLabel = null;
+  function rebuildSite() {
+    siteGroup.clear();
+    siteLabel = null;
+    const b = state.build;
+    if (!b) return;
+    const C = CHUNK, x0 = b.cx * C, z0 = b.cz * C, h = C / 2;
+    box(siteGroup, C, 0.08, C, '#b8956a', x0 + h, -0.06, z0 + h);
+    for (let k = 0; k <= C; k += 1.5) {
+      for (const [x, z] of [[x0 + k, z0], [x0 + k, z0 + C], [x0, z0 + k], [x0 + C, z0 + k]]) box(siteGroup, 0.1, 0.55, 0.1, '#ff8c1a', x, 0.27, z);
+    }
+    for (const [x, z, w, d] of [[x0 + h, z0, C, 0.05], [x0 + h, z0 + C, C, 0.05], [x0, z0 + h, 0.05, C], [x0 + C, z0 + h, 0.05, C]]) {
+      box(siteGroup, w, 0.08, d, '#ff8c1a', x, 0.42, z);
+      box(siteGroup, w, 0.06, d, '#ffffff', x, 0.28, z);
+    }
+    for (const [x, z] of [[1.5, 1.5], [4.5, 1.5], [1.5, 4.5], [4.5, 4.5]]) box(siteGroup, 0.1, 2.1, 0.1, '#9aa5ad', x0 + x, 1.05, z0 + z);
+    box(siteGroup, 3.1, 0.08, 0.1, '#9aa5ad', x0 + 3, 2.05, z0 + 1.5);
+    box(siteGroup, 3.1, 0.08, 0.1, '#9aa5ad', x0 + 3, 2.05, z0 + 4.5);
+    box(siteGroup, 0.1, 0.08, 3.1, '#9aa5ad', x0 + 1.5, 2.05, z0 + 3);
+    box(siteGroup, 0.1, 0.08, 3.1, '#9aa5ad', x0 + 4.5, 2.05, z0 + 3);
+    box(siteGroup, 3.0, 0.06, 0.6, '#c8a165', x0 + 3, 1.2, z0 + 1.5);
+    for (let k = 0; k < 3; k++) box(siteGroup, 1.3, 0.08, 0.3, '#c8a165', x0 + 4.3, 0.04 + k * 0.08, z0 + 3.3 + (k % 2) * 0.05);
+    for (const [x, z] of [[1.2, 3.6], [1.45, 3.6], [1.32, 3.85]]) box(siteGroup, 0.22, 0.12, 0.12, '#c0694f', x0 + x, 0.06, z0 + z);
+    box(siteGroup, 0.24, 0.32, 0.24, '#ff8c1a', x0 + 2.6, 0.16, z0 + 4.8);
+    box(siteGroup, 0.26, 0.06, 0.26, '#ffffff', x0 + 2.6, 0.2, z0 + 4.8);
+    siteLabel = textSprite('🏗️ ' + fmtTime(b.readyAt - Date.now()), 0.8);
+    siteLabel.material.depthTest = false;
+    siteLabel.renderOrder = 10;
+    siteLabel.position.set(x0 + h, 2.7, z0 + h);
+    siteGroup.add(siteLabel);
+  }
+
+  // ----- choosing where to build -----
+  let buildCands = [];
+  let buildPick = null;
+  const candMat = new THREE.MeshBasicMaterial({ color: 0x6ccf6c, transparent: true, opacity: 0.4, depthWrite: false });
+  const candSelMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.6, depthWrite: false });
+  const plusMat = new THREE.SpriteMaterial({ map: emojiTexture('➕'), transparent: true, depthWrite: false });
+  function findCandidates() {
+    const out = [], seen = new Set();
+    for (const [cx, cz] of state.chunks) {
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const k = chunkKey(cx + dx, cz + dz);
+        if (!chunkSet.has(k) && !seen.has(k)) { seen.add(k); out.push([cx + dx, cz + dz]); }
+      }
+    }
+    return out;
+  }
+  function showCandidates() {
+    candGroup.clear();
+    for (const [cx, cz] of buildCands) {
+      const isPick = buildPick && buildPick[0] === cx && buildPick[1] === cz;
+      const m = new THREE.Mesh(geo(CHUNK - 0.3, 0.04, CHUNK - 0.3), isPick ? candSelMat : candMat);
+      m.position.set(cx * CHUNK + CHUNK / 2, 0.03, cz * CHUNK + CHUNK / 2);
+      candGroup.add(m);
+      const s = new THREE.Sprite(plusMat);
+      s.scale.set(1.3, 1.3, 1);
+      s.position.set(cx * CHUNK + CHUNK / 2, 0.9, cz * CHUNK + CHUNK / 2);
+      candGroup.add(s);
+    }
+  }
 
   // =====================================================================
   // Park
   // =====================================================================
   const parkColliders = [];
   const sniffSpots = [];
+  const parkWater = { pos: new V3(-2.4, 0, 13.6), bowl: new V3(-2.4, 0, 14.25), taken: null };
   function onPath(x, z) {
     return (Math.abs(Math.abs(x) - 11) < 1.3 && Math.abs(z) < 12.3) ||
            (Math.abs(Math.abs(z) - 11) < 1.3 && Math.abs(x) < 12.3) ||
            (Math.abs(x) < 1.3 && z > 10);
   }
   const POND = { x0: 3, x1: 9, z0: -7, z1: -2 };
+  const inPond = (x, z, m = 0) => x > POND.x0 - m && x < POND.x1 + m && z > POND.z0 - m && z < POND.z1 + m;
 
   function buildPark() {
     const r = mulberry32(42);
     box(parkRoot, 100, 0.1, 100, '#86c06c', 0, -0.05, 0);
     box(parkRoot, 39, 0.1, 39, '#8ccb72', 0, -0.045, 0);
 
-    // path loop + entry path
     const pc = '#dcc694';
     box(parkRoot, 23.6, 0.04, 1.6, pc, 0, 0.02, -11);
     box(parkRoot, 23.6, 0.04, 1.6, pc, 0, 0.02, 11);
@@ -393,14 +840,12 @@
     box(parkRoot, 1.6, 0.04, 23.6, pc, 11, 0.021, 0);
     box(parkRoot, 1.6, 0.04, 8.6, pc, 0, 0.022, 15.3);
 
-    // pond
     box(parkRoot, 6.6, 0.06, 5.6, '#cdb88d', 6, 0.02, -4.5);
     box(parkRoot, 6, 0.07, 5, '#5aa7d6', 6, 0.03, -4.5);
     box(parkRoot, 0.5, 0.08, 0.5, '#7fbf5a', 4.5, 0.07, -3.5);
     box(parkRoot, 0.4, 0.08, 0.4, '#7fbf5a', 7.6, 0.07, -5.8);
     parkColliders.push({ x0: POND.x0, x1: POND.x1, z0: POND.z0, z1: POND.z1 });
 
-    // fence with a gate at the front
     const fence = '#f4efe6';
     for (const y of [0.35, 0.65]) {
       box(parkRoot, 39.2, 0.1, 0.08, fence, 0, y, -19.6);
@@ -424,7 +869,20 @@
     sign.position.set(0, 1.9, 19.6);
     parkRoot.add(sign);
 
-    // sniff spots: bushes and hydrants with a sparkle when there's something to find
+    // dog water fountain near the gate
+    const wp = parkWater.pos, wb = parkWater.bowl;
+    box(parkRoot, 0.6, 0.5, 0.6, '#a7a39c', wp.x, 0.25, wp.z);
+    box(parkRoot, 0.7, 0.1, 0.7, '#8c8780', wp.x, 0.55, wp.z);
+    box(parkRoot, 0.5, 0.04, 0.5, waterMat, wp.x, 0.61, wp.z);
+    box(parkRoot, 0.1, 0.5, 0.1, '#7d8a94', wp.x, 0.85, wp.z - 0.2);
+    box(parkRoot, 0.1, 0.08, 0.24, '#7d8a94', wp.x, 1.08, wp.z - 0.1);
+    box(parkRoot, 0.44, 0.1, 0.44, '#3d7fd6', wb.x, 0.05, wb.z);
+    box(parkRoot, 0.32, 0.03, 0.32, waterMat, wb.x, 0.1, wb.z);
+    const drop = emojiSprite('💧', 0.45);
+    drop.position.set(wp.x, 1.55, wp.z);
+    parkRoot.add(drop);
+    parkColliders.push({ x: wp.x, z: wp.z, r: 0.4 });
+
     const spotPos = [[-12.6, -4], [-6, -12.6], [5, -9.4], [12.6, 3], [9.6, -8.5], [-9.4, 7], [6, 12.6], [-3, 9.4]];
     spotPos.forEach(([x, z], i) => {
       const g = pivot(parkRoot, x, 0, z);
@@ -438,20 +896,17 @@
         box(g, 0.2, 0.12, 0.2, '#d63c3c', 0, 0.62, 0);
         box(g, 0.44, 0.1, 0.1, '#b52e2e', 0, 0.32, 0);
       }
-      const sparkle = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexture('✨'), transparent: true, depthWrite: false }));
-      sparkle.scale.set(0.5, 0.5, 1);
+      const sparkle = emojiSprite('✨', 0.5);
       sparkle.position.set(0, 1.15, 0);
       g.add(sparkle);
       parkColliders.push({ x, z, r: 0.42 });
       sniffSpots.push({ pos: new V3(x, 0, z), cooldown: 0, sparkle, taken: null, phase: r() * 6 });
     });
 
-    // trees
     const trees = [];
     for (let tries = 0; tries < 400 && trees.length < 34; tries++) {
       const x = (r() * 2 - 1) * 18, z = (r() * 2 - 1) * 18;
-      if (onPath(x, z)) continue;
-      if (x > POND.x0 - 1.5 && x < POND.x1 + 1.5 && z > POND.z0 - 1.5 && z < POND.z1 + 1.5) continue;
+      if (onPath(x, z) || inPond(x, z, 1.5)) continue;
       if (Math.abs(x) < 3.5 && z > 12) continue;
       if (spotPos.some(([sx, sz]) => Math.hypot(sx - x, sz - z) < 2.2)) continue;
       if (trees.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 2.6)) continue;
@@ -465,41 +920,97 @@
       parkColliders.push({ x, z, r: 0.45 });
     }
 
-    // benches
     for (const [x, z, ry] of [[-4, -12.6, 0], [3.5, 12.6, Math.PI], [12.6, -3, -Math.PI / 2]]) {
       const g = pivot(parkRoot, x, 0, z);
       g.rotation.y = ry;
       box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0);
       box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2);
-      box(g, 0.1, 0.4, 0.4, '#555', -0.65, 0.2, 0);
-      box(g, 0.1, 0.4, 0.4, '#555', 0.65, 0.2, 0);
+      box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0);
+      box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0);
     }
-    // lamp posts at path corners
     for (const [x, z] of [[-12.4, -12.4], [12.4, -12.4], [-12.4, 12.4], [12.4, 12.4]]) {
       box(parkRoot, 0.14, 2.2, 0.14, '#3d3a40', x, 1.1, z);
       box(parkRoot, 0.36, 0.3, 0.36, lampMat, x, 2.3, z);
     }
 
-    // grass tufts and flowers as instanced meshes (one draw call each)
     const tuft = new THREE.InstancedMesh(geo(0.12, 0.16, 0.12), mat('#6ba95a'), 260);
     const flower = new THREE.InstancedMesh(geo(0.12, 0.12, 0.12), new THREE.MeshLambertMaterial({ color: '#ffffff' }), 140);
     const fcols = ['#f06292', '#ffd54f', '#ffffff', '#ba68c8', '#ff8a65'].map((c) => new THREE.Color(c));
     let ti = 0, fi = 0;
     while (ti < 260 || fi < 140) {
       const x = (r() * 2 - 1) * 19, z = (r() * 2 - 1) * 19;
-      if (onPath(x, z) || (x > POND.x0 - 0.4 && x < POND.x1 + 0.4 && z > POND.z0 - 0.4 && z < POND.z1 + 0.4)) continue;
-      if (ti < 260) { m4.makeTranslation(x, 0.07, z); tuft.setMatrixAt(ti++, m4); }
-      else { m4.makeTranslation(x, 0.07, z); flower.setMatrixAt(fi, m4); flower.setColorAt(fi, fcols[fi % fcols.length]); fi++; }
+      if (onPath(x, z) || inPond(x, z, 0.4)) continue;
+      m4.makeTranslation(x, 0.07, z);
+      if (ti < 260) tuft.setMatrixAt(ti++, m4);
+      else { flower.setMatrixAt(fi, m4); flower.setColorAt(fi, fcols[fi % fcols.length]); fi++; }
     }
     parkRoot.add(tuft, flower);
   }
 
+  // Toys lying around in the park (rare)
+  let parkLoot = null;
+  function rollToy() {
+    const list = Object.entries(TOYS);
+    let total = list.reduce((s, [, t]) => s + t.weight, 0), r = Math.random() * total;
+    for (const [k, t] of list) { r -= t.weight; if (r <= 0) return k; }
+    return 'stick';
+  }
+  function clearParkLoot() {
+    if (parkLoot) { parkRoot.remove(parkLoot.group); parkLoot = null; }
+  }
+  function spawnParkLoot() {
+    clearParkLoot();
+    if (Math.random() > 0.3) return;
+    for (let tries = 0; tries < 60; tries++) {
+      const x = rand(-16, 16), z = rand(-16, 11);
+      if (isSolid(x, z) || inPond(x, z, 0.6) || Math.hypot(x, z - 16) < 6) continue;
+      const type = rollToy();
+      const group = pivot(parkRoot, x, 0, z);
+      const toy = buildToy(type);
+      toy.position.y = 0.16;
+      toy.scale.setScalar(1.3);
+      group.add(toy);
+      const sparkle = emojiSprite('✨', 0.45);
+      sparkle.position.y = 0.75;
+      group.add(sparkle);
+      parkLoot = { type, group, toy, sparkle, t: 0 };
+      return;
+    }
+  }
+  function updateParkLoot(dt) {
+    if (!parkLoot) return;
+    parkLoot.t += dt;
+    parkLoot.toy.rotation.y += dt * 1.5;
+    parkLoot.sparkle.position.y = 0.75 + Math.sin(parkLoot.t * 3) * 0.08;
+    const p = player.root.position, g = parkLoot.group.position;
+    if (Math.hypot(p.x - g.x, p.z - g.z) < 0.9) {
+      const type = parkLoot.type;
+      const pos = g.clone();
+      clearParkLoot();
+      grantToy(type, pos);
+    }
+  }
+  function grantToy(type, pos) {
+    const t = TOYS[type];
+    if (state.toys.includes(type)) {
+      addCoins(5, pos);
+      toast(`You found another ${t.name} ${t.icon} — traded it for 🪙 5`);
+    } else {
+      state.toys.push(type);
+      toast(`You found a ${t.name} ${t.icon}! It's in your 🎒 bag`);
+      save();
+    }
+    if (pos) spawnEmoji(t.icon, pos.clone().add(new V3(0, 1, 0)), { size: 0.6, life: 1.6, vy: 0.8 });
+  }
+
   // =====================================================================
-  // Collision helpers (shared by the player and dogs)
+  // Collision + pathfinding (shared by the player and dogs)
   // =====================================================================
   function isSolid(x, z) {
     if (place === 'home') {
-      const f = furnitureAt(Math.floor(x), Math.floor(z));
+      const i = Math.floor(x), j = Math.floor(z);
+      if (!isHomeTile(i, j)) return true;
+      const f = furnitureAt(i, j);
       return !!(f && ITEMS[f.type].solid);
     }
     for (const c of parkColliders) {
@@ -509,12 +1020,12 @@
     return false;
   }
   function bounds() {
-    if (place === 'home') return [0.3, state.roomSize - 0.3];
-    return [-19.2, 19.2];
+    if (place === 'home') return { x0: homeBounds.x0 + 0.25, x1: homeBounds.x1 - 0.25, z0: homeBounds.z0 + 0.25, z1: homeBounds.z1 - 0.25 };
+    return { x0: -19.2, x1: 19.2, z0: -19.2, z1: 19.2 };
   }
   function inBounds(x, z, m = 0) {
-    const [a, b] = bounds();
-    return x >= a + m && x <= b - m && z >= a + m && z <= b - m;
+    const b = bounds();
+    return x >= b.x0 + m && x <= b.x1 - m && z >= b.z0 + m && z <= b.z1 - m;
   }
   // Move separately along x and z so characters slide along obstacles
   function moveWithCollision(pos, dx, dz, r) {
@@ -526,9 +1037,80 @@
       const s = Math.sign(dz);
       if (!(isSolid(pos.x, pos.z + dz + s * r) && !isSolid(pos.x, pos.z + s * r))) pos.z += dz;
     }
-    const [a, b] = bounds();
-    pos.x = clamp(pos.x, a, b);
-    pos.z = clamp(pos.z, a, b);
+    const b = bounds();
+    pos.x = clamp(pos.x, b.x0, b.x1);
+    pos.z = clamp(pos.z, b.z0, b.z1);
+  }
+
+  function passable(i, j) {
+    if (!isHomeTile(i, j)) return false;
+    const f = furnitureAt(i, j);
+    return !(f && ITEMS[f.type].solid);
+  }
+  function lineClear(ax, az, bx, bz) {
+    const dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz);
+    if (d < 1e-3) return true;
+    const px = (-dz / d) * 0.2, pz = (dx / d) * 0.2;
+    const n = Math.ceil(d / 0.2);
+    for (let k = 1; k <= n; k++) {
+      const t = k / n, x = ax + dx * t, z = az + dz * t;
+      if (isSolid(x, z) || isSolid(x + px, z + pz) || isSolid(x - px, z - pz)) return false;
+    }
+    return true;
+  }
+  const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  // Tile-based path through the home, smoothed so dogs walk in straight lines where they can
+  function findPath(from, to) {
+    const goal = new V3(to.x, 0, to.z);
+    if (lineClear(from.x, from.z, to.x, to.z)) return [goal];
+    const si = Math.floor(from.x), sj = Math.floor(from.z), ti = Math.floor(to.x), tj = Math.floor(to.z);
+    const key = (i, j) => i + ',' + j;
+    const prev = new Map([[key(si, sj), null]]);
+    const queue = [[si, sj]];
+    let found = false;
+    for (let h = 0; h < queue.length && h < 5000; h++) {
+      const [i, j] = queue[h];
+      if (i === ti && j === tj) { found = true; break; }
+      for (const [di, dj] of DIRS8) {
+        const ni = i + di, nj = j + dj, k = key(ni, nj);
+        if (prev.has(k)) continue;
+        const isGoal = ni === ti && nj === tj;
+        if (isGoal ? !isHomeTile(ni, nj) : !passable(ni, nj)) continue;
+        if (di && dj && (!passable(i + di, j) || !passable(i, j + dj))) continue;
+        prev.set(k, [i, j]);
+        queue.push([ni, nj]);
+      }
+    }
+    if (!found) return [goal];
+    const tiles = [];
+    let cur = [ti, tj];
+    while (cur && !(cur[0] === si && cur[1] === sj)) { tiles.push(cur); cur = prev.get(key(cur[0], cur[1])); }
+    tiles.reverse();
+    if (!tiles.length) return [goal];
+    const pts = tiles.map(([i, j]) => new V3(i + 0.5, 0, j + 0.5));
+    pts[pts.length - 1] = goal;
+    const out = [];
+    let cx = from.x, cz = from.z, i = 0;
+    while (i < pts.length) {
+      let j = pts.length - 1;
+      while (j > i && !lineClear(cx, cz, pts[j].x, pts[j].z)) j--;
+      out.push(pts[j]);
+      cx = pts[j].x; cz = pts[j].z;
+      i = j + 1;
+    }
+    return out;
+  }
+
+  function randomFreePoint() {
+    for (let k = 0; k < 40; k++) {
+      const [cx, cz] = pick(state.chunks);
+      const x = cx * CHUNK + rand(0.5, CHUNK - 0.5), z = cz * CHUNK + rand(0.5, CHUNK - 0.5);
+      if (!isSolid(x, z)) return new V3(x, 0, z);
+    }
+    return new V3(CHUNK / 2, 0, CHUNK / 2);
+  }
+  function freeNear(x, z) {
+    return isSolid(x, z) ? randomFreePoint() : new V3(x, 0, z);
   }
 
   // =====================================================================
@@ -536,10 +1118,9 @@
   // =====================================================================
   const particles = [];
   function spawnEmoji(e, pos, opts = {}) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexture(e), transparent: true, depthWrite: false }));
-    s.position.copy(pos);
     const size = opts.size || 0.45;
-    s.scale.set(size, size, 1);
+    const s = emojiSprite(e, size);
+    s.position.copy(pos);
     world.add(s);
     const life = opts.life || 1.2;
     particles.push({ s, life, max: life, vy: opts.vy ?? 0.9, vx: rand(-0.25, 0.25) });
@@ -550,7 +1131,7 @@
       p.life -= dt;
       p.s.position.y += p.vy * dt;
       p.s.position.x += p.vx * dt;
-      p.s.material.opacity = clamp(p.life / p.max * 1.6, 0, 1);
+      p.s.material.opacity = clamp((p.life / p.max) * 1.6, 0, 1);
       if (p.life <= 0) {
         world.remove(p.s);
         p.s.material.dispose();
@@ -598,8 +1179,8 @@
     box(body, 0.36, 0.36, 0.34, skin, 0, 1.15, 0);
     box(body, 0.38, 0.12, 0.36, hair, 0, 1.36, -0.01);
     box(body, 0.38, 0.26, 0.08, hair, 0, 1.24, -0.16);
-    box(body, 0.05, 0.07, 0.02, '#222', -0.08, 1.17, 0.171);
-    box(body, 0.05, 0.07, 0.02, '#222', 0.08, 1.17, 0.171);
+    box(body, 0.05, 0.07, 0.02, '#222222', -0.08, 1.17, 0.171);
+    box(body, 0.05, 0.07, 0.02, '#222222', 0.08, 1.17, 0.171);
     box(body, 0.08, 0.03, 0.02, '#e2958a', 0, 1.07, 0.171);
     root.add(blob(0.8, 0.8));
     world.add(root);
@@ -655,7 +1236,6 @@
       if (pos.z > 18.5 && Math.abs(pos.x) < 1.3) { goHome(); return; }
     }
 
-    // walk animation
     player.phase += moved * 4.2;
     player.blend = lerp(player.blend, moved > 0 ? 1 : 0, damp(0.0005, dt));
     const s = Math.sin(player.phase) * 0.7 * player.blend;
@@ -678,6 +1258,7 @@
       this.name = data.name || 'Pup';
       this.breed = clamp(data.breed | 0, 0, BREEDS.length - 1);
       this.hunger = data.hunger ?? 85;
+      this.thirst = data.thirst ?? 85;
       this.energy = data.energy ?? 85;
       this.happy = data.happy ?? 75;
       this.state = 'idle';
@@ -692,11 +1273,13 @@
       this.face = 0;
       this.target = null;
       this.onArrive = null;
+      this.path = null;
       this.claim = null;
       this.spot = null;
       this.zTimer = 0;
       this.sniffCheck = 2;
       this.lastBubble = '';
+      this.ui = null;
       this.build();
     }
 
@@ -706,8 +1289,8 @@
       const body = pivot(root);
       box(body, 0.46, 0.32, 0.72, b.body, 0, 0.44, 0);
       box(body, 0.3, 0.06, 0.5, b.light, 0, 0.27, 0.02);
-      box(body, 0.4, 0.1, 0.12, '#d93a3a', 0, 0.58, 0.32);       // collar
-      box(body, 0.08, 0.08, 0.04, '#ffd54f', 0, 0.5, 0.39);        // tag
+      box(body, 0.4, 0.1, 0.12, '#d93a3a', 0, 0.58, 0.32);
+      box(body, 0.08, 0.08, 0.04, '#ffd54f', 0, 0.5, 0.39);
 
       const head = pivot(body, 0, 0.66, 0.42);
       box(head, 0.36, 0.32, 0.34, b.body, 0, 0, 0);
@@ -744,7 +1327,6 @@
       root.add(blob(0.75, 1.25));
       root.userData.dog = this;
 
-      // leash: chain of thin boxes from the player's hand to the collar
       this.leash = new THREE.Group();
       this.leashSegs = [];
       for (let i = 0; i < 9; i++) {
@@ -760,7 +1342,11 @@
     }
 
     serialize() {
-      return { name: this.name, breed: this.breed, hunger: Math.round(this.hunger), energy: Math.round(this.energy), happy: Math.round(this.happy) };
+      return {
+        name: this.name, breed: this.breed,
+        hunger: Math.round(this.hunger), thirst: Math.round(this.thirst),
+        energy: Math.round(this.energy), happy: Math.round(this.happy),
+      };
     }
 
     headWorld(up = 0) {
@@ -786,6 +1372,9 @@
       this.moveSpeed = speed;
       this.onArrive = onArrive;
       this.arriveDist = arriveDist;
+      this.path = null;
+      this.repath = 0;
+      this.replanned = false;
       this.stuckT = 0;
       this.stuckN = 0;
       this.lastD = Infinity;
@@ -813,6 +1402,7 @@
       this.dropSpot();
       this.root.position.y = 0;
       this.onArrive = null;
+      this.path = null;
       this.idle(0.5);
     }
     wake() {
@@ -825,15 +1415,19 @@
     tickNeeds(dt) {
       if (place === 'park') {
         this.hunger -= 0.18 * dt;
+        this.thirst -= 0.32 * dt;
         this.energy -= 0.22 * dt;
-        if (this.energy > 10) this.happy += 0.15 * dt;
+        if (this.energy > CRITICAL) this.happy += 0.15 * dt;
       } else {
         this.hunger -= 0.1 * dt;
+        this.thirst -= 0.13 * dt;
         if (this.state === 'sleep') this.energy += 4 * dt;
         else this.energy -= 0.05 * dt;
-        this.happy -= (this.hunger < 25 || this.energy < 10 ? 0.25 : 0.07) * dt;
+        const needy = this.hunger < LOW || this.thirst < LOW || this.energy < CRITICAL;
+        this.happy -= (needy ? 0.25 : 0.07) * dt;
       }
       this.hunger = clamp(this.hunger, 0, 100);
+      this.thirst = clamp(this.thirst, 0, 100);
       this.energy = clamp(this.energy, 0, 100);
       this.happy = clamp(this.happy, 0, 100);
     }
@@ -842,13 +1436,14 @@
       switch (this.state) {
         case 'sleep': return 'Sleeping 💤';
         case 'eat': return 'Eating 😋';
-        case 'fetch': case 'return': return 'Playing fetch 🎾';
+        case 'drink': return 'Drinking 💧';
+        case 'fetch': case 'return': return 'Playing fetch ' + (TOYS[ball.type] ? TOYS[ball.type].icon : '');
         case 'sniff': return 'Sniffing around 👃';
         case 'happy': return 'So happy! 💕';
       }
-      if (this.hunger < 30) return 'Hungry';
-      if (this.energy < 20) return 'Tired';
-      if (this.happy < 30) return 'Wants attention';
+      const needs = [['hunger', 'Hungry'], ['thirst', 'Thirsty'], ['energy', 'Tired'], ['happy', 'Wants attention']]
+        .filter(([k]) => this[k] < 30).sort((a, b) => this[a[0]] - this[b[0]]);
+      if (needs.length) return needs[0][1];
       if (place === 'park') return 'Enjoying the walk';
       if (this.happy > 80) return 'Very happy';
       return 'Content';
@@ -891,8 +1486,9 @@
           if (this.energy >= 99) this.wake();
           break;
         case 'eat':
+        case 'drink':
           this.timer -= dt;
-          if (this.timer <= 0) this.finishEat();
+          if (this.timer <= 0) this.finishConsume();
           break;
         case 'sniff':
           this.timer -= dt;
@@ -920,7 +1516,7 @@
           this.claimItem(bed);
           this.goTo(tileCenter(bed), 1.8, () => {
             const c = tileCenter(bed);
-            this.root.position.set(c.x, 0.1, c.z);
+            this.root.position.set(c.x, ITEMS[bed.type].sleepY || 0.1, c.z);
             this.claim = bed;
             this.setState('sleep');
             this.zTimer = 0.5;
@@ -929,17 +1525,13 @@
         }
         if (this.energy < 12) { this.setState('sleep'); return; }
       }
+      if (this.thirst < 60) {
+        const w = findFurniture('water', this, true, this.root.position);
+        if (w) { sendToBowl(this, w); return; }
+      }
       if (this.hunger < 60) {
-        const bowl = findFurniture('bowl', this, true, this.root.position);
-        if (bowl) {
-          this.claimItem(bowl);
-          this.goTo(tileCenter(bowl), 2.4, () => {
-            this.claim = bowl;
-            this.faceTo(tileCenter(bowl));
-            this.setState('eat', 2.6);
-          }, 0.5);
-          return;
-        }
+        const b = findFurniture('food', this, true, this.root.position);
+        if (b) { sendToBowl(this, b); return; }
       }
       const r = Math.random();
       if (r < 0.4) this.goTo(randomFreePoint(), 1.4, null, 0.2);
@@ -951,11 +1543,24 @@
     updateMove(dt) {
       const t = typeof this.target === 'function' ? this.target() : this.target;
       if (!t) { this.idle(); return; }
-      const d = this.moveTowards(t.x, t.z, this.moveSpeed, dt);
+      const pos = this.root.position;
+      let wx = t.x, wz = t.z;
+      if (place === 'home') {
+        this.repath -= dt;
+        if (!this.path || this.repath <= 0) {
+          this.path = findPath(pos, t);
+          this.repath = typeof this.target === 'function' ? 0.8 : 1e9;
+        }
+        while (this.path.length > 1 && Math.hypot(this.path[0].x - pos.x, this.path[0].z - pos.z) < 0.3) this.path.shift();
+        if (this.path.length > 1) { wx = this.path[0].x; wz = this.path[0].z; }
+      }
+      this.moveTowards(wx, wz, this.moveSpeed, dt);
+      const d = Math.hypot(t.x - pos.x, t.z - pos.z);
       if (d <= this.arriveDist) {
         const cb = this.onArrive;
         this.onArrive = null;
         this.target = null;
+        this.path = null;
         this.idle();
         if (cb) cb();
         return;
@@ -965,8 +1570,13 @@
         this.stuckN = this.lastD - d < 0.15 ? this.stuckN + 1 : 0;
         this.lastD = d;
         this.stuckT = 0;
-        if (this.stuckN >= 2 || this.stateTime > 15) {
+        if (this.stuckN >= 2 && place === 'home' && !this.replanned) {
+          this.replanned = true;
+          this.path = null;
+          this.stuckN = 0;
+        } else if (this.stuckN >= 2 || this.stateTime > 20) {
           this.onArrive = null;
+          this.path = null;
           this.releaseClaim();
           this.dropSpot();
           this.idle();
@@ -980,21 +1590,31 @@
       const a = player.root.rotation.y + Math.PI + (idx - (n - 1) / 2) * 0.75;
       const tx = pp.x + Math.sin(a) * 1.5, tz = pp.z + Math.cos(a) * 1.5;
       const d = Math.hypot(tx - pos.x, tz - pos.z);
-      const tired = this.energy < 10 ? 0.6 : 1;
+      const tired = this.energy < CRITICAL ? 0.6 : 1;
       if (d > 0.35) this.moveTowards(tx, tz, (d > 2.2 ? 4.2 : 2.4) * tired, dt);
       this.sniffCheck -= dt;
-      if (this.sniffCheck <= 0) {
-        this.sniffCheck = rand(1, 2.5);
-        const spot = nearestSpot(pos, 4.5);
-        if (spot && Math.random() < 0.6) {
-          spot.taken = this;
+      if (this.sniffCheck > 0) return;
+      this.sniffCheck = rand(1, 2.5);
+      const wb = parkWater.bowl;
+      if (this.thirst < 65 && !parkWater.taken && pos.distanceTo(wb) < 6 && pp.distanceTo(wb) < 5) {
+        parkWater.taken = this;
+        this.spot = parkWater;
+        this.goTo(wb, 3, () => {
+          this.spot = parkWater;
+          this.faceTo(wb);
+          this.setState('drink', 2.4);
+        }, 0.45);
+        return;
+      }
+      const spot = nearestSpot(pos, 4.5);
+      if (spot && Math.random() < 0.6) {
+        spot.taken = this;
+        this.spot = spot;
+        this.goTo(spot.pos, 3, () => {
           this.spot = spot;
-          this.goTo(spot.pos, 3, () => {
-            this.spot = spot;
-            this.faceTo(spot.pos);
-            this.setState('sniff', 2.2);
-          }, 0.65);
-        }
+          this.faceTo(spot.pos);
+          this.setState('sniff', 2.2);
+        }, 0.65);
       }
     }
 
@@ -1016,14 +1636,22 @@
       }
     }
 
-    finishEat() {
+    finishConsume() {
+      if (this.spot === parkWater) {
+        this.thirst = 100;
+        this.happy = Math.min(100, this.happy + 3);
+        spawnEmoji('💦', this.headWorld(0.3), { size: 0.4 });
+        this.dropSpot();
+        this.setState('follow');
+        return;
+      }
       const bowl = this.claim;
       if (bowl && bowl.filled) {
         bowl.filled = false;
         refreshBowl(bowl);
-        this.hunger = 100;
+        if (roleOf(bowl) === 'water') { this.thirst = 100; spawnEmoji('💦', this.headWorld(0.4), { size: 0.4 }); }
+        else { this.hunger = 100; spawnEmoji('😋', this.headWorld(0.4), { size: 0.4 }); }
         this.happy = Math.min(100, this.happy + 5);
-        spawnEmoji('😋', this.headWorld(0.4), { size: 0.4 });
       }
       this.releaseClaim();
       this.idle();
@@ -1034,8 +1662,11 @@
       if (spot && spot.cooldown <= 0) {
         spot.cooldown = 45;
         this.happy = Math.min(100, this.happy + 10);
-        addCoins(2, this.root.position);
-        spawnEmoji('✨', this.headWorld(0.3), { size: 0.4 });
+        if (Math.random() < 0.08) grantToy(rollToy(), this.root.position);
+        else {
+          addCoins(2, this.root.position);
+          spawnEmoji('✨', this.headWorld(0.3), { size: 0.4 });
+        }
       }
       this.dropSpot();
       this.setState('follow');
@@ -1046,27 +1677,39 @@
       this.dropSpot();
       this.root.position.y = 0;
       this.onArrive = null;
+      this.path = null;
       this.setState('fetch');
     }
 
     updateFetch(dt) {
       if (!ball.active || (ball.held && ball.held !== this)) { this.idle(); return; }
       const bp = ball.flying ? ball.to : ball.mesh.position;
-      const d = this.moveTowards(bp.x, bp.z, 4.3 * (this.energy < 10 ? 0.6 : 1), dt);
+      const d = this.moveTowards(bp.x, bp.z, 4.3 * (this.energy < CRITICAL ? 0.6 : 1), dt);
       if (!ball.flying && d < 0.35) { ball.held = this; this.setState('return'); }
       else if (this.stateTime > 12) { resetBall(); this.idle(); }
     }
 
     updateReturn(dt) {
       const pp = player.root.position;
-      const d = this.moveTowards(pp.x, pp.z, 3.6, dt);
+      let tx = pp.x, tz = pp.z;
+      if (place === 'home') {
+        this.repath = (this.repath || 0) - dt;
+        if (!this.path || this.repath <= 0) { this.path = findPath(this.root.position, pp); this.repath = 0.8; }
+        while (this.path.length > 1 && this.path[0].distanceTo(this.root.position) < 0.3) this.path.shift();
+        if (this.path.length > 1) { tx = this.path[0].x; tz = this.path[0].z; }
+      }
+      this.moveTowards(tx, tz, 3.6, dt);
+      const d = this.root.position.distanceTo(pp);
       if (d < 1.0 || this.stateTime > 15) {
+        const def = TOYS[ball.type] || TOYS.tennis;
         resetBall();
-        this.happy = Math.min(100, this.happy + 15);
+        this.path = null;
+        this.happy = Math.min(100, this.happy + (def.happy || 15));
         this.energy = Math.max(0, this.energy - 4);
         this.faceTo(pp);
         spawnEmoji('❤️', this.headWorld(0.4), { size: 0.4 });
-        if (place === 'park') addCoins(1, this.root.position);
+        const bonus = (place === 'park' ? 1 : 0) + (def.coins || 0);
+        if (bonus) addCoins(bonus, this.root.position);
         this.setState('happy', 1.4);
       }
     }
@@ -1093,6 +1736,7 @@
       if (st === 'sleep') { poseY = -0.21; legT = [-1.45, -1.45, 1.45, 1.45]; headRX = 0.15; headY = 0.6; posed = true; }
       else if (st === 'sit') { poseY = -0.06; bodyRX = -0.5; legT = [0.5, 0.5, -1.1, -1.1]; headRX = 0.45; posed = true; }
       else if (st === 'eat') { headRX = 0.75 + Math.sin(this.t * 14) * 0.12; headY = 0.6; }
+      else if (st === 'drink') { headRX = 0.8 + Math.sin(this.t * 22) * 0.08; headY = 0.6; }
       else if (st === 'sniff') { headRX = 0.6 + Math.sin(this.t * 22) * 0.06; }
       else if (st === 'happy') { hop = Math.abs(Math.sin(this.t * 9)) * 0.18; headRX = -0.25; }
 
@@ -1105,19 +1749,22 @@
 
       const wag = st === 'sleep' ? 1 : 5 + (this.happy / 100) * 14 + (st === 'happy' ? 8 : 0);
       this.tail.rotation.y = Math.sin(this.t * wag) * (st === 'sleep' ? 0.1 : 0.55);
-      this.tail.rotation.x = lerp(this.tail.rotation.x, this.happy < 25 ? 0.1 : 0.75, k);
+      this.tail.rotation.x = lerp(this.tail.rotation.x, this.happy < LOW ? 0.1 : 0.75, k);
       const flap = Math.sin(this.phase * 2) * 0.22 * this.walkBlend + (st === 'happy' ? Math.sin(this.t * 18) * 0.2 : 0);
       this.earL.rotation.z = -0.12 + flap;
       this.earR.rotation.z = 0.12 - flap;
-      this.tongue.visible = st === 'happy' || (this.moving && this.curSpeed > 3 && st !== 'return');
+      this.tongue.visible = st === 'happy' || st === 'drink' || (this.moving && this.curSpeed > 3 && st !== 'return');
     }
 
     updateBubble() {
       let e = '';
       if (this.state !== 'sleep') {
-        if (this.hunger < 30) e = '🍖';
-        else if (this.energy < 15) e = '😴';
-        else if (this.happy < 25) e = '💔';
+        const ICON = { hunger: '🍖', thirst: '💧', energy: '😴', happy: '💔' };
+        let low = null;
+        for (const k of ['hunger', 'thirst', 'energy', 'happy']) {
+          if (this[k] < LOW && (!low || this[k] < this[low])) low = k;
+        }
+        if (low) e = ICON[low];
       }
       if (e !== this.lastBubble) {
         this.lastBubble = e;
@@ -1153,10 +1800,10 @@
     }
   }
 
-  function findFurniture(type, dog, needFilled, from) {
+  function findFurniture(role, dog, needFilled, from) {
     let best = null, bd = Infinity;
     for (const f of state.furniture) {
-      if (f.type !== type) continue;
+      if (roleOf(f) !== role) continue;
       if (needFilled && !f.filled) continue;
       const r = furnRT.get(f);
       if (r && r.claim && r.claim !== dog) continue;
@@ -1165,13 +1812,14 @@
     }
     return best;
   }
-  function randomFreePoint() {
-    const N = state.roomSize;
-    for (let i = 0; i < 30; i++) {
-      const x = rand(0.5, N - 0.5), z = rand(0.5, N - 0.5);
-      if (!isSolid(x, z)) return new V3(x, 0, z);
-    }
-    return new V3(N / 2, 0, N / 2);
+  function sendToBowl(d, bowl) {
+    d.claimItem(bowl);
+    const c = tileCenter(bowl);
+    d.goTo(c, 2.4, () => {
+      d.claim = bowl;
+      d.faceTo(c);
+      d.setState(roleOf(bowl) === 'water' ? 'drink' : 'eat', 2.6);
+    }, 0.5);
   }
   function nearestSpot(pos, maxD) {
     let best = null, bd = maxD;
@@ -1199,22 +1847,81 @@
   function addDog(data, nearPlayer) {
     const d = new Dog(data);
     const p = player.root.position;
-    if (nearPlayer) d.root.position.set(clamp(p.x + rand(-1, 1), 0.5, state.roomSize - 0.5), 0, clamp(p.z - 1, 0.5, state.roomSize - 0.5));
-    else d.root.position.copy(randomFreePoint());
+    d.root.position.copy(nearPlayer ? freeNear(p.x + rand(-0.8, 0.8), p.z - 1) : randomFreePoint());
     d.root.rotation.y = d.face = rand(0, TAU);
     world.add(d.root);
     dogs.push(d);
+    makePill(d);
     return d;
   }
 
   // =====================================================================
-  // Ball
+  // Dog status bubbles (top left)
   // =====================================================================
-  const ball = { mesh: new THREE.Group(), active: false, flying: false, t: 0, from: new V3(), to: new V3(), held: null, bounce: 0 };
-  box(ball.mesh, 0.2, 0.2, 0.2, '#c9e04a');
-  box(ball.mesh, 0.21, 0.04, 0.21, '#f4f7e6');
+  const levelClass = (v) => (v < CRITICAL ? 'red' : v < LOW ? 'on' : '');
+  function makePill(d) {
+    const el = document.createElement('div');
+    el.className = 'dogPill';
+    el.innerHTML =
+      '<div class="pRow">' +
+        `<img class="portrait" src="${portraitURL(d.breed)}" alt="">` +
+        '<div class="pInfo"><div class="pName"></div><div class="pStatus"></div></div>' +
+        '<div class="alerts"></div>' +
+      '</div>' +
+      '<div class="details">' +
+        STATS.map((s) => `<div class="bar"><span class="bic">${s.ic}<i class="badge">!</i></span><div class="track"><div class="fill ${s.k}"></div></div></div>`).join('') +
+      '</div>';
+    el.querySelector('.pName').textContent = d.name;
+    d.ui = {
+      el,
+      open: false,
+      alertKey: null,
+      status: el.querySelector('.pStatus'),
+      alerts: el.querySelector('.alerts'),
+      fills: [...el.querySelectorAll('.fill')],
+      badges: [...el.querySelectorAll('.bic .badge')],
+    };
+    el.addEventListener('click', () => {
+      selected = d;
+      d.ui.open = !d.ui.open;
+      el.classList.toggle('open', d.ui.open);
+      updatePack();
+    });
+    $('pack').appendChild(el);
+  }
+  function updatePack() {
+    for (const d of dogs) {
+      const u = d.ui;
+      if (!u) continue;
+      u.el.classList.toggle('sel', d === selected && dogs.length > 1);
+      const lows = STATS.filter((s) => d[s.k] < LOW);
+      const key = lows.map((s) => s.k + levelClass(d[s.k])).join(',');
+      if (key !== u.alertKey) {
+        u.alertKey = key;
+        u.alerts.innerHTML = lows.map((s) => `<span class="al">${s.ic}<i class="badge ${levelClass(d[s.k])}">!</i></span>`).join('');
+      }
+      if (u.open) {
+        STATS.forEach((s, i) => {
+          u.fills[i].style.width = Math.round(d[s.k]) + '%';
+          u.badges[i].className = 'badge ' + levelClass(d[s.k]);
+        });
+        u.status.textContent = d.statusText();
+      }
+    }
+  }
+
+  // =====================================================================
+  // Throwing toys
+  // =====================================================================
+  const ball = { mesh: new THREE.Group(), type: null, active: false, flying: false, t: 0, from: new V3(), to: new V3(), held: null, bounce: 0 };
   ball.mesh.visible = false;
   world.add(ball.mesh);
+  function setBallToy(type) {
+    if (ball.type === type) return;
+    ball.mesh.clear();
+    ball.mesh.add(buildToy(type));
+    ball.type = type;
+  }
 
   function resetBall() {
     ball.active = false;
@@ -1222,53 +1929,76 @@
     ball.held = null;
     ball.mesh.visible = false;
   }
-  const canPlay = (d) => d.energy > 8 && !['sleep', 'eat', 'fetch', 'return'].includes(d.state);
+  const canPlay = (d) => d.energy > 8 && !['sleep', 'eat', 'drink', 'fetch', 'return'].includes(d.state);
 
   function throwBall() {
-    if (ball.active) { toast('The ball is already out!'); return; }
+    if (ball.active) { toast('A toy is already out!'); return; }
     let dog = selected && canPlay(selected) ? selected : null;
     if (!dog) {
       const pp = player.root.position;
       dog = dogs.filter(canPlay).sort((a, b) => a.root.position.distanceTo(pp) - b.root.position.distanceTo(pp))[0];
     }
     if (!dog) { toast(dogs.some((d) => d.state === 'sleep') ? 'Shh… your dog is napping 💤' : 'Too tired to play right now 😴'); return; }
+    const def = TOYS[state.toy] || TOYS.tennis;
     const p = player.root.position, a = player.root.rotation.y;
-    let dist = rand(3.5, 5.5), tx = 0, tz = 0, ok = false;
+    let dist = rand(3.5, 5.5) * def.dist, tx = 0, tz = 0, ok = false;
     for (; dist > 0.9; dist -= 0.4) {
       tx = p.x + Math.sin(a) * dist;
       tz = p.z + Math.cos(a) * dist;
-      if (inBounds(tx, tz, 0.3) && !isSolid(tx, tz)) { ok = true; break; }
+      if (inBounds(tx, tz, 0.3) && !isSolid(tx, tz) && (place === 'home' || lineClearPark(p, tx, tz))) { ok = true; break; }
     }
     if (!ok) { toast('No room to throw — turn around!'); return; }
+    setBallToy(state.toy);
     player.hand.getWorldPosition(ball.from);
-    ball.to.set(tx, 0.1, tz);
+    ball.to.set(tx, def.restY, tz);
     ball.t = 0;
     ball.flying = true;
     ball.active = true;
     ball.held = null;
     ball.mesh.visible = true;
     ball.mesh.position.copy(ball.from);
+    ball.mesh.rotation.set(0, a, 0);
     player.throwT = 0.3;
     dog.startFetch();
+  }
+  function lineClearPark(p, tx, tz) {
+    // don't let toys land in the pond
+    return !inPond(tx, tz, 0.3);
   }
 
   function updateBall(dt) {
     if (!ball.active) return;
+    const def = TOYS[ball.type] || TOYS.tennis;
     if (ball.flying) {
-      ball.t += dt / 0.75;
+      ball.t += dt / (def.time || 0.75);
       const t = Math.min(1, ball.t);
       ball.mesh.position.set(
         lerp(ball.from.x, ball.to.x, t),
-        lerp(ball.from.y, 0.1, t) + Math.sin(Math.PI * t) * 1.6,
+        lerp(ball.from.y, def.restY, t) + Math.sin(Math.PI * t) * def.arc,
         lerp(ball.from.z, ball.to.z, t));
-      ball.mesh.rotation.x += dt * 10;
-      if (ball.t >= 1) { ball.flying = false; ball.bounce = 0; }
+      if (def.spin === 'flat') { ball.mesh.rotation.x = 0; ball.mesh.rotation.z = 0; ball.mesh.rotation.y += dt * 15; }
+      else if (def.spin === 'tumble') { ball.mesh.rotation.x += dt * 9; ball.mesh.rotation.z += dt * 6; }
+      else ball.mesh.rotation.x += dt * 10;
+      if (ball.t >= 1) {
+        ball.flying = false;
+        ball.bounce = 0;
+        ball.mesh.rotation.x = 0;
+        ball.mesh.rotation.z = 0;
+        if (def.squeak) spawnEmoji('🎵', ball.mesh.position.clone().add(new V3(0, 0.4, 0)), { size: 0.35, life: 0.9 });
+      }
     } else if (ball.held) {
       ball.held.mouth.getWorldPosition(ball.mesh.position);
+      ball.mesh.rotation.set(0, ball.held.root.rotation.y, 0);
     } else {
       ball.bounce += dt;
-      ball.mesh.position.y = 0.1 + Math.abs(Math.sin(ball.bounce * 8)) * 0.3 * Math.max(0, 1 - ball.bounce * 2);
+      const fade = Math.max(0, 1 - ball.bounce / (def.decay ? def.decay * 2 : 0.5));
+      ball.mesh.position.y = def.restY + Math.abs(Math.sin(ball.bounce * 8)) * def.bounce * fade;
     }
+  }
+
+  function updateToyIcons() {
+    const icon = (TOYS[state.toy] || TOYS.tennis).icon;
+    document.querySelectorAll('.toyIcon').forEach((el) => { el.textContent = icon; });
   }
 
   // =====================================================================
@@ -1288,16 +2018,19 @@
       d.releaseClaim();
       d.dropSpot();
       d.onArrive = null;
+      d.path = null;
       d.root.position.set(-0.6 * (dogs.length - 1) / 2 + i * 0.6, 0, 17.3);
       d.root.rotation.y = d.face = Math.PI;
       d.setState('follow');
     });
+    parkWater.taken = null;
     walkDist = 0;
     walkEarn = 0;
     tiredWarned = false;
+    spawnParkLoot();
     refreshUI();
     updateCamera(0, true);
-    toast('Walk time! Let your dog sniff the ✨ spots');
+    toast(parkLoot ? 'Walk time! Something is glinting in the grass… ✨' : 'Walk time! Let your dog sniff the ✨ spots');
   }
 
   function goHome() {
@@ -1306,17 +2039,19 @@
     parkRoot.visible = false;
     world.fog = null;
     resetBall();
-    const N = state.roomSize;
+    clearParkLoot();
     player.moveTarget = null;
-    player.root.position.set(N / 2, 0, N - 0.8);
+    const sp = freeNear(CHUNK / 2, CHUNK - 1.2);
+    player.root.position.copy(sp);
     player.root.rotation.y = player.face = Math.PI;
     dogs.forEach((d, i) => {
       d.dropSpot();
       d.leash.visible = false;
-      d.root.position.set(clamp(N / 2 - 0.7 + i * 0.5, 0.5, N - 0.5), 0, N - 1.6);
+      d.root.position.copy(freeNear(clamp(CHUNK / 2 - 0.7 + i * 0.5, 0.5, CHUNK - 0.5), CHUNK - 2));
       d.idle(rand(1, 3));
     });
     sniffSpots.forEach((s) => { s.taken = null; });
+    parkWater.taken = null;
     refreshUI();
     updateCamera(0, true);
     toast(walkEarn > 0 ? `Great walk! You earned 🪙 ${walkEarn}` : 'Back home 🏠');
@@ -1340,16 +2075,21 @@
   function updateCamera(dt, snap) {
     const p = player.root.position;
     let tx, tz, dist;
-    if (place === 'home') {
-      const N = state.roomSize;
-      tx = lerp(N / 2, p.x, 0.45);
-      tz = lerp(N / 2, p.z, 0.45);
-      dist = 5.5 + N * 0.85;
+    if (place === 'home' && mode === 'build') {
+      const e = extentOf(state.chunks.concat(buildCands));
+      tx = (e.x0 + e.x1) / 2;
+      tz = (e.z0 + e.z1) / 2;
+      dist = 5.5 + Math.max(e.x1 - e.x0, e.z1 - e.z0) * 0.8;
+    } else if (place === 'home') {
+      const cx = (Math.floor(p.x / CHUNK) + 0.5) * CHUNK, cz = (Math.floor(p.z / CHUNK) + 0.5) * CHUNK;
+      tx = lerp(cx, p.x, 0.5);
+      tz = lerp(cz, p.z, 0.5);
+      dist = 5.5 + CHUNK * 0.85;
     } else {
       tx = p.x; tz = p.z;
       dist = 11;
     }
-    dist *= clamp(0.8 / camera.aspect, 1, 1.6) * zoom;
+    dist *= clamp(0.8 / camera.aspect, 1, 1.6) * (mode === 'build' ? 1 : zoom);
     const k = snap ? 1 : damp(0.02, dt);
     camLook.set(lerp(camLook.x, tx, k), 0.5, lerp(camLook.z, tz, k));
     camDist = lerp(camDist, dist, snap ? 1 : damp(0.05, dt));
@@ -1364,7 +2104,7 @@
   let primary = null;
   let pinch = null;
   const joyBase = $('joyBase'), joyKnob = $('joyKnob');
-  const modalOpen = () => !$('shop').classList.contains('hidden') || !$('start').classList.contains('hidden');
+  const modalOpen = () => ['shop', 'start', 'bag', 'confirm'].some((id) => !$(id).classList.contains('hidden'));
 
   canvas.addEventListener('pointerdown', (e) => {
     if (modalOpen()) return;
@@ -1373,7 +2113,7 @@
     if (ptrs.size === 2) {
       const [a, b] = [...ptrs.values()];
       pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: zoom };
-      if (primary) primary.dragging = true; // a pinch is never a tap
+      if (primary) primary.dragging = true;
       joy.active = false;
       joyBase.style.display = 'none';
     } else if (ptrs.size === 1) {
@@ -1385,7 +2125,7 @@
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinch && ptrs.size >= 2) {
       const [a, b] = [...ptrs.values()];
-      zoom = clamp(pinch.z * pinch.d / (Math.hypot(a.x - b.x, a.y - b.y) || 1), 0.55, 1.8);
+      zoom = clamp((pinch.z * pinch.d) / (Math.hypot(a.x - b.x, a.y - b.y) || 1), 0.55, 1.8);
       return;
     }
     if (!primary || e.pointerId !== primary.id || pinch) return;
@@ -1436,6 +2176,7 @@
     const hitGround = raycaster.ray.intersectPlane(groundPlane, gp);
 
     if (mode === 'decorate') { if (hitGround) decorateTap(gp); return; }
+    if (mode === 'build') { if (hitGround) buildTap(gp); return; }
 
     let dog = null;
     const hits = raycaster.intersectObjects(dogs.map((d) => d.root), true);
@@ -1454,8 +2195,8 @@
     if (dog) { interactDog(dog); return; }
 
     if (hitGround) {
-      const [a, b] = bounds();
-      player.moveTarget = new V3(clamp(gp.x, a, b), 0, clamp(gp.z, a, b));
+      const b = bounds();
+      player.moveTarget = new V3(clamp(gp.x, b.x0, b.x1), 0, clamp(gp.z, b.z0, b.z1));
       tapRing.position.set(player.moveTarget.x, 0.06, player.moveTarget.z);
       tapT = 0.5;
       hideHint();
@@ -1464,7 +2205,7 @@
 
   function interactDog(d) {
     selected = d;
-    updateHud();
+    updatePack();
     if (d.state === 'fetch' || d.state === 'return') return;
     if (d.state === 'sleep') d.wake();
     d.releaseClaim();
@@ -1483,14 +2224,12 @@
 
   function enterDecorate() {
     mode = 'decorate';
-    grid.visible = true;
     if (!selectedInv || !(state.inventory[selectedInv] > 0)) selectedInv = firstInv();
     renderInv();
     refreshUI();
   }
   function exitDecorate() {
     mode = 'normal';
-    grid.visible = false;
     refreshUI();
     save();
   }
@@ -1512,9 +2251,8 @@
     }
   }
   function decorateTap(gp) {
-    const N = state.roomSize;
     const i = Math.floor(gp.x), j = Math.floor(gp.z);
-    if (i < 0 || j < 0 || i >= N || j >= N) return;
+    if (!isHomeTile(i, j)) return;
     const ex = furnitureAt(i, j);
     if (ex) {
       state.furniture.splice(state.furniture.indexOf(ex), 1);
@@ -1537,103 +2275,213 @@
     spawnEmoji('✨', new V3(i + 0.5, 0.6, j + 0.5), { size: 0.45, life: 0.8 });
   }
   function afterFurnitureChange() {
-    dogs.forEach((d) => d.reset());
     rebuildFurniture();
+    dogs.forEach((d) => d.reset());
     renderInv();
     save();
   }
 
   // =====================================================================
-  // Feeding
+  // Home expansion
   // =====================================================================
-  function feed() {
-    const bowls = state.furniture.filter((f) => f.type === 'bowl');
-    if (!bowls.length) { toast('Place a food bowl first (🎨 Decorate)'); return; }
-    bowls.forEach((b) => { b.filled = true; refreshBowl(b); });
-    dogs.forEach((d) => { if ((d.state === 'idle' || d.state === 'sit') && d.hunger < 85) d.setState('idle', 0.2); });
-    // make sure hungry-ish dogs actually go eat
-    dogs.forEach((d) => {
-      if (d.hunger < 85 && (d.state === 'idle')) {
-        const bowl = findFurniture('bowl', d, true, d.root.position);
-        if (bowl) {
-          d.claimItem(bowl);
-          d.goTo(tileCenter(bowl), 2.6, () => { d.claim = bowl; d.faceTo(tileCenter(bowl)); d.setState('eat', 2.6); }, 0.5);
-        }
-      }
-    });
-    toast(bowls.length > 1 ? 'Bowls filled 🥣' : 'Bowl filled 🥣');
+  function enterBuildMode() {
+    if (state.build) { toast('Already building — wait for it to finish 🏗️'); return; }
+    mode = 'build';
+    buildCands = findCandidates();
+    buildPick = null;
+    showCandidates();
+    refreshUI();
+  }
+  function exitBuildMode() {
+    mode = 'normal';
+    buildPick = null;
+    buildCands = [];
+    candGroup.clear();
+    refreshUI();
+  }
+  function buildTap(gp) {
+    const cx = Math.floor(gp.x / CHUNK), cz = Math.floor(gp.z / CHUNK);
+    if (!buildCands.some(([x, z]) => x === cx && z === cz)) return;
+    buildPick = [cx, cz];
+    showCandidates();
+    const price = expandPrice(state.chunks.length);
+    confirmBox('Build a new room here?', `Costs 🪙 ${price} · ready in ${BUILD_MINUTES} minutes`, `Build for 🪙 ${price}`, state.coins >= price, () => {
+      if (state.coins < price) { toast('Not enough coins yet'); return; }
+      state.coins -= price;
+      state.build = { cx, cz, readyAt: Date.now() + BUILD_MINUTES * 60000 };
+      exitBuildMode();
+      rebuildSite();
+      updateHud();
+      toast(`Construction started! Ready in ${BUILD_MINUTES} minutes 🏗️`);
+      save();
+    }, () => { buildPick = null; showCandidates(); });
+  }
+  function checkBuild() {
+    const b = state.build;
+    if (!b || Date.now() < b.readyAt) return;
+    state.chunks.push([b.cx, b.cz]);
+    state.build = null;
+    syncChunkSet();
+    buildRoom();
+    rebuildSite();
+    if (place === 'home') {
+      const c = new V3(b.cx * CHUNK + CHUNK / 2, 1.5, b.cz * CHUNK + CHUNK / 2);
+      for (let k = 0; k < 6; k++) setTimeout(() => spawnEmoji(pick(['🎉', '✨', '🎊']), c.clone().add(new V3(rand(-2, 2), 0, rand(-2, 2))), { size: 0.6, life: 1.6 }), k * 120);
+    }
+    toast('🎉 Your new room is finished! Room for one more dog.');
+    updateHud();
     save();
   }
 
   // =====================================================================
-  // Shop & adoption
+  // Feeding & water
   // =====================================================================
-  const capacity = () => state.roomSize / 2 - 2;
+  function fillBowls(role) {
+    const bowls = state.furniture.filter((f) => roleOf(f) === role);
+    const label = role === 'food' ? 'food bowl' : 'water bowl';
+    if (!bowls.length) { toast(`Place a ${label} first (🎨 Decorate)`); return; }
+    bowls.forEach((b) => { b.filled = true; refreshBowl(b); });
+    dogs.forEach((d) => {
+      const need = role === 'food' ? d.hunger : d.thirst;
+      if (need < 85 && (d.state === 'idle' || d.state === 'sit')) {
+        const b = findFurniture(role, d, true, d.root.position);
+        if (b) sendToBowl(d, b);
+      }
+    });
+    toast(role === 'food' ? (bowls.length > 1 ? 'Food bowls filled 🥣' : 'Food bowl filled 🥣') : (bowls.length > 1 ? 'Water bowls filled 💧' : 'Water bowl filled 💧'));
+    save();
+  }
+
+  // =====================================================================
+  // Shop, toy bag, adoption, confirm
+  // =====================================================================
+  const capacity = () => state.chunks.length;
   const adoptPrice = () => 50 * dogs.length;
 
-  function openShop() {
-    renderShop();
-    $('shop').classList.remove('hidden');
-  }
+  function openShop() { renderShop(); $('shop').classList.remove('hidden'); }
   function closeShop() {
     $('shop').classList.add('hidden');
     if (mode === 'decorate') renderInv();
   }
   function renderShop() {
     const L = $('shopList');
+    const scroll = L.parentElement.scrollTop;
     L.innerHTML = '';
     $('shopCoins').textContent = state.coins;
     const section = (t) => { const d = document.createElement('div'); d.className = 'section'; d.textContent = t; L.appendChild(d); };
-    const row = (icon, title, sub, price, onBuy, disabled) => {
+    const row = (icon, title, sub, price, onBuy, disabled, label) => {
       const r = document.createElement('div');
       r.className = 'row';
-      r.innerHTML = `<div class="ic">${icon}</div><div class="txt"><b>${title}</b><small>${sub}</small></div>`;
+      r.innerHTML = `<div class="ic">${icon}</div><div class="txt"><b></b><small></small></div>`;
+      r.querySelector('b').textContent = title;
+      r.querySelector('small').textContent = sub;
       const b = document.createElement('button');
       b.className = 'buy';
-      b.textContent = price == null ? '—' : `🪙 ${price}`;
+      b.textContent = label || (price == null ? '—' : `🪙 ${price}`);
       b.disabled = !!disabled || price == null || state.coins < price;
-      b.addEventListener('click', () => { if (price != null && state.coins >= price) onBuy(price); });
+      b.addEventListener('click', () => { if (!b.disabled && state.coins >= price) onBuy(price); });
       r.appendChild(b);
       L.appendChild(r);
     };
 
-    section('Home');
-    const N = state.roomSize;
-    if (N < MAX_ROOM) {
-      row('📐', 'Bigger room', `${N}×${N} → ${N + 2}×${N + 2} · fits ${N / 2 - 1} dogs`, EXPAND_PRICE[N], (p) => {
-        state.coins -= p;
-        state.roomSize += 2;
-        buildRoom();
-        rebuildFurniture();
-        toast('Your home got bigger! 🎉');
-        updateHud();
-        save();
-        renderShop();
-      });
-    } else {
-      row('📐', 'Bigger room', 'Your home is as big as it gets', null, null, true);
-    }
-    const cap = capacity();
-    const full = dogs.length >= cap;
-    row('🐶', 'Adopt a dog', full ? `Home is full (${dogs.length}/${cap}) — get a bigger room` : `${dogs.length}/${cap} dogs`, adoptPrice(), () => {
+    section('🏡 Home');
+    const n = state.chunks.length;
+    if (state.build) row('🏗️', 'Add a room', `Building… ready in ${fmtTime(state.build.readyAt - Date.now())}`, null, null, true, 'Busy');
+    else if (n >= MAX_CHUNKS) row('📐', 'Add a room', 'Your home is as big as it gets', null, null, true, 'Max');
+    else row('📐', 'Add a room', `You have ${n} · +1 dog space · ${BUILD_MINUTES} min to build`, expandPrice(n), () => { closeShop(); enterBuildMode(); });
+    const cap = capacity(), full = dogs.length >= cap;
+    row('🐶', 'Adopt a dog', full ? `Home is full (${dogs.length}/${cap}) — add a room first` : `${dogs.length}/${cap} dogs`, adoptPrice(), () => {
       closeShop();
       openStart(true);
     }, full);
 
-    section('Furniture');
-    for (const [t, it] of Object.entries(ITEMS)) {
-      const owned = (state.inventory[t] || 0) + state.furniture.filter((f) => f.type === t).length;
-      row(it.icon, it.name, owned ? `You have ${owned}` : (it.solid ? 'Decoration' : 'Dogs can walk on it'), it.price, (p) => {
+    section('🎾 Toys');
+    for (const [k, t] of Object.entries(TOYS)) {
+      if (t.price == null || k === 'tennis') continue;
+      const owned = state.toys.includes(k);
+      row(t.icon, t.name, owned ? 'In your 🎒 bag' : toyBlurb(t), t.price, (p) => {
         state.coins -= p;
-        state.inventory[t] = (state.inventory[t] || 0) + 1;
-        selectedInv = t;
-        toast(`${it.name} added — place it in 🎨 Decorate`);
+        state.toys.push(k);
+        state.toy = k;
+        updateToyIcons();
+        toast(`${t.name} ${t.icon} is ready to throw!`);
         updateHud();
         save();
         renderShop();
+      }, owned, owned ? 'Owned' : null);
+    }
+
+    for (const [cat, title] of CATS) {
+      section(title);
+      for (const [t, it] of Object.entries(ITEMS)) {
+        if (it.cat !== cat) continue;
+        const owned = (state.inventory[t] || 0) + state.furniture.filter((f) => f.type === t).length;
+        const kind = it.role === 'bed' ? 'Dogs nap on it' : it.role === 'food' ? 'Fill it with 🥣 Feed' : it.role === 'water' ? 'Fill it with 💧 Water' : it.solid ? 'Decoration' : 'Dogs can walk on it';
+        row(it.icon, it.name, owned ? `You have ${owned} · ${kind}` : kind, it.price, (p) => {
+          state.coins -= p;
+          state.inventory[t] = (state.inventory[t] || 0) + 1;
+          selectedInv = t;
+          toast(`${it.name} added — place it in 🎨 Decorate`);
+          updateHud();
+          save();
+          renderShop();
+        });
+      }
+    }
+    L.parentElement.scrollTop = scroll;
+  }
+  function toyBlurb(t) {
+    if (t.spin === 'flat') return 'Flies extra far';
+    if ((t.bounce || 0) > 0.6) return 'Super bouncy';
+    if (t.squeak) return 'Squeaks when it lands';
+    if (t.happy) return 'Dogs love it';
+    return 'A classic';
+  }
+
+  function openBag() { renderBag(); $('bag').classList.remove('hidden'); }
+  function renderBag() {
+    const G = $('toyGrid');
+    G.innerHTML = '';
+    const all = Object.entries(TOYS);
+    $('bagCount').textContent = `${state.toys.length}/${all.length}`;
+    for (const [k, t] of all) {
+      const owned = state.toys.includes(k);
+      const b = document.createElement('button');
+      b.className = 'toyCard' + (owned ? '' : ' locked') + (k === state.toy ? ' eq' : '');
+      const sub = owned ? (k === state.toy ? 'Throwing next' : 'Tap to use') : t.price == null ? 'Found on walks' : `Shop · 🪙 ${t.price}`;
+      b.innerHTML = `<span class="big">${owned || t.price != null ? t.icon : '❓'}</span><b></b><small>${sub}</small>`;
+      b.querySelector('b').textContent = owned || t.price != null ? t.name : '???';
+      b.addEventListener('click', () => {
+        if (!owned) { toast(t.price == null ? 'Keep walking — maybe you’ll find one!' : 'You can buy this in the 🛒 Shop'); return; }
+        state.toy = k;
+        updateToyIcons();
+        renderBag();
+        save();
       });
+      G.appendChild(b);
     }
   }
+
+  let cfYes = null, cfNo = null;
+  function confirmBox(title, text, yesLabel, yesEnabled, onYes, onNo) {
+    $('cfTitle').textContent = title;
+    $('cfText').textContent = text;
+    $('cfYes').textContent = yesLabel;
+    $('cfYes').disabled = !yesEnabled;
+    cfYes = onYes;
+    cfNo = onNo || null;
+    $('confirm').classList.remove('hidden');
+  }
+  $('cfYes').addEventListener('click', () => {
+    $('confirm').classList.add('hidden');
+    const f = cfYes; cfYes = null; cfNo = null;
+    if (f) f();
+  });
+  $('cfNo').addEventListener('click', () => {
+    $('confirm').classList.add('hidden');
+    const f = cfNo; cfYes = null; cfNo = null;
+    if (f) f();
+  });
 
   let adoptMode = false;
   let chosenBreed = 0;
@@ -1648,7 +2496,7 @@
     BREEDS.forEach((b, i) => {
       const btn = document.createElement('button');
       btn.className = 'breed' + (i === chosenBreed ? ' sel' : '');
-      btn.innerHTML = `<div class="swatch" style="background:linear-gradient(135deg, ${b.body} 0 58%, ${b.light} 58% 78%, ${b.dark} 78%)"></div>${b.name}`;
+      btn.innerHTML = `<img src="${portraitURL(i)}" alt="">${b.name}`;
       btn.addEventListener('click', () => { chosenBreed = i; renderBreeds(); });
       el.appendChild(btn);
     });
@@ -1669,10 +2517,11 @@
     if (adoptMode) {
       const price = adoptPrice();
       if (state.coins < price) { toast('Not enough coins yet'); return; }
+      if (dogs.length >= capacity()) { toast('Your home is full — add a room first'); return; }
       state.coins -= price;
     }
     $('nameInput').blur();
-    const d = addDog({ name, breed: chosenBreed, hunger: 90, energy: 90, happy: 80 }, true);
+    const d = addDog({ name, breed: chosenBreed, hunger: 90, thirst: 90, energy: 90, happy: 80 }, true);
     selected = d;
     $('start').classList.add('hidden');
     d.pet();
@@ -1686,12 +2535,19 @@
   // HUD
   // =====================================================================
   let toastTimer = null;
+  function placeToast() {
+    const bars = ['actions', 'parkActions', 'decoBar', 'buildBar'].map($).filter((e) => !e.classList.contains('hidden'));
+    const top = bars.length ? Math.min(...bars.map((e) => e.getBoundingClientRect().top)) : window.innerHeight - 20;
+    $('toast').style.bottom = Math.max(20, window.innerHeight - top + 12) + 'px';
+  }
   function toast(msg) {
     const t = $('toast');
     t.textContent = msg;
+    placeToast();
     t.classList.add('show');
+    $('hint').classList.add('under');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+    toastTimer = setTimeout(() => { t.classList.remove('show'); $('hint').classList.remove('under'); }, 2800);
   }
   let hintHidden = false;
   function hideHint() {
@@ -1704,52 +2560,57 @@
     $('actions').classList.toggle('hidden', !(place === 'home' && mode === 'normal'));
     $('parkActions').classList.toggle('hidden', place !== 'park');
     $('decoBar').classList.toggle('hidden', mode !== 'decorate');
-    $('dogPanel').classList.toggle('hidden', !selected || mode === 'decorate');
-    $('sceneLabel').textContent = place === 'park' ? '🌳 Park' : mode === 'decorate' ? '🎨 Decorating' : '🏠 Home';
-    if (mode === 'decorate' || place === 'park') hideHint();
+    $('buildBar').classList.toggle('hidden', mode !== 'build');
+    gridGroup.visible = mode === 'decorate';
+    candGroup.visible = mode === 'build';
+    if (mode !== 'normal' || place === 'park') hideHint();
+    placeToast();
   }
 
   function updateHud() {
     $('coinCount').textContent = state.coins;
     if (!$('shop').classList.contains('hidden')) $('shopCoins').textContent = state.coins;
-    const d = selected;
-    $('dogPanel').classList.toggle('hidden', !d || mode === 'decorate');
-    if (!d) return;
-    $('dogName').textContent = d.name + (dogs.length > 1 ? '  ›' : '');
-    $('dogStatus').textContent = d.statusText();
-    $('barHunger').style.width = d.hunger + '%';
-    $('barEnergy').style.width = d.energy + '%';
-    $('barHappy').style.width = d.happy + '%';
+    const b = state.build;
+    $('buildPill').classList.toggle('hidden', !b);
+    if (b) {
+      const left = fmtTime(b.readyAt - Date.now());
+      $('buildTime').textContent = left;
+      if (siteLabel) setSpriteText(siteLabel, '🏗️ ' + left);
+    }
+    updatePack();
   }
-  $('dogPanel').addEventListener('click', () => {
-    if (dogs.length < 2) return;
-    selected = dogs[(dogs.indexOf(selected) + 1) % dogs.length];
-    updateHud();
-  });
 
   $('hud').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-act]');
     if (!b) return;
     const act = b.dataset.act;
-    if (act === 'feed') feed();
+    if (act === 'feed') fillBowls('food');
+    else if (act === 'water') fillBowls('water');
     else if (act === 'ball') throwBall();
     else if (act === 'walk') goWalk();
     else if (act === 'home') goHome();
     else if (act === 'decorate') enterDecorate();
     else if (act === 'done') exitDecorate();
     else if (act === 'shop') openShop();
+    else if (act === 'bag') openBag();
+    else if (act === 'cancelBuild') exitBuildMode();
     else if (act === 'rotate') { placeRot = (placeRot + 1) % 4; renderInv(); toast(`Next item: ${rotNames[placeRot].toLowerCase()}`); }
   });
   $('shop').addEventListener('click', (e) => {
     if (e.target.id === 'shop' || e.target.closest('[data-act="closeShop"]')) closeShop();
   });
+  $('bag').addEventListener('click', (e) => {
+    if (e.target.id === 'bag' || e.target.closest('[data-act="closeBag"]')) $('bag').classList.add('hidden');
+  });
 
   // =====================================================================
   // Saving
   // =====================================================================
+  let migratedOldSave = false;
   function save() {
     state.dogs = dogs.map((d) => d.serialize());
     state.savedAt = Date.now();
+    state.v = 2;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch (_) { /* storage unavailable */ }
   }
   function load() {
@@ -1758,12 +2619,28 @@
       if (!raw) return false;
       const s = JSON.parse(raw);
       state = Object.assign(defaultState(), s);
-      if (!state.inventory) state.inventory = {};
+      if (!state.inventory || typeof state.inventory !== 'object') state.inventory = {};
+      for (const k of Object.keys(state.inventory)) if (!ITEMS[k]) delete state.inventory[k];
       if (!Array.isArray(state.furniture)) state.furniture = [];
-      // time passes while you're away: dogs rest, but get a bit hungry and miss you
+      state.furniture = state.furniture.filter((f) => f && ITEMS[f.type]);
+      // Older saves had one square room that could grow; turn it into sections
+      if (!Array.isArray(s.chunks) || !s.chunks.length) {
+        const n = Math.max(1, Math.ceil((s.roomSize || CHUNK) / CHUNK));
+        state.chunks = [];
+        for (let cx = 0; cx < n; cx++) for (let cz = 0; cz < n; cz++) state.chunks.push([cx, cz]);
+      }
+      delete state.roomSize;
+      if (!Array.isArray(state.toys)) state.toys = [];
+      state.toys = state.toys.filter((t) => TOYS[t]);
+      if (!state.toys.includes('tennis')) state.toys.unshift('tennis');
+      if (!state.toys.includes(state.toy)) state.toy = 'tennis';
+      if (state.build && !(state.build.readyAt > 0)) state.build = null;
+      migratedOldSave = !s.v;
+      // Time passes while you're away: dogs rest, but get hungry, thirsty and miss you
       const hours = clamp((Date.now() - (s.savedAt || Date.now())) / 3600000, 0, 24);
       for (const d of state.dogs || []) {
         d.hunger = Math.max(10, (d.hunger ?? 80) - hours * 15);
+        d.thirst = Math.max(10, (d.thirst ?? 80) - hours * 18);
         d.energy = Math.min(100, (d.energy ?? 80) + hours * 25);
         d.happy = Math.max(15, (d.happy ?? 70) - hours * 8);
       }
@@ -1771,6 +2648,19 @@
     } catch (_) {
       return false;
     }
+  }
+  function giveWaterBowl() {
+    if (state.furniture.some((f) => f.type === 'water') || state.inventory.water > 0) return;
+    const prefer = [[2, 0], [4, 0], [1, 0], [5, 0], [0, 1], [5, 1]];
+    for (let j = 0; j < CHUNK; j++) for (let i = 0; i < CHUNK; i++) prefer.push([i, j]);
+    for (const [i, j] of prefer) {
+      if (!furnitureAt(i, j) && isHomeTile(i, j)) {
+        state.furniture.push({ type: 'water', i, j, rot: 0, filled: true });
+        rebuildFurniture();
+        return;
+      }
+    }
+    state.inventory.water = 1;
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('pagehide', save);
@@ -1782,13 +2672,17 @@
   let hudTimer = 0, saveTimer = 5;
 
   function update(dt) {
+    animT += dt;
     updatePlayer(dt);
     for (const d of dogs) d.update(dt);
     separateDogs();
     updateBall(dt);
     if (place === 'park') {
       updateSniffSpots(dt);
-      if (!tiredWarned && dogs.some((d) => d.energy < 10)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
+      updateParkLoot(dt);
+      if (!tiredWarned && dogs.some((d) => d.energy < CRITICAL)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
+    } else {
+      for (const r of furnRT.values()) if (r.group.userData.anim) r.group.userData.anim(animT);
     }
     for (const d of dogs) d.updateLeash();
     updateParticles(dt);
@@ -1803,7 +2697,7 @@
 
     updateCamera(dt, false);
     hudTimer -= dt;
-    if (hudTimer <= 0) { hudTimer = 0.25; updateHud(); }
+    if (hudTimer <= 0) { hudTimer = 0.25; checkBuild(); updateHud(); }
     saveTimer -= dt;
     if (saveTimer <= 0) { saveTimer = 5; save(); }
   }
@@ -1819,21 +2713,30 @@
   // Start
   // =====================================================================
   function init() {
-    load();
+    const hadSave = load();
+    syncChunkSet();
     buildRoom();
     rebuildFurniture();
+    if (hadSave && migratedOldSave) giveWaterBowl();
+    rebuildSite();
     buildPark();
-    const N = state.roomSize;
-    player.root.position.set(N / 2, 0, N - 1.2);
+    player.root.position.copy(freeNear(CHUNK / 2, CHUNK - 1.2));
     player.root.rotation.y = player.face = Math.PI;
     for (const dd of state.dogs || []) addDog(dd, false);
     selected = dogs[0] || null;
-    if (!dogs.length) openStart(false);
-    else toast(`Welcome back! ${dogs[0].name} missed you 🐾`);
+    updateToyIcons();
     refreshUI();
+    if (!dogs.length) openStart(false);
+    else if (migratedOldSave) toast('New: your dogs get thirsty now — keep the 💧 water bowl filled!');
+    else toast(`Welcome back! ${dogs[0].name} missed you 🐾`);
+    checkBuild();
     updateHud();
     updateCamera(0, true);
     loop();
+  }
+  // Open the game with ?debug at the end of the URL to poke at it from the browser console
+  if (/[?&]debug\b/.test(location.search)) {
+    window.VP = { get state() { return state; }, get place() { return place; }, get parkLoot() { return parkLoot; }, dogs, player, ball, grantToy, save };
   }
   init();
 })();
