@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Voxel Paws">
+  <meta name="theme-color" content="#cfe6f2">
+  <title>Voxel Paws</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div id="topbar">
+      <div class="pill"><span>🪙</span> <span id="coinCount">0</span></div>
+      <div class="pill" id="sceneLabel">🏠 Home</div>
+    </div>
+
+    <div id="dogPanel" class="card hidden">
+      <div id="dogName">Dog</div>
+      <div id="dogStatus">Content</div>
+      <div class="bar"><span>🍖</span><div class="track"><div class="fill hunger" id="barHunger"></div></div></div>
+      <div class="bar"><span>⚡</span><div class="track"><div class="fill energy" id="barEnergy"></div></div></div>
+      <div class="bar"><span>❤️</span><div class="track"><div class="fill happy" id="barHappy"></div></div></div>
+    </div>
+
+    <div id="toast"></div>
+    <div id="hint">Drag anywhere to walk · Tap your dog to pet</div>
+
+    <div id="actions" class="actionbar">
+      <button data-act="feed">🥣<small>Feed</small></button>
+      <button data-act="ball">🎾<small>Ball</small></button>
+      <button data-act="walk">🦮<small>Walk</small></button>
+      <button data-act="decorate">🎨<small>Decorate</small></button>
+      <button data-act="shop">🛒<small>Shop</small></button>
+    </div>
+
+    <div id="parkActions" class="actionbar hidden">
+      <button data-act="ball">🎾<small>Ball</small></button>
+      <button data-act="home">🏠<small>Go home</small></button>
+    </div>
+
+    <div id="decoBar" class="card hidden">
+      <div id="decoHelp">Tap a floor tile to place · Tap an item to pick it up</div>
+      <div id="invList"></div>
+      <div class="decoBtns">
+        <button data-act="rotate">🔄<small id="rotLabel">Rotate</small></button>
+        <button data-act="shop">🛒<small>Shop</small></button>
+        <button data-act="done">✅<small>Done</small></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="joyBase"><div id="joyKnob"></div></div>
+
+  <div id="shop" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead">
+        <h2>Shop</h2>
+        <div class="pill small">🪙 <span id="shopCoins">0</span></div>
+        <button class="x" data-act="closeShop">✕</button>
+      </div>
+      <div id="shopList"></div>
+    </div>
+  </div>
+
+  <div id="start" class="modal center hidden">
+    <div class="sheet">
+      <h1 id="startTitle">🐾 Voxel Paws</h1>
+      <p id="startSub">Pick your first dog and give it a name.</p>
+      <div id="breeds"></div>
+      <input id="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
+      <button id="startBtn" class="primary">Let's go!</button>
+      <button id="cancelBtn" class="ghost hidden">Cancel</button>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
