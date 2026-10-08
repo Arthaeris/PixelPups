@@ -23,12 +23,17 @@
           <button class="roundBtn" data-act="bag" aria-label="Toy bag">🎒</button>
           <button class="roundBtn" data-act="settings" aria-label="Settings">⚙️</button>
         </div>
+        <div class="trRow">
+          <button class="roundBtn" data-act="album" aria-label="Collectibles book">📒</button>
+          <button class="roundBtn" data-act="daily" aria-label="Daily challenges">📋<i class="badge hidden" id="dailyBadge">3</i></button>
+        </div>
         <button class="pill small chipBtn" id="clockChip" data-act="clock">☀️ 12:00</button>
+        <button class="pill small chipBtn" id="comfortChip" data-act="comfort">🏡 🐾</button>
+        <button class="pill small chipBtn hidden" id="locChip" data-act="locinfo"></button>
         <div class="pill small hidden" id="buildPill">🏗️ <span id="buildTime">10:00</span></div>
       </div>
     </div>
 
-    <div id="toast"></div>
     <div id="hint">Drag anywhere to walk · Tap your dog to pet</div>
 
     <div id="actions" class="actionbar">
@@ -41,7 +46,10 @@
     </div>
 
     <div id="parkActions" class="actionbar hidden">
+      <button data-act="ctx" id="ctxBtn" class="ctx hidden">✋<small>Stay</small></button>
       <button data-act="ball"><span class="toyIcon">🎾</span><small>Throw</small></button>
+      <button data-act="tricks">🎓<small>Tricks</small></button>
+      <button data-act="leash" id="leashBtn">🔓<small>Unleash</small></button>
       <button data-act="home">🏠<small>Go home</small></button>
     </div>
 
@@ -70,10 +78,134 @@
 
   <div id="joyBase"><div id="joyKnob"></div></div>
 
+  <div id="trickMode" class="hidden">
+    <div class="tmTop">
+      <div class="tmDog">
+        <img id="tmPortrait" alt="">
+        <div class="tmInfo">
+          <b id="tmName">Dog</b>
+          <div class="focusTrack"><div id="focusFill"></div></div>
+          <small>Focus</small>
+        </div>
+      </div>
+      <button class="roundBtn" id="tmBook" aria-label="Trick book">📖</button>
+      <button class="roundBtn" id="tmExit" aria-label="Leave Trick Mode">✕</button>
+    </div>
+    <div id="tmHint"></div>
+    <div id="tmSeq"></div>
+    <div id="tmRing"></div>
+  </div>
+
+  <div id="toast"></div>
+
+  <div id="visitBar" class="card hidden">
+    <div><b id="visitName">Visiting</b><div class="sub" id="visitHint"></div></div>
+    <button class="soft" id="visitLeave">🏠 Go home</button>
+  </div>
+
+  <div id="bath" class="modal center hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2 id="bathTitle">Bath time</h2><button class="x" id="bathClose">✕</button></div>
+      <b id="bathStep"></b>
+      <p class="sub" id="bathHint"></p>
+      <div id="bathShampoos" class="wardGrid"></div>
+      <div id="bathCanvasWrap" class="hidden">
+        <canvas id="bathCanvas" width="280" height="280"></canvas>
+        <div class="track big"><div class="fill clean" id="bathFill"></div></div>
+      </div>
+      <button id="bathDone" class="primary hidden">Done</button>
+    </div>
+  </div>
+
+  <div id="kitchen" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Kitchen</h2><button class="x" data-act="closeKitchen">✕</button></div>
+      <p class="sub" id="pantryLine"></p>
+      <div id="recipeList"></div>
+      <div id="cookGame" class="hidden">
+        <b id="cookRound"></b>
+        <div id="cookBar"><div id="cookZone"></div><div id="cookMarker"></div></div>
+        <div id="cookResult"></div>
+        <button id="cookTap" class="primary">Tap!</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="meals" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Treats</h2><button class="x" data-act="closeMeals">✕</button></div>
+      <p class="sub" id="mealSub"></p>
+      <div id="mealList" class="wardGrid"></div>
+    </div>
+  </div>
+
+  <div id="wardrobe" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Wardrobe</h2><button class="x" data-act="closeWardrobe">✕</button></div>
+      <p class="sub" id="wardSub"></p>
+      <div id="wardList"></div>
+    </div>
+  </div>
+
+  <div id="comfort" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Home comfort</h2><button class="x" data-act="closeComfort">✕</button></div>
+      <div id="comfortPaws"></div>
+      <p class="sub" id="comfortSub"></p>
+      <div id="comfortList"></div>
+    </div>
+  </div>
+
+  <div id="giftModal" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>🎁 Gift box</h2><button class="x" data-act="closeGift">✕</button></div>
+      <p class="sub" id="giftSub"></p>
+      <div id="giftList"></div>
+    </div>
+  </div>
+
+  <div id="map" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>🗺️ Where to?</h2><button class="x" data-act="closeMap">✕</button></div>
+      <p class="sub">New places unlock as you play. Every place has its own finds, vendors and surprises.</p>
+      <div id="mapList"></div>
+    </div>
+  </div>
+
+  <div id="daily" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>📋 Today's challenges</h2><button class="x" data-act="closeDaily">✕</button></div>
+      <p class="sub" id="dailySub"></p>
+      <div id="dailyList"></div>
+    </div>
+  </div>
+
+  <div id="album" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>📒 Collectibles</h2><button class="x" data-act="closeAlbum">✕</button></div>
+      <p class="sub" id="albumSub"></p>
+      <div id="albumTabs"></div>
+      <p class="sub albumHead" id="albumHead"></p>
+      <div id="albumGrid" class="wardGrid"></div>
+    </div>
+  </div>
+
+  <div id="trickBook" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead">
+        <h2>Trick book</h2>
+        <button class="x" data-act="closeBook">✕</button>
+      </div>
+      <p class="sub" id="bookSub"></p>
+      <p class="sub legend">👆 tap · ✊ hold &amp; release · ✋ hold 3 s · ⬆️⬇️⬅️➡️ swipe · ⭕ draw a circle</p>
+      <div id="bookList"></div>
+    </div>
+  </div>
+
   <div id="shop" class="modal hidden">
     <div class="sheet">
       <div class="sheetHead">
-        <h2>Shop</h2>
+        <h2 id="shopTitle">Shop</h2>
         <div class="pill small">🪙 <span id="shopCoins">0</span></div>
         <button class="x" data-act="closeShop">✕</button>
       </div>
@@ -131,6 +263,19 @@
         <button class="soft" id="importBtn">Import code</button>
         <label class="soft fileBtn">Import file<input type="file" id="importFile" accept=".json,.txt,application/json,text/plain"></label>
       </div>
+      <div class="section">🏡 Share your home</div>
+      <p class="sub">Send friends a link to look around your home. It never touches their save. Gifts you pack in a 🎁 Gift box can be opened once by each visitor.</p>
+      <button class="soft" id="visitBtn">Create visit link</button>
+      <div id="visitBox" class="hidden">
+        <textarea id="visitCode" readonly rows="3"></textarea>
+        <p class="sub" id="visitInfo"></p>
+        <div class="btnRow">
+          <button class="soft" id="copyVisitBtn">📋 Copy link</button>
+          <button class="soft" id="shareVisitBtn">📤 Share</button>
+        </div>
+      </div>
+      <textarea id="openVisitCode" rows="2" placeholder="Got a visit link or code from a friend? Paste it here"></textarea>
+      <button class="soft" id="openVisitBtn">Visit</button>
       <div class="section">↩️ Backup</div>
       <p class="sub" id="restoreInfo"></p>
       <button class="soft" id="restoreBtn">Restore previous save</button>
@@ -145,6 +290,7 @@
       <h2 id="cfTitle">Are you sure?</h2>
       <p id="cfText" class="sub"></p>
       <button id="cfYes" class="primary">Yes</button>
+      <button id="cfAlt" class="primary alt hidden">Other</button>
       <button id="cfNo" class="ghost">Cancel</button>
     </div>
   </div>
