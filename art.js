@@ -2713,10 +2713,402 @@ window.VP_ART = (function () {
     return { update };
   }
 
+  // ===================================================================
+  // UI icons (drawn, not emoji) and model thumbnails for menus
+  // ===================================================================
+  // Line icons on a 24 grid. They use currentColor, so CSS decides the color.
+  const ICON_PATHS = {
+    bowl: '<path d="M3.5 11h17a8.5 7 0 0 1-17 0z"/><path d="M7.5 20h9"/><path d="M8 8.2c1.6-1.6 3.1-1.6 4-.2.9-1.4 2.4-1.4 4 .2"/>',
+    ball: '<circle cx="12" cy="12" r="8.5"/><path d="M4.6 8.3c3.4 1.7 4.6 5 3.9 11.4M19.4 15.7c-3.4-1.7-4.6-5-3.9-11.4"/>',
+    walk: '<path d="M5 20c1.5-4 4-5 6-5s3.5-1.5 4-4"/><circle cx="17" cy="6.5" r="2.5"/><path d="M8 20h.01M12 20h.01M16 20h.01"/>',
+    menu: '<rect x="4" y="4" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="3.25"/>',
+    cap: '<path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.5v4.2c3.2 2.3 7.8 2.3 11 0v-4.2"/><path d="M21.5 9.5v5"/>',
+    leash: '<circle cx="7" cy="17" r="3.5"/><path d="M9.5 14.5 18 6"/><path d="M15 4.5h4.5V9"/>',
+    unleash: '<circle cx="7" cy="17" r="3.5"/><path d="M9.5 14.5l2.5-2.5M14.5 9.5 18 6"/><path d="M15 4.5h4.5V9"/><path d="M11 7l2 2M13 11l2 2" opacity=".6"/>',
+    home: '<path d="M4 11 12 4l8 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/>',
+    shop: '<path d="M5 8h14l-1.2 11.2a1 1 0 0 1-1 .8H7.2a1 1 0 0 1-1-.8z"/><path d="M9 10V7a3 3 0 0 1 6 0v3"/>',
+    brush: '<path d="M14.5 4.5l5 5-7.5 7.5-5-5z"/><path d="M7 12l-2.6 2.6a2.5 2.5 0 0 0 0 3.5l1.5 1.5c.9.9 2.3.6 2.8-.6L9.5 17"/><path d="M12 7l5 5"/>',
+    bag: '<path d="M6 8h12a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/><path d="M5 13h14"/><path d="M11 13v2h2v-2"/>',
+    book: '<path d="M5 4.5h11a2 2 0 0 1 2 2V20H7a2 2 0 0 1-2-2z"/><path d="M5 18a2 2 0 0 1 2-2h11"/><path d="M9 8.5h5"/>',
+    list: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8 9l1.5 1.5L12 8M8 15l1.5 1.5L12 14M14.5 9.5h2M14.5 15.5h2"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M5.6 18.4l1.6-1.6M16.8 7.2l1.6-1.6"/>',
+    x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M5.5 18.5l1.4-1.4M17.1 6.9l1.4-1.4"/>',
+    moon: '<path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/>',
+    cloud: '<path d="M7 18h10.5a4 4 0 0 0 .4-8A5.5 5.5 0 0 0 7.3 9.5 4.3 4.3 0 0 0 7 18z"/>',
+    rain: '<path d="M7 14.5h10.5a3.6 3.6 0 0 0 .4-7.2A5 5 0 0 0 7.3 7 3.8 3.8 0 0 0 7 14.5z"/><path d="M9 17.5l-1 2.5M13 17.5l-1 2.5M17 17.5l-1 2.5"/>',
+    snow: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="M9.5 4.5 12 6.5l2.5-2M9.5 19.5 12 17.5l2.5 2"/>',
+    fog: '<path d="M4 9h16M6 13h12M4 17h16"/>',
+    storm: '<path d="M7 14h10.5a3.6 3.6 0 0 0 .4-7.2A5 5 0 0 0 7.3 6.5 3.8 3.8 0 0 0 7 14z"/><path d="M12.5 15l-2 3.5h3l-2 3.5"/>',
+    calm: '<path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
+    comfort: '<path d="M4 11 12 4l8 7"/><path d="M6 9.5V20h12V9.5"/><path d="M12 17.5l-2.4-2.3a1.5 1.5 0 0 1 2.4-1.8 1.5 1.5 0 0 1 2.4 1.8z"/>',
+    map: '<path d="M4 6.5 9 4.5l6 2 5-2v13l-5 2-6-2-5 2z"/><path d="M9 4.5v13M15 6.5v13"/>',
+    lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    rotate: '<path d="M19 12a7 7 0 1 1-2.1-5"/><path d="M17.5 3.5v4h-4"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    food: '<path d="M14.5 4.5a5 5 0 0 1 5 5c0 3-2.5 4.5-5 4.5-.8 0-1.4.3-2 .8l-3.6 3.6"/><path d="M7.5 20.5a1.6 1.6 0 1 1-2-2 1.6 1.6 0 1 1 2-2"/><path d="M14.5 4.5a5 5 0 0 0-5 5c0 .8-.3 1.4-.8 2"/>',
+    drop: '<path d="M12 3.5c3.3 4.2 5.5 7.2 5.5 10a5.5 5.5 0 0 1-11 0c0-2.8 2.2-5.8 5.5-10z"/>',
+    bolt: '<path d="M13 3 5.5 13.5H12L11 21l7.5-10.5H12z"/>',
+    heart: '<path d="M12 19.5s-7.5-4.6-7.5-10A4 4 0 0 1 12 7.2a4 4 0 0 1 7.5 2.3c0 5.4-7.5 10-7.5 10z"/>',
+    bubbles: '<circle cx="9" cy="14" r="4.5"/><circle cx="16.5" cy="8" r="3"/><circle cx="17" cy="16.5" r="1.8"/>',
+    towel: '<path d="M5 5h11a3 3 0 0 1 3 3v11H8a3 3 0 0 1-3-3z"/><path d="M5 9h14M9 13h6"/>',
+    bath: '<path d="M3.5 12h17v2a5 5 0 0 1-5 5h-7a5 5 0 0 1-5-5z"/><path d="M6 12V6a2 2 0 0 1 3.8-.9"/><path d="M7 19l-1 2M17 19l1 2"/>',
+    treat: '<path d="M7.5 9.5a2.2 2.2 0 1 1 1-3.6 2.2 2.2 0 1 1 3.4 2.4l3.7 3.7a2.2 2.2 0 1 1 2.4 3.4 2.2 2.2 0 1 1-3.6 1L9.6 11.6"/>',
+    hat: '<path d="M4 17h16"/><path d="M7 17l1.5-9a3.6 3.6 0 0 1 7 0L17 17"/><path d="M8 13h8"/>',
+    gift: '<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M4 13h16M12 9v11"/><path d="M12 9c-1.5-3.5-5.5-3.5-5-1 .3 1.3 3 1 5 1zM12 9c1.5-3.5 5.5-3.5 5-1-.3 1.3-3 1-5 1z"/>',
+    pin: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+    hand: '<path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11V5a1.5 1.5 0 0 1 3 0v6V6.5a1.5 1.5 0 0 1 3 0v7.5a6.5 6.5 0 0 1-6.5 6.5c-2.4 0-3.8-1-5.2-2.8L3.6 15a1.5 1.5 0 0 1 2.3-1.9L8 15"/>',
+    tap: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7.5" opacity=".45"/>',
+    hold: '<circle cx="12" cy="12" r="4.2" fill="currentColor"/><circle cx="12" cy="12" r="8" opacity=".45"/>',
+    press: '<circle cx="12" cy="12" r="4.2" fill="currentColor"/><path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5"/>',
+    up: '<path d="M12 19.5V5M6 10.5 12 4.5l6 6"/>',
+    down: '<path d="M12 4.5V19M6 13.5l6 6 6-6"/>',
+    left: '<path d="M19.5 12H5M10.5 6 4.5 12l6 6"/>',
+    right: '<path d="M4.5 12H19M13.5 6l6 6-6 6"/>',
+    circle: '<path d="M19.5 12A7.5 7.5 0 1 1 15 5.1"/><path d="M15.5 2.5l-.3 2.9 2.9.4"/>',
+    echo: '<path d="M5 9.5v5h3l4 3.5v-12L8 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+    sled: '<path d="M4 13.5h13"/><path d="M3 17h15.5a2.5 2.5 0 0 0 2.5-2.5"/><path d="M7 13.5V17M14 13.5V17"/><path d="M8 13.5l2-6h4"/>',
+    ferris: '<circle cx="12" cy="10" r="6.5"/><path d="M12 3.5v13M5.5 10h13M7.4 5.4l9.2 9.2M16.6 5.4l-9.2 9.2"/><path d="M8 21l4-4.5 4 4.5"/>',
+    portal: '<path d="M12 12.5a1.5 1.5 0 1 0-1.5-1.5 4 4 0 1 0 4-4 6.5 6.5 0 1 0 6.5 6.5"/>',
+    rocket: '<path d="M12 3c3 2.2 4.5 5.6 4 10.5h-8C7.5 8.6 9 5.2 12 3z"/><circle cx="12" cy="9" r="1.6"/><path d="M8.2 11.5 5.5 15v2.5l3-1.5M15.8 11.5l2.7 3.5v2.5l-3-1.5M10.5 17.5l1.5 3 1.5-3"/>',
+    paw: '<ellipse cx="12" cy="15.5" rx="4.2" ry="3.6" fill="currentColor" stroke="none"/><ellipse cx="6.3" cy="10.8" rx="1.9" ry="2.4" fill="currentColor" stroke="none"/><ellipse cx="17.7" cy="10.8" rx="1.9" ry="2.4" fill="currentColor" stroke="none"/><ellipse cx="9.4" cy="6.6" rx="1.9" ry="2.5" fill="currentColor" stroke="none"/><ellipse cx="14.6" cy="6.6" rx="1.9" ry="2.5" fill="currentColor" stroke="none"/>',
+    star: '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/>',
+    sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
+    share: '<path d="M12 3.5V15M7.5 8 12 3.5 16.5 8"/><path d="M6 12H5v8h14v-8h-1"/>',
+    copy: '<rect x="8" y="8" width="11.5" height="11.5" rx="2.5"/><path d="M5 15.5V6.5A2 2 0 0 1 7 4.5h8.5"/>',
+    save: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
+    upload: '<path d="M12 15V4M7.5 8.5 12 4l4.5 4.5"/><path d="M5 19.5h14"/>',
+    undo: '<path d="M9 7.5 4.5 12 9 16.5"/><path d="M4.5 12H15a4.5 4.5 0 0 1 0 9h-2"/>',
+    sprout: '<path d="M12 20v-8"/><path d="M12 12c0-4 2.5-6.5 7-6.5 0 4.5-2.5 6.5-7 6.5zM12 14.5C12 11 10 9 6 9c0 3.5 2 5.5 6 5.5z"/>',
+    pot: '<path d="M4 9.5h16"/><path d="M5.5 9.5 7 18.5a2 2 0 0 0 2 1.5h6a2 2 0 0 0 2-1.5l1.5-9"/><path d="M9 6.5c0-1.5 1.5-1.5 1.5-3M13.5 6.5c0-1.5 1.5-1.5 1.5-3"/>',
+    question: '<path d="M9 9a3 3 0 1 1 4 2.8c-.7.3-1 .9-1 1.7v.5"/><path d="M12 18h.01"/>',
+    crane: '<path d="M5 20V5h12"/><path d="M5 8l4-3M15 5v5"/><rect x="13" y="10" width="4" height="3" rx=".5"/><path d="M3 20h6"/>',
+    call: '<path d="M4 10v4h3l7 4.5V5.5L7 10z"/><path d="M17 9.5a3.5 3.5 0 0 1 0 5"/><path d="M19.5 7a7 7 0 0 1 0 10"/>',
+    flag: '<path d="M6 21V4"/><path d="M6 4.5h11l-2.5 4 2.5 4H6"/>',
+    lamp: '<path d="M8 3.5h8l-1.5 7h-5z"/><path d="M12 10.5v3"/><path d="M8.5 20.5h7M12 13.5v7"/><path d="M5 6l-1.5-1M19 6l1.5-1M5 10H3M21 10h-2"/>',
+    wave: '<path d="M3 9c2.2-2 4.3-2 6.5 0s4.3 2 6.5 0 4-2 5 0"/><path d="M3 15c2.2-2 4.3-2 6.5 0s4.3 2 6.5 0 4-2 5 0"/>',
+    dot: '<circle cx="12" cy="12" r="5.5" fill="currentColor" stroke="none"/>',
+    search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.6-4.6"/>',
+    dog: '<path d="M6 8.5 4 4.5l4.2 1.6A7 7 0 0 1 12 5a7 7 0 0 1 3.8 1.1L20 4.5l-2 4a7 7 0 1 1-12 0z"/><path d="M9.5 11.5h.01M14.5 11.5h.01"/><path d="M11 15h2l-1 1.2z"/>',
+  };
+  function icon(name, cls) {
+    if (name === 'coin') return `<svg class="i coin${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#f6c443" stroke="#c98a12" stroke-width="1.6"/><circle cx="12" cy="12" r="5.6" fill="none" stroke="#e0a520" stroke-width="1.4"/><path d="M8.5 7.6a6 6 0 0 1 4-1.4" stroke="#fff6cf" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>`;
+    if (name === 'ticket') return `<svg class="i ticket${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a1 1 0 0 1 1-1h15a1 1 0 0 1 1 1v2.3a2.3 2.3 0 0 0 0 4.4v2.3a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-2.3a2.3 2.3 0 0 0 0-4.4z" fill="#ff7aa8" stroke="#c4416f" stroke-width="1.4"/><path d="M14.5 7v10" stroke="#fff" stroke-width="1.3" stroke-dasharray="1.6 1.6"/></svg>`;
+    const p = ICON_PATHS[name] || ICON_PATHS.sparkle;
+    return `<svg class="i${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+  }
+
+  // ----- model thumbnails: a tiny second renderer draws any model to an image -----
+  const TS = 128;
+  let TR = null;
+  function thumbRig() {
+    if (TR) return TR;
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(TS, TS, false);
+    renderer.setClearColor(0x000000, 0);
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xa89a80, 0.82));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.62);
+    sun.position.set(4, 9, 6);
+    scene.add(sun);
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+    TR = { renderer, scene, cam, dark: new THREE.MeshBasicMaterial({ color: '#3a3157' }) };
+    _box = new THREE.Box3();
+    _b2 = new THREE.Box3();
+    return TR;
+  }
+  let _box = null, _b2 = null;
+  const _v = new V3();
+  // fit an orthographic camera around objects, looking from dir
+  function frame(objs, dir, pad) {
+    const { cam } = TR;
+    _box.makeEmpty();
+    for (const o of objs) expandVisible(o, true);
+    if (_box.isEmpty()) _box.set(new V3(-0.5, 0, -0.5), new V3(0.5, 1, 0.5));
+    const c = _box.getCenter(new V3());
+    cam.position.copy(c).addScaledVector(dir.clone().normalize(), 40);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(c);
+    cam.updateMatrixWorld(true);
+    const inv = cam.matrixWorldInverse;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      _v.set(i & 1 ? _box.max.x : _box.min.x, i & 2 ? _box.max.y : _box.min.y, i & 4 ? _box.max.z : _box.min.z).applyMatrix4(inv);
+      x0 = Math.min(x0, _v.x); x1 = Math.max(x1, _v.x); y0 = Math.min(y0, _v.y); y1 = Math.max(y1, _v.y);
+    }
+    const half = (Math.max(x1 - x0, y1 - y0) / 2) * (pad || 1.12);
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    cam.left = mx - half; cam.right = mx + half; cam.top = my + half; cam.bottom = my - half;
+    cam.near = 0.1; cam.far = 200;
+    cam.updateProjectionMatrix();
+  }
+  function expandVisible(o, vis) {
+    vis = vis && o.visible;
+    if (!vis) return;
+    if ((o.isMesh || o.isInstancedMesh) && o.geometry && !o.isSprite) {
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      _b2.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+      _box.union(_b2);
+    }
+    for (const c of o.children) expandVisible(c, vis);
+  }
+  const ISO = new V3(1, 0.95, 1.3);
+  function snap(group, opts = {}) {
+    const R = thumbRig();
+    R.scene.add(group);
+    R.scene.updateMatrixWorld(true);
+    frame(opts.fit || [group], opts.dir || ISO, opts.pad);
+    R.scene.overrideMaterial = opts.silhouette ? R.dark : null;
+    R.renderer.render(R.scene, R.cam);
+    R.scene.overrideMaterial = null;
+    R.scene.remove(group);
+    return R.renderer.domElement.toDataURL('image/png');
+  }
+
+  // voxels from a picture: a fallback for things without their own model yet
+  function voxelPicture(ch) {
+    const N = 20;
+    const c = document.createElement('canvas');
+    c.width = c.height = N;
+    const x = c.getContext('2d');
+    x.font = `${N - 3}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+    x.fillText(ch, N / 2, N / 2 + 1);
+    const px = x.getImageData(0, 0, N, N).data;
+    const g = new THREE.Group();
+    const s = 0.05;
+    const q = (v) => Math.min(255, Math.round(v / 24) * 24);
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const k = (j * N + i) * 4;
+        if (px[k + 3] < 120) continue;
+        const col = '#' + [px[k], px[k + 1], px[k + 2]].map((v) => q(v).toString(16).padStart(2, '0')).join('');
+        box(g, s, s, s * 1.6, col, (i - N / 2) * s, (N / 2 - j) * s, 0);
+      }
+    }
+    return g;
+  }
+
+  // ingredients
+  const ING = {
+    carrot(g) { [[0.16, 0.12, 0], [0.13, 0.12, 0.12], [0.1, 0.1, 0.23], [0.06, 0.08, 0.32]].forEach(([w, h, y]) => box(g, w, h, w, '#f57c00', 0, 0.38 - y, 0)); box(g, 0.05, 0.14, 0.05, '#43a047', -0.03, 0.5, 0); box(g, 0.05, 0.12, 0.05, '#66bb6a', 0.04, 0.48, 0.02); },
+    apple(g) { box(g, 0.34, 0.3, 0.34, '#e53935', 0, 0.17, 0); box(g, 0.26, 0.06, 0.26, '#ef5350', 0, 0.34, 0); box(g, 0.04, 0.1, 0.04, '#6d4c41', 0, 0.42, 0); box(g, 0.1, 0.04, 0.06, '#66bb6a', 0.07, 0.42, 0); },
+    egg(g) { box(g, 0.26, 0.24, 0.26, '#fff3e0', 0, 0.14, 0); box(g, 0.2, 0.1, 0.2, '#fff8ee', 0, 0.31, 0); box(g, 0.12, 0.05, 0.12, '#ffffff', 0, 0.38, 0); },
+    cheese(g) { box(g, 0.42, 0.22, 0.3, '#ffca28', 0, 0.11, 0); box(g, 0.3, 0.06, 0.3, '#ffd54f', -0.06, 0.25, 0); for (const [x, y] of [[-0.1, 0.12], [0.1, 0.07]]) box(g, 0.06, 0.06, 0.02, '#e0a800', x, y, 0.15); },
+    berries(g) { for (const [x, y, z] of [[0, 0.08, 0], [0.11, 0.08, 0.05], [-0.1, 0.08, 0.06], [0.03, 0.08, -0.11], [0.04, 0.18, 0.03]]) { box(g, 0.11, 0.11, 0.11, '#3949ab', x, y, z); box(g, 0.03, 0.02, 0.03, '#1a237e', x, y + 0.065, z); } },
+    fish(g) { box(g, 0.42, 0.16, 0.1, '#64b5f6', 0, 0.12, 0); box(g, 0.3, 0.06, 0.1, '#e3f2fd', 0, 0.05, 0); box(g, 0.1, 0.2, 0.06, '#42a5f5', -0.25, 0.12, 0); box(g, 0.03, 0.03, 0.11, '#212121', 0.14, 0.15, 0); },
+    honey(g) { box(g, 0.28, 0.28, 0.28, '#ffb300', 0, 0.14, 0); box(g, 0.3, 0.06, 0.3, '#8d6e63', 0, 0.31, 0); box(g, 0.16, 0.1, 0.02, '#fff8e1', 0, 0.14, 0.145); },
+    pumpkin(g) { box(g, 0.4, 0.26, 0.4, '#fb8c00', 0, 0.13, 0); for (const x of [-0.1, 0.1]) box(g, 0.02, 0.24, 0.41, '#ef6c00', x, 0.13, 0); box(g, 0.05, 0.1, 0.05, '#6d4c41', 0, 0.3, 0); },
+    pastry(g) { for (const [x, y, w] of [[-0.18, 0.06, 0.1], [-0.09, 0.09, 0.12], [0, 0.11, 0.14], [0.09, 0.09, 0.12], [0.18, 0.06, 0.1]]) box(g, 0.1, w, 0.16, '#d7a15e', x, y, Math.abs(x) * 0.4); box(g, 0.08, 0.03, 0.14, '#b9773a', 0, 0.18, 0); },
+    mushroom(g) { box(g, 0.1, 0.18, 0.1, '#f5ecd9', 0, 0.09, 0); box(g, 0.32, 0.1, 0.32, '#e53935', 0, 0.22, 0); box(g, 0.2, 0.06, 0.2, '#ef5350', 0, 0.29, 0); for (const [x, z] of [[0.08, 0.16], [-0.1, 0.16], [0.16, -0.06]]) box(g, 0.05, 0.05, 0.02, '#ffffff', x, 0.23, z); },
+  };
+  // shampoo bottles: body color, cap color, label mark
+  const SHAMPOO_LOOK = {
+    gentle: ['#9ad0f5', '#ffffff'], mudbuster: ['#8d6e4f', '#ffd54f'], meadow: ['#8bc34a', '#ffffff'], lavender: ['#b39ddb', '#7e57c2'],
+    citrus: ['#ffd54f', '#7cb342'], pine: ['#2e7d32', '#a5d6a7'], ocean: ['#4fc3f7', '#ffffff'], alpine: ['#f48fb1', '#ffffff'],
+    cave: ['#8d8d8d', M.crystal], frostmelt: ['#ff8a65', '#ffffff'], sugar: ['#f8bbd0', '#81d4fa'], pixie: ['#e1bee7', M.gold], cosmic: ['#3f51b5', M.gold],
+  };
+  function bottle(g, [body, cap]) {
+    box(g, 0.26, 0.36, 0.16, body, 0, 0.18, 0);
+    box(g, 0.2, 0.06, 0.13, body, 0, 0.39, 0);
+    box(g, 0.1, 0.1, 0.08, cap, 0, 0.47, 0);
+    box(g, 0.06, 0.03, 0.04, cap, 0.07, 0.52, 0);
+    box(g, 0.18, 0.14, 0.01, '#ffffff', 0, 0.18, 0.085);
+    box(g, 0.08, 0.06, 0.012, typeof cap === 'string' ? cap : '#ffd54f', 0, 0.19, 0.09);
+  }
+  // treats: a plate, bowl or cup with the food on it
+  const plate = (g, c = '#f5f5f5') => { box(g, 0.5, 0.04, 0.5, c, 0, 0.02, 0); box(g, 0.42, 0.02, 0.42, '#ffffff', 0, 0.05, 0); };
+  const bowl = (g, c, fill) => { box(g, 0.44, 0.16, 0.44, c, 0, 0.08, 0); box(g, 0.36, 0.04, 0.36, fill, 0, 0.17, 0); };
+  const cup = (g, c, fill) => { box(g, 0.26, 0.28, 0.26, c, 0, 0.14, 0); box(g, 0.2, 0.03, 0.2, fill, 0, 0.29, 0); box(g, 0.06, 0.14, 0.04, c, 0.16, 0.16, 0); };
+  const DISH = {
+    crunchies(g) { plate(g); for (const [x, z, r] of [[-0.1, 0, 0.3], [0.05, 0.08, -0.4], [0.08, -0.08, 0.9]]) { const m = box(g, 0.24, 0.05, 0.05, '#fb8c00', x, 0.08, z); m.rotation.y = r; } },
+    pupcakes(g) { box(g, 0.26, 0.16, 0.26, '#90caf9', 0, 0.08, 0); box(g, 0.3, 0.1, 0.3, '#f8bbd0', 0, 0.21, 0); box(g, 0.18, 0.08, 0.18, '#f48fb1', 0, 0.3, 0); box(g, 0.06, 0.06, 0.06, '#e53935', 0, 0.37, 0); },
+    gourmet(g) { bowl(g, '#e0e0e0', '#a1887f'); box(g, 0.1, 0.05, 0.1, '#66bb6a', 0.08, 0.2, 0.05); },
+    omelette(g) { plate(g); box(g, 0.32, 0.06, 0.2, '#ffd54f', 0, 0.09, 0); box(g, 0.06, 0.02, 0.06, '#66bb6a', 0.05, 0.13, 0.03); },
+    fishfeast(g) { plate(g); const f = new THREE.Group(); ING.fish(f); f.scale.setScalar(0.85); f.position.y = 0.04; g.add(f); },
+    berryblast(g) { bowl(g, '#ffffff', '#5c6bc0'); for (const [x, z] of [[0.08, 0.06], [-0.07, -0.04]]) box(g, 0.07, 0.07, 0.07, '#283593', x, 0.21, z); },
+    stew(g) { bowl(g, '#8d6e63', '#e67e22'); box(g, 0.08, 0.05, 0.08, '#f5ecd9', -0.06, 0.2, 0.04); box(g, 0.06, 0.05, 0.06, '#66bb6a', 0.08, 0.2, -0.05); },
+    biscuits(g) { plate(g); for (const [x, z] of [[-0.08, 0.04], [0.08, -0.05]]) { const b = new THREE.Group(); box(b, 0.18, 0.05, 0.06, '#d7a15e'); for (const sx of [-0.09, 0.09]) for (const sz of [-0.035, 0.035]) box(b, 0.06, 0.05, 0.06, '#d7a15e', sx, 0, sz); b.position.set(x, 0.09, z); g.add(b); } },
+    shroompie(g) { box(g, 0.44, 0.12, 0.44, '#d7a15e', 0, 0.06, 0); box(g, 0.38, 0.04, 0.38, '#c62828', 0, 0.14, 0); for (const [x, z] of [[0.08, 0.1], [-0.1, -0.06]]) box(g, 0.05, 0.02, 0.05, '#ffffff', x, 0.17, z); },
+    berrypuff(g) { plate(g); box(g, 0.28, 0.14, 0.24, '#f3d29b', 0, 0.12, 0); box(g, 0.2, 0.05, 0.16, '#9575cd', 0, 0.21, 0); },
+    puppuccino(g) { cup(g, '#ffffff', '#ffffff'); box(g, 0.16, 0.1, 0.16, '#ffffff', 0, 0.34, 0); box(g, 0.08, 0.06, 0.08, '#fafafa', 0, 0.41, 0); },
+    pretzel(g) { for (const [x, y, w, h] of [[0, 0.3, 0.36, 0.06], [-0.16, 0.18, 0.06, 0.26], [0.16, 0.18, 0.06, 0.26], [0, 0.06, 0.3, 0.06], [-0.06, 0.18, 0.06, 0.2], [0.06, 0.18, 0.06, 0.2]]) box(g, w, h, 0.06, '#a1662f', x, y, 0); for (const [x, y] of [[0.1, 0.31], [-0.15, 0.25]]) box(g, 0.03, 0.02, 0.07, '#ffffff', x, y, 0); },
+    trailmix(g) { bowl(g, '#a5d6a7', '#d7a15e'); for (const [x, z, c] of [[0.08, 0.05, '#6d4c41'], [-0.07, -0.05, '#e53935'], [-0.04, 0.08, '#fdd835'], [0.06, -0.08, '#8d6e63']]) box(g, 0.06, 0.05, 0.06, c, x, 0.2, z); },
+    pupsicle(g) { box(g, 0.04, 0.16, 0.04, '#d7a15e', 0, 0.08, 0); box(g, 0.2, 0.3, 0.1, '#80deea', 0, 0.31, 0); box(g, 0.2, 0.1, 0.1, '#f48fb1', 0, 0.41, 0); },
+    cheesebite(g) { plate(g); for (const [x, z] of [[-0.08, 0.04], [0.09, -0.04], [0, 0.1]]) box(g, 0.1, 0.1, 0.1, '#ffca28', x, 0.11, z); },
+    rockbiscuit(g) { plate(g); box(g, 0.24, 0.08, 0.2, '#9e9e9e', 0, 0.1, 0); box(g, 0.08, 0.05, 0.08, M.crystal, 0.05, 0.16, 0.03); },
+    broth(g) { cup(g, '#e8d5b7', '#c8a165'); box(g, 0.05, 0.03, 0.05, '#66bb6a', 0.03, 0.31, 0.02); },
+    cottoncandy(g) { box(g, 0.04, 0.24, 0.04, '#ffffff', 0, 0.12, 0); box(g, 0.28, 0.24, 0.28, '#f8bbd0', 0, 0.36, 0); box(g, 0.2, 0.08, 0.2, '#f48fb1', 0.03, 0.5, 0.02); },
+    stardrop(g) { const s = new THREE.Group(); for (const [x, y] of [[0, 0], [0, 0.12], [0, -0.12], [0.12, 0], [-0.12, 0], [0.09, -0.16], [-0.09, -0.16], [0.17, 0.05], [-0.17, 0.05], [0, 0.2]]) box(s, 0.1, 0.1, 0.08, M.gold, x, y, 0); s.position.y = 0.26; g.add(s); },
+    mooncheese(g) { box(g, 0.42, 0.22, 0.3, '#fff59d', 0, 0.11, 0); for (const [x, y] of [[-0.1, 0.12], [0.1, 0.07], [0.02, 0.17]]) box(g, 0.07, 0.07, 0.02, '#e6d55c', x, y, 0.15); },
+  };
+
+  // little islands for each place (dark silhouettes for places not found yet)
+  function island(g, top, side, n = 2.6) {
+    box(g, n, 0.3, n, top, 0, -0.15, 0);
+    box(g, n - 0.4, 0.3, n - 0.4, side, 0, -0.45, 0);
+    box(g, n - 1.2, 0.25, n - 1.2, side, 0, -0.72, 0);
+  }
+  function tree(g, x, z, s = 1, leaf = '#5fa84a') {
+    box(g, 0.18 * s, 0.6 * s, 0.18 * s, '#7a5232', x, 0.3 * s, z);
+    box(g, 0.7 * s, 0.5 * s, 0.7 * s, leaf, x, 0.8 * s, z);
+    box(g, 0.46 * s, 0.3 * s, 0.46 * s, leaf, x, 1.16 * s, z);
+  }
+  function pine(g, x, z, s = 1, snow) {
+    box(g, 0.14 * s, 0.3 * s, 0.14 * s, '#6d4c33', x, 0.15 * s, z);
+    [[0.7, 0.4], [0.5, 0.75], [0.3, 1.05]].forEach(([w, y]) => {
+      box(g, w * s, 0.32 * s, w * s, '#2e6b3a', x, y * s, z);
+      if (snow) box(g, w * s * 0.92, 0.05 * s, w * s * 0.92, '#ffffff', x, (y + 0.17) * s, z);
+    });
+  }
+  function house(g, x, z, wall, roof, s = 1) {
+    box(g, 0.8 * s, 0.7 * s, 0.7 * s, wall, x, 0.35 * s, z);
+    box(g, 0.9 * s, 0.14 * s, 0.8 * s, roof, x, 0.77 * s, z);
+    box(g, 0.66 * s, 0.14 * s, 0.8 * s, roof, x, 0.91 * s, z);
+    box(g, 0.4 * s, 0.14 * s, 0.8 * s, roof, x, 1.05 * s, z);
+    box(g, 0.2 * s, 0.34 * s, 0.02, '#6d4c41', x, 0.17 * s, z + 0.36 * s);
+    box(g, 0.18 * s, 0.18 * s, 0.02, '#a9d8f5', x + 0.24 * s, 0.45 * s, z + 0.36 * s);
+  }
+  const LOC_ICON = {
+    park(g) {
+      island(g, '#8fcb6f', '#8d6e4f');
+      box(g, 0.5, 0.02, 3, '#e8d9a8', 0.2, 0.01, 0);
+      tree(g, -0.8, -0.7, 1.1); tree(g, 0.95, -0.9, 0.8, '#7cbf55');
+      box(g, 0.9, 0.04, 0.7, M.water, -0.7, 0.03, 0.75);
+      box(g, 0.6, 0.06, 0.2, '#a0522d', 0.95, 0.3, 0.6); box(g, 0.6, 0.2, 0.05, '#a0522d', 0.95, 0.42, 0.5);
+      for (const x of [0.7, 1.2]) box(g, 0.05, 0.27, 0.05, '#555555', x, 0.14, 0.6);
+    },
+    oldtown(g) {
+      island(g, '#bdb6aa', '#8d7f71');
+      house(g, -0.7, -0.6, '#f3d9b1', '#c0504d'); house(g, 0.55, -0.75, '#cfe3f1', '#5c6bc0', 1.2);
+      box(g, 0.06, 0.9, 0.06, '#424242', 0.8, 0.45, 0.8); box(g, 0.18, 0.16, 0.18, M.lamp, 0.8, 0.95, 0.8);
+      box(g, 0.4, 0.3, 0.4, '#8d6e63', -0.6, 0.15, 0.8); box(g, 0.48, 0.06, 0.48, '#e57373', -0.6, 0.33, 0.8);
+    },
+    forest(g) {
+      island(g, '#4f8a3c', '#6d4c33');
+      pine(g, -0.8, -0.7, 1.3); pine(g, 0.6, -0.9, 1.05); pine(g, 0.9, 0.5, 0.85); pine(g, -0.5, 0.6, 0.75);
+      box(g, 0.08, 0.12, 0.08, '#f5ecd9', 0.1, 0.06, 0.4); box(g, 0.22, 0.08, 0.22, '#e53935', 0.1, 0.16, 0.4);
+    },
+    beach(g) {
+      island(g, '#f4dc9c', '#d8b56f');
+      box(g, 1.3, 0.05, 3, M.sea, 0.85, 0.02, 0);
+      box(g, 0.05, 1.1, 0.05, '#ffffff', -0.5, 0.55, -0.3);
+      [[1.1, 1.08], [0.8, 1.18], [0.45, 1.26]].forEach(([w, y], k) => box(g, w, 0.1, w, k % 2 ? '#ffffff' : '#ef5350', -0.5, y, -0.3));
+      box(g, 0.5, 0.06, 0.9, '#4fc3f7', -0.7, 0.03, 0.75);
+      box(g, 0.2, 0.2, 0.2, '#ffffff', 0.2, 0.1, 0.9); box(g, 0.21, 0.07, 0.21, '#e53935', 0.2, 0.12, 0.9);
+    },
+    alpine(g) {
+      island(g, '#9ccc65', '#7a6a55');
+      [[2, 0.5], [1.5, 1], [1.05, 1.45], [0.6, 1.85]].forEach(([w, y], k) => box(g, w, 0.5, w, k > 2 ? '#ffffff' : k > 1 ? '#9e9e9e' : '#8a8a8a', -0.35, y - 0.25, -0.4));
+      box(g, 0.66, 0.08, 0.66, '#ffffff', -0.35, 1.47, -0.4);
+      house(g, 0.85, 0.75, '#a1663a', '#5d4037', 0.75);
+    },
+    caves(g) {
+      island(g, '#6b6b72', '#4a4a50');
+      box(g, 0.5, 1.2, 0.6, '#7a7a82', -1, 0.6, -0.4); box(g, 0.5, 1.2, 0.6, '#7a7a82', 0.3, 0.6, -0.4); box(g, 1.8, 0.45, 0.6, '#85858d', -0.35, 1.4, -0.4);
+      box(g, 0.8, 1.0, 0.2, '#1d1b26', -0.35, 0.5, -0.65);
+      for (const [x, z, h] of [[0.85, 0.6, 0.6], [1.05, 0.35, 0.4], [-0.9, 0.8, 0.45]]) box(g, 0.16, h, 0.16, M.crystal, x, h / 2, z);
+    },
+    snowy(g) {
+      island(g, '#f5f9ff', '#b0bec5');
+      pine(g, -0.9, -0.8, 1.2, true); pine(g, 0.9, -0.9, 0.9, true);
+      box(g, 0.4, 0.36, 0.4, '#ffffff', 0.3, 0.18, 0.4); box(g, 0.3, 0.28, 0.3, '#ffffff', 0.3, 0.5, 0.4); box(g, 0.22, 0.22, 0.22, '#ffffff', 0.3, 0.75, 0.4);
+      box(g, 0.05, 0.05, 0.16, '#ff7043', 0.3, 0.75, 0.55); box(g, 0.24, 0.06, 0.24, '#e53935', 0.3, 0.64, 0.4);
+      box(g, 0.7, 0.4, 0.6, '#e3f2fd', -0.6, 0.2, 0.6); box(g, 0.5, 0.15, 0.4, '#e3f2fd', -0.6, 0.47, 0.6);
+    },
+    carnival(g) {
+      island(g, '#7e6ca8', '#4e3f75');
+      const w = pivot(g, -0.3, 1.25, -0.5);
+      for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; box(w, 0.18, 0.18, 0.1, M.bulbs[k % 5], Math.cos(a) * 0.9, Math.sin(a) * 0.9, 0); }
+      box(w, 1.8, 0.05, 0.05, '#e0e0e0'); box(w, 0.05, 1.8, 0.05, '#e0e0e0');
+      for (const sx of [-0.4, 0.4]) { const l = box(g, 0.08, 1.4, 0.08, '#e0e0e0', -0.3 + sx * 0.6, 0.6, -0.5); l.rotation.z = -sx * 0.6; }
+      for (let k = 0; k < 4; k++) box(g, 0.2, 0.6, 0.8, k % 2 ? '#ffffff' : '#e53935', 0.55 + k * 0.2, 0.3, 0.7);
+      box(g, 0.9, 0.12, 0.9, '#e53935', 0.85, 0.66, 0.7); box(g, 0.5, 0.14, 0.5, '#ffffff', 0.85, 0.79, 0.7);
+    },
+    fairy(g) {
+      island(g, '#a5d6a7', '#7b9e6b');
+      box(g, 0.3, 0.9, 0.3, '#f5ecd9', -0.4, 0.45, -0.4); box(g, 1.3, 0.35, 1.3, '#ec407a', -0.4, 1.05, -0.4); box(g, 0.9, 0.2, 0.9, '#f06292', -0.4, 1.3, -0.4);
+      for (const [x, z] of [[0.1, 0.1], [-0.8, -0.1], [-0.2, -0.95]]) box(g, 0.12, 0.04, 0.12, '#ffffff', -0.4 + x, 1.24, -0.4 + z);
+      box(g, 0.24, 0.24, 0.24, M.orb, 0.8, 0.9, 0.5);
+      for (const [x, z, c] of [[0.6, 0.9, '#fff176'], [1.0, 0.2, '#ce93d8'], [-0.9, 0.8, '#81d4fa']]) { box(g, 0.03, 0.14, 0.03, '#66bb6a', x, 0.07, z); box(g, 0.12, 0.08, 0.12, c, x, 0.17, z); }
+    },
+    moon(g) {
+      island(g, '#cfcfd6', '#8e8e98');
+      for (const [x, z, w] of [[0.6, 0.6, 0.6], [-0.8, 0.9, 0.4], [0.9, -0.5, 0.35]]) box(g, w, 0.02, w, '#a7a7b0', x, 0.01, z);
+      box(g, 0.4, 1.0, 0.4, '#ffffff', -0.5, 0.75, -0.4); box(g, 0.28, 0.25, 0.28, '#e53935', -0.5, 1.37, -0.4); box(g, 0.14, 0.14, 0.14, '#e53935', -0.5, 1.56, -0.4);
+      box(g, 0.16, 0.16, 0.02, '#80d8ff', -0.5, 0.95, -0.19);
+      for (const sx of [-1, 1]) box(g, 0.12, 0.4, 0.3, '#e53935', -0.5 + sx * 0.24, 0.3, -0.4);
+      box(g, 0.2, 0.15, 0.2, M.fire2, -0.5, 0.15, -0.4);
+    },
+    room(g) {
+      box(g, 2, 0.12, 2, '#d8b689', 0, -0.06, 0);
+      box(g, 2, 1.1, 0.1, '#f3dfc1', 0, 0.55, -1); box(g, 0.1, 1.1, 2, '#ecd3ae', -1, 0.55, 0);
+      box(g, 0.5, 0.36, 0.06, '#a9d8f5', 0.2, 0.7, -0.94);
+      box(g, 0.8, 0.14, 0.6, '#7e57c2', -0.45, 0.07, -0.55); box(g, 0.66, 0.06, 0.46, '#ffffff', -0.45, 0.17, -0.55);
+      box(g, 0.14, 0.9, 0.14, '#ffd54f', 0.7, 0.45, 0.6); box(g, 0.5, 0.06, 0.5, '#ffd54f', 0.7, 0.92, 0.6);
+    },
+  };
+
+  // kind: item | toy | acc | dog | wall | floor | ing | shampoo | dish | loc | locx | pic
+  const thumbCache = new Map();
+  function thumbURL(kind, id) {
+    const key = kind + ':' + id;
+    if (thumbCache.has(key)) return thumbCache.get(key);
+    let url = null;
+    try { url = drawThumb(kind, id); } catch (e) { url = null; }
+    thumbCache.set(key, url);
+    return url;
+  }
+  const hasThumb = (kind, id) => thumbCache.has(kind + ':' + id);
+  function drawThumb(kind, id) {
+    const g = new THREE.Group();
+    switch (kind) {
+      case 'item': g.add(buildItem(id)); return snap(g);
+      case 'toy': { const t = buildToy(id); t.rotation.set(0.25, 0.5, 0); g.add(t); return snap(g, { pad: 1.06 }); }
+      case 'acc': {
+        // the accessory worn by a dog: hats framed on the head, collars on head and chest
+        const dog = buildDog('retriever', 'golden');
+        dog.root.traverse((o) => { if (o.isMesh && o.material === shadowMat) o.visible = false; });
+        const parts = buildAccessory(id, dog);
+        dog.root.rotation.y = 0.6;
+        g.add(dog.root);
+        const A = D.ACCESSORIES[id] || {};
+        const fit = A.slot === 'body' ? [dog.root] : A.slot === 'neck' ? [dog.head, parts[1]] : [dog.head, ...parts];
+        return snap(g, { fit, dir: new V3(0.25, 0.42, 1.3), pad: A.slot === 'body' ? 1.04 : 1.1 });
+      }
+      case 'dog': {
+        const [b, c] = id.split('|');
+        const dog = buildDog(b, c);
+        dog.root.traverse((o) => { if (o.isMesh && o.material === shadowMat) o.visible = false; });
+        dog.root.rotation.y = 0.5;
+        g.add(dog.root);
+        return snap(g, { dir: new V3(0.9, 0.6, 1.5), pad: 1.08 });
+      }
+      case 'wall': case 'floor': {
+        const wid = kind === 'wall' ? id : D.DEFAULT_ROOM.wall, fid = kind === 'floor' ? id : D.DEFAULT_ROOM.floor;
+        const fm = floorMaterial(fid);
+        box(g, 2, 0.12, 2, fm, 0, -0.06, 0);
+        box(g, 2, 1.3, 0.1, wallMaterial(wid, 2), 0, 0.65, -1);
+        box(g, 0.1, 1.3, 2, wallMaterial(wid, 2), -1, 0.65, 0);
+        return snap(g, { dir: new V3(1, 0.85, 1), pad: 1.04 });
+      }
+      case 'ing': (ING[id] || ING.apple)(g); return snap(g, { pad: 1.2 });
+      case 'shampoo': bottle(g, SHAMPOO_LOOK[id] || SHAMPOO_LOOK.gentle); return snap(g, { pad: 1.2 });
+      case 'dish': if (!DISH[id]) return null; DISH[id](g); return snap(g, { pad: 1.2 });
+      case 'loc': case 'locx': (LOC_ICON[id] || LOC_ICON.park)(g); return snap(g, { dir: new V3(1, 0.8, 1.15), pad: 1.04, silhouette: kind === 'locx' });
+      case 'pic': { const v = voxelPicture(id); v.rotation.set(0.12, -0.42, 0); g.add(v); const url = snap(g, { dir: new V3(0, 0, 1), pad: 1.1 }); return url; }
+      default: return null;
+    }
+  }
+
   return {
     mulberry32, geo, mat, box, pivot, blob, emojiTexture, emojiSprite, textSprite, setSpriteText, M,
     buildItem, buildToy, buildDog, coatOf, portraitURL, buildPlayer, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
+    icon, thumbURL, hasThumb,
   };
 })();
