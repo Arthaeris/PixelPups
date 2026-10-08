@@ -132,7 +132,31 @@ html, body {
 }
 .badge.red { background: #e53935; animation: pulse 1s ease-in-out infinite; }
 
-.details { display: none; width: 176px; padding: 6px 0 0 4px; }
+.details { display: none; width: 204px; padding: 6px 0 0 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.chip {
+  display: inline-block;
+  background: #f4f0f7;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #4a4152;
+  white-space: nowrap;
+}
+.chip.age { background: #fff3d6; }
+.favs { font-size: 11.5px; color: #6f6678; margin-top: 7px; line-height: 1.45; }
+.cardBtns { display: flex; gap: 6px; margin-top: 8px; }
+.mini {
+  border: none;
+  border-radius: 10px;
+  background: #efe6ff;
+  color: #5b3fb0;
+  font-weight: 800;
+  font-size: 12.5px;
+  padding: 7px 10px;
+  font-family: inherit;
+}
 .dogPill.open .details { display: block; animation: unfold 0.2s ease-out; }
 .bar { display: flex; align-items: center; gap: 7px; margin-top: 5px; font-size: 14px; }
 .bic { position: relative; width: 20px; text-align: center; }
@@ -144,6 +168,8 @@ html, body {
 .fill.thirst { background: #4fc3f7; }
 .fill.energy { background: #7e8ef0; }
 .fill.happy { background: #ef6f8e; }
+.fill.clean { background: #9ccc65; }
+.chipBtn { pointer-events: auto; border: none; font-family: inherit; color: inherit; }
 
 @keyframes pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @keyframes unfold { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
@@ -259,6 +285,21 @@ button:active { transform: scale(0.94); }
 }
 .inv small { max-width: 64px; overflow: hidden; text-overflow: ellipsis; }
 .inv.sel { border-color: #8a5cf6; background: #efe6ff; }
+.inv.sw img { width: 34px; height: 34px; border-radius: 8px; margin-bottom: 3px; }
+.inv.sw small { font-size: 9.5px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 6px; }
+.decoTab {
+  flex: 1;
+  border: none;
+  border-radius: 12px;
+  padding: 8px 6px;
+  background: #f4f0f7;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 13px;
+  color: #6f6678;
+}
+.decoTab.sel { background: #8a5cf6; color: #fff; }
 .inv b { position: absolute; top: 3px; right: 6px; font-size: 12px; }
 .decoBtns { display: flex; justify-content: center; gap: 8px; margin-top: 6px; }
 .decoBtns button { box-shadow: none; background: #f4f0f7; }
@@ -332,6 +373,7 @@ button:active { transform: scale(0.94); }
   border-bottom: 1px solid #f1ecf4;
 }
 .row .ic { font-size: 27px; width: 40px; text-align: center; }
+.row .ic img.sw { width: 34px; height: 34px; border-radius: 8px; display: block; margin: 0 auto; }
 .row .txt { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .row .txt small { color: #7a7182; font-size: 12px; margin-top: 2px; }
 .buy {
@@ -369,22 +411,38 @@ button:active { transform: scale(0.94); }
 .toyCard.locked .big { filter: grayscale(1); opacity: 0.35; }
 .toyCard.locked b { color: #9a90a3; }
 
-/* ---------- Start screen ---------- */
+/* ---------- Start screen & litter ---------- */
 h1 { margin: 4px 0 6px; font-size: 26px; }
-#breeds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
-.breed {
+.stepLabel { font-size: 12px; font-weight: 800; color: #9a90a3; text-transform: uppercase; letter-spacing: 0.05em; margin: 12px 0 6px; text-align: left; }
+#breedGrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.breed, .coat, .trait, .pup {
   border: 2px solid transparent;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #f4f0f7;
-  padding: 10px 4px 8px;
   font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
   color: #2d2a32;
 }
-.breed.sel { border-color: #8a5cf6; background: #efe6ff; }
-.breed img { display: block; width: 46px; height: 46px; margin: 0 auto 6px; border-radius: 50%; background: #f6eedf; }
-#nameInput {
+.breed { padding: 7px 2px 6px; font-size: 11px; font-weight: 700; }
+.breed img, .coat img { display: block; width: 40px; height: 40px; margin: 0 auto 4px; border-radius: 50%; background: #f6eedf; }
+.breed.sel, .coat.sel, .trait.sel, .pup.sel { border-color: #8a5cf6; background: #efe6ff; }
+#coatRow { display: flex; gap: 6px; justify-content: center; }
+.coat { padding: 6px 10px; }
+.coat small { font-size: 11px; font-weight: 700; }
+#traitGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.trait { padding: 7px 2px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.trait span { font-size: 20px; }
+.trait small { font-size: 11px; font-weight: 700; }
+#traitDesc, #pupDesc { margin: 10px 0 0; min-height: 34px; }
+#pups { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pup { position: relative; padding: 10px 4px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.pup img { width: 52px; height: 52px; border-radius: 50%; background: #f6eedf; margin-bottom: 4px; }
+.pup b { font-size: 13px; }
+.pup small { font-size: 11px; color: #7a7182; }
+.pup .chip { margin-top: 4px; background: #fff; }
+.pup.taken { opacity: 0.55; }
+.pup em { font-style: normal; font-size: 11px; font-weight: 800; color: #e0527a; margin-top: 2px; }
+#pupPick .nameInput { margin-top: 10px; }
+.nameInput {
   width: 100%;
   font-size: 18px;
   padding: 12px 14px;
@@ -396,7 +454,41 @@ h1 { margin: 4px 0 6px; font-size: 26px; }
   -webkit-user-select: text;
   user-select: text;
 }
-#nameInput:focus { border-color: #8a5cf6; }
+.nameInput:focus { border-color: #8a5cf6; }
+#start .nameInput { margin-top: 12px; }
+
+/* ---------- Settings ---------- */
+.btnRow { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.soft {
+  display: inline-block;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: #f4f0f7;
+  color: #3d3445;
+  font-weight: 800;
+  font-size: 14px;
+  font-family: inherit;
+  text-align: center;
+}
+.soft:disabled { opacity: 0.45; }
+.soft.danger { background: #fde8ec; color: #c2364f; }
+.fileBtn { position: relative; overflow: hidden; }
+.fileBtn input { position: absolute; inset: 0; opacity: 0; font-size: 0; }
+#settings textarea {
+  width: 100%;
+  border: 2px solid #e5dfea;
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, monospace;
+  resize: vertical;
+  -webkit-user-select: text;
+  user-select: text;
+  margin: 6px 0;
+}
+#codeBox { margin-bottom: 4px; }
+.ver { margin-top: 18px; text-align: center; font-size: 12px; }
 .primary, .ghost {
   width: 100%;
   margin-top: 12px;
