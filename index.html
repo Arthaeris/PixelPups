@@ -18,10 +18,12 @@
     <div id="topbar">
       <div id="pack"></div>
       <div id="topRight">
+        <div class="pill"><span>🪙</span> <span id="coinCount">0</span></div>
         <div class="trRow">
-          <div class="pill"><span>🪙</span> <span id="coinCount">0</span></div>
           <button class="roundBtn" data-act="bag" aria-label="Toy bag">🎒</button>
+          <button class="roundBtn" data-act="settings" aria-label="Settings">⚙️</button>
         </div>
+        <button class="pill small chipBtn" id="clockChip" data-act="clock">☀️ 12:00</button>
         <div class="pill small hidden" id="buildPill">🏗️ <span id="buildTime">10:00</span></div>
       </div>
     </div>
@@ -44,10 +46,14 @@
     </div>
 
     <div id="decoBar" class="card hidden">
-      <div class="barHelp">Tap a floor tile to place · Tap an item to pick it up</div>
+      <div class="tabs">
+        <button class="decoTab sel" data-act="tab" data-tab="furn">🪑 Furniture</button>
+        <button class="decoTab" data-act="tab" data-tab="style">🎨 Walls & floors</button>
+      </div>
+      <div class="barHelp" id="decoHelp">Tap a floor tile to place · Tap an item to pick it up</div>
       <div id="invList"></div>
       <div class="decoBtns">
-        <button data-act="rotate">🔄<small id="rotLabel">Rotate</small></button>
+        <button data-act="rotate" id="rotBtn">🔄<small id="rotLabel">Rotate</small></button>
         <button data-act="shop">🛒<small>Shop</small></button>
         <button data-act="done">✅<small>Done</small></button>
       </div>
@@ -87,6 +93,53 @@
     </div>
   </div>
 
+  <div id="litter" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead">
+        <h2>Puppies looking for a home</h2>
+        <button class="x" id="litterClose">✕</button>
+      </div>
+      <p class="sub" id="litterSub">Pick a puppy, or come back tomorrow for a new litter.</p>
+      <div id="pups"></div>
+      <div id="pupPick" class="hidden">
+        <p class="sub" id="pupDesc"></p>
+        <input id="pupName" class="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button id="adoptBtn" class="primary">Adopt</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead">
+        <h2>Settings</h2>
+        <button class="x" data-act="closeSettings">✕</button>
+      </div>
+      <div class="section">💾 Back up your save</div>
+      <p class="sub">Your progress lives in this browser. Export it to keep a copy or to move it to another device.</p>
+      <div class="btnRow">
+        <button class="soft" id="exportBtn">Show save code</button>
+        <button class="soft" id="downloadBtn">Download file</button>
+      </div>
+      <div id="codeBox" class="hidden">
+        <textarea id="saveCode" readonly rows="4"></textarea>
+        <button class="soft" id="copyBtn">📋 Copy code</button>
+      </div>
+      <div class="section">📥 Import a save</div>
+      <textarea id="importCode" rows="3" placeholder="Paste a save code here"></textarea>
+      <div class="btnRow">
+        <button class="soft" id="importBtn">Import code</button>
+        <label class="soft fileBtn">Import file<input type="file" id="importFile" accept=".json,.txt,application/json,text/plain"></label>
+      </div>
+      <div class="section">↩️ Backup</div>
+      <p class="sub" id="restoreInfo"></p>
+      <button class="soft" id="restoreBtn">Restore previous save</button>
+      <div class="section">🌱 New game</div>
+      <button class="soft danger" id="newGameBtn">Start a new game</button>
+      <p class="sub ver" id="verInfo"></p>
+    </div>
+  </div>
+
   <div id="confirm" class="modal center hidden">
     <div class="sheet">
       <h2 id="cfTitle">Are you sure?</h2>
@@ -98,16 +151,23 @@
 
   <div id="start" class="modal center hidden">
     <div class="sheet">
-      <h1 id="startTitle">🐾 Voxel Paws</h1>
-      <p id="startSub" class="sub">Pick your first dog and give it a name.</p>
-      <div id="breeds"></div>
-      <input id="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
+      <h1>🐾 Voxel Paws</h1>
+      <p class="sub">Choose your first puppy.</p>
+      <div class="stepLabel">Breed</div>
+      <div id="breedGrid"></div>
+      <div class="stepLabel">Coat</div>
+      <div id="coatRow"></div>
+      <div class="stepLabel">Personality</div>
+      <div id="traitGrid"></div>
+      <p class="sub" id="traitDesc"></p>
+      <input id="nameInput" class="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
       <button id="startBtn" class="primary">Let's go!</button>
-      <button id="cancelBtn" class="ghost hidden">Cancel</button>
     </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="data.js"></script>
+  <script src="art.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
