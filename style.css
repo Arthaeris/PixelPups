@@ -177,7 +177,9 @@ html, body {
 
 /* ---------- Toast & hint ---------- */
 #toast {
-  position: absolute;
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
   left: 50%;
   bottom: 96px;
   transform: translateX(-50%);
@@ -332,6 +334,7 @@ button:active { transform: scale(0.94); }
 .modal {
   position: fixed;
   inset: 0;
+  z-index: 40;
   background: rgba(30, 25, 40, 0.35);
   display: flex;
   align-items: flex-end;
@@ -390,7 +393,7 @@ button:active { transform: scale(0.94); }
 .buy:disabled { background: #e5dfea; color: #a49bab; }
 
 /* ---------- Toy bag ---------- */
-#toyGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+#toyGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .toyCard {
   position: relative;
   border: 2px solid transparent;
@@ -502,3 +505,148 @@ h1 { margin: 4px 0 6px; font-size: 26px; }
 .primary { background: #8a5cf6; color: #fff; }
 .primary:disabled { background: #e5dfea; color: #a49bab; }
 .ghost { background: transparent; color: #7a7182; margin-top: 4px; }
+
+/* ---------- Trick Mode ---------- */
+#trickMode {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  touch-action: none;
+  box-shadow: inset 0 0 70px 24px rgba(138, 92, 246, 0.55);
+  animation: tmGlow 2.4s ease-in-out infinite;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+}
+@keyframes tmGlow {
+  50% { box-shadow: inset 0 0 90px 34px rgba(138, 92, 246, 0.7); }
+}
+.tmTop { display: flex; align-items: center; gap: 8px; }
+.tmDog {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  padding: 4px 14px 4px 4px;
+  box-shadow: 0 3px 12px rgba(40, 30, 60, 0.16);
+  max-width: 260px;
+}
+.tmDog img { width: 44px; height: 44px; border-radius: 50%; background: #f6eedf; }
+.tmInfo { flex: 1; }
+.tmInfo b { font-size: 15px; }
+.tmInfo small { font-size: 10px; color: #8a8094; font-weight: 700; }
+.focusTrack { height: 8px; border-radius: 8px; background: #ece6f0; overflow: hidden; margin-top: 3px; }
+#focusFill { height: 100%; width: 100%; background: #8a5cf6; border-radius: 8px; transition: width 0.25s; }
+#focusFill.low { background: #e53935; }
+#tmHint {
+  position: absolute;
+  left: 50%;
+  top: calc(max(12px, env(safe-area-inset-top)) + 64px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 86vw;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 7px 13px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #4a4152;
+  pointer-events: none;
+}
+#tmSeq {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 30px);
+  text-align: center;
+  font-size: 34px;
+  letter-spacing: 6px;
+  min-height: 44px;
+  pointer-events: none;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+#tmRing {
+  position: fixed;
+  width: 70px;
+  height: 70px;
+  margin: -35px 0 0 -35px;
+  border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+  display: none;
+}
+#tmRing.on { display: block; animation: pop 0.2s ease-out; }
+#tmRing.h1 { border-color: #ffd54f; transform: scale(1.25); transition: transform 0.3s; }
+#tmRing.h2 { border-color: #8a5cf6; background: rgba(138, 92, 246, 0.25); transform: scale(1.6); }
+
+.legend { font-size: 12px; background: #f8f5fb; border-radius: 12px; padding: 8px 10px; }
+.trickRow .gest { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 15px; white-space: nowrap; }
+.trickRow .stars { font-size: 12px; color: #f5b400; letter-spacing: 1px; }
+.trickRow.untrained .stars { color: #d8d0de; }
+
+/* ---------- Phase 3: home life ---------- */
+.cardBtns { flex-wrap: wrap; }
+.wardGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 6px; }
+.toyCard { min-width: 0; }
+.toyCard b, .toyCard small { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: center; }
+.primary.alt { background: #4caf50; margin-top: 8px; }
+#bathCanvas { width: 100%; max-width: 280px; aspect-ratio: 1; border-radius: 20px; touch-action: none; display: block; margin: 8px auto; background: #d7efff; }
+.track.big { height: 12px; margin: 4px 8px 0; }
+#bathStep { display: block; font-size: 16px; margin-bottom: 2px; }
+#cookGame { text-align: center; padding: 10px 0; }
+#cookBar { position: relative; height: 34px; border-radius: 17px; background: #f4f0f7; margin: 14px 0 8px; overflow: hidden; }
+#cookZone { position: absolute; top: 0; bottom: 0; width: 18%; background: #9ccc65; border-radius: 10px; }
+#cookMarker { position: absolute; top: -2px; bottom: -2px; width: 8px; margin-left: -4px; background: #8a5cf6; border-radius: 4px; }
+#cookResult { font-size: 22px; color: #f5b400; min-height: 28px; }
+#comfortPaws { font-size: 30px; text-align: center; letter-spacing: 4px; margin: 4px 0 6px; color: #c9c0d2; }
+#comfortList .row b.neg { color: #e53935; }
+#visitBar {
+  position: fixed;
+  left: max(10px, env(safe-area-inset-left));
+  right: max(10px, env(safe-area-inset-right));
+  top: max(10px, env(safe-area-inset-top));
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+#visitBar > div { flex: 1; }
+#visitBar .sub { margin: 2px 0 0; font-size: 12px; }
+
+/* ---------- Phase 4: places, challenges, collectibles ---------- */
+.roundBtn { position: relative; }
+.roundBtn .badge { top: -2px; right: -2px; width: 16px; height: 16px; line-height: 16px; font-size: 10px; }
+.actionbar .ctx { background: #fff3d6; animation: pop 0.25s ease-out; }
+.locCard { display: flex; align-items: center; gap: 12px; padding: 12px 10px; border-radius: 16px; background: #f8f5fb; margin-bottom: 8px; }
+.locCard .lcIc { font-size: 32px; width: 44px; text-align: center; }
+.locCard .txt { flex: 1; display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.locCard .txt b { font-size: 15.5px; }
+.locCard .desc { font-size: 12px; color: #6f6678; }
+.locCard .note { font-size: 11.5px; color: #8a5cf6; font-weight: 700; }
+.locCard.locked { background: #f4f2f6; }
+.locCard.locked .note { color: #a0789a; }
+.locCard.future { opacity: 0.55; }
+.locCard.future .lcIc { filter: grayscale(1); }
+.locCard .buy { min-width: 58px; }
+.row.challenge { align-items: flex-start; }
+.row.challenge .txt b { font-size: 14px; }
+.row.challenge .track { flex: none; height: 9px; margin-top: 6px; }
+.row.challenge .rw { font-size: 13px; white-space: nowrap; color: #8a6d00; }
+.row.challenge.done .txt b { color: #7a7182; text-decoration: line-through; }
+#albumTabs { display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 6px; margin-bottom: 4px; }
+.pageTab { flex: 0 0 auto; border: 2px solid transparent; border-radius: 14px; background: #f4f0f7; padding: 6px 8px; font-family: inherit; color: #3d3445; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.pageTab span { font-size: 20px; }
+.pageTab small { font-size: 10px; font-weight: 700; }
+.pageTab.sel { border-color: #8a5cf6; background: #efe6ff; }
+.pageTab.full small { color: #2e7d32; }
+.albumHead { font-weight: 700; color: #5b3fb0; font-size: 13px; }
+.toyCard.sil .big, .toyCard.sil .bkImg { filter: brightness(0); opacity: 0.18; }
+.toyCard.sil b { color: #9a90a3; }
+.toyCard.secret { background: #f1ecf7; }
+.bkImg { width: 40px; height: 40px; border-radius: 50%; background: #f6eedf; }
