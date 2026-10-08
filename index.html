@@ -20,51 +20,51 @@
       <div id="pack"></div>
       <div id="topRight">
         <div id="wallet" aria-live="polite">
-          <div class="wRow glass" data-k="coins"><span class="wIc">🪙</span><b class="wNum">0</b><span class="wDelta"></span></div>
-          <div class="wRow glass" data-k="tickets"><span class="wIc">🎟️</span><b class="wNum">0</b><span class="wDelta"></span></div>
+          <div class="wRow glass" data-k="coins"><i data-i="coin" class="wIc"></i><b class="wNum">0</b><span class="wDelta"></span></div>
+          <div class="wRow glass" data-k="tickets"><i data-i="ticket" class="wIc"></i><b class="wNum">0</b><span class="wDelta"></span></div>
         </div>
         <button class="chip glass hidden" id="locChip" data-act="locinfo"></button>
-        <div class="chip glass hidden" id="buildPill">🏗️ <span id="buildTime">10:00</span></div>
+        <div class="chip glass hidden" id="buildPill"><i data-i="crane"></i><span id="buildTime">10:00</span></div>
       </div>
     </div>
 
     <div id="hint" class="glass">Drag anywhere to walk · Tap your dog to pet</div>
 
     <nav id="actions" class="dock glass">
-      <button data-act="bowls" aria-label="Fill food and water bowls"><span class="dIc">🥣</span><small>Bowls</small></button>
-      <button data-act="ball"><span class="dIc toyIcon">🎾</span><small>Throw</small></button>
-      <button data-act="walk"><span class="dIc">🦮</span><small>Walk</small></button>
-      <button data-act="menu" class="menuBtn" aria-label="Menu"><span class="dIc">🐾</span><small>Menu</small><i class="dot hidden"></i></button>
+      <button data-act="bowls" aria-label="Fill food and water bowls"><i data-i="bowl" class="dIc"></i><small>Bowls</small></button>
+      <button data-act="ball"><span class="dIc toyIcon"></span><small>Throw</small></button>
+      <button data-act="walk"><i data-i="walk" class="dIc"></i><small>Walk</small></button>
+      <button data-act="menu" class="menuBtn" aria-label="Menu"><i data-i="menu" class="dIc"></i><small>Menu</small><i class="dot hidden"></i></button>
     </nav>
 
     <nav id="parkActions" class="dock glass hidden">
-      <button data-act="ctx" id="ctxBtn" class="ctx hidden">✋<small>Stay</small></button>
-      <button data-act="ball"><span class="dIc toyIcon">🎾</span><small>Throw</small></button>
-      <button data-act="tricks"><span class="dIc">🎓</span><small>Tricks</small></button>
-      <button data-act="leash" id="leashBtn">🔓<small>Unleash</small></button>
-      <button data-act="home"><span class="dIc">🏠</span><small>Home</small></button>
-      <button data-act="menu" class="menuBtn" aria-label="Menu"><span class="dIc">🐾</span><small>Menu</small><i class="dot hidden"></i></button>
+      <button data-act="ctx" id="ctxBtn" class="ctx hidden"></button>
+      <button data-act="ball"><span class="dIc toyIcon"></span><small>Throw</small></button>
+      <button data-act="tricks"><i data-i="cap" class="dIc"></i><small>Tricks</small></button>
+      <button data-act="leash" id="leashBtn"></button>
+      <button data-act="home"><i data-i="home" class="dIc"></i><small>Home</small></button>
+      <button data-act="menu" class="menuBtn" aria-label="Menu"><i data-i="menu" class="dIc"></i><small>Menu</small><i class="dot hidden"></i></button>
     </nav>
 
     <div id="decoBar" class="panel glass hidden">
       <div class="tabs">
-        <button class="decoTab sel" data-act="tab" data-tab="furn">🪑 Furniture</button>
-        <button class="decoTab" data-act="tab" data-tab="style">🎨 Walls & floors</button>
+        <button class="decoTab sel" data-act="tab" data-tab="furn">Furniture</button>
+        <button class="decoTab" data-act="tab" data-tab="style">Walls &amp; floors</button>
       </div>
       <div class="barHelp" id="decoHelp">Tap a floor tile to place · Tap an item to pick it up</div>
       <div id="invList"></div>
       <div class="decoBtns">
-        <button data-act="rotate" id="rotBtn">🔄<small id="rotLabel">Rotate</small></button>
-        <button data-act="shop">🛒<small>Shop</small></button>
-        <button data-act="done">✅<small>Done</small></button>
+        <button data-act="rotate" id="rotBtn"><i data-i="rotate"></i><small id="rotLabel">Rotate</small></button>
+        <button data-act="shop"><i data-i="shop"></i><small>Shop</small></button>
+        <button data-act="done" class="ok"><i data-i="check"></i><small>Done</small></button>
       </div>
     </div>
 
     <div id="buildBar" class="panel glass hidden">
       <div class="barTitle">Where should the new room go?</div>
-      <div class="barHelp">Tap a green ➕ area next to your home</div>
+      <div class="barHelp">Tap a green area next to your home</div>
       <div class="decoBtns">
-        <button data-act="cancelBuild">✖️<small>Cancel</small></button>
+        <button data-act="cancelBuild"><i data-i="x"></i><small>Cancel</small></button>
       </div>
     </div>
   </div>
@@ -81,8 +81,8 @@
           <small>Focus</small>
         </div>
       </div>
-      <button class="roundBtn glass" id="tmBook" aria-label="Trick book">📖</button>
-      <button class="roundBtn glass" id="tmExit" aria-label="Leave Trick Mode">✕</button>
+      <button class="roundBtn glass" id="tmBook" aria-label="Trick book"><i data-i="book"></i></button>
+      <button class="roundBtn glass" id="tmExit" aria-label="Leave Trick Mode"><i data-i="x"></i></button>
     </div>
     <div id="tmHint" class="glass"></div>
     <div id="tmSeq"></div>
@@ -93,112 +93,131 @@
 
   <div id="visitBar" class="panel glass hidden">
     <div><b id="visitName">Visiting</b><div class="sub" id="visitHint"></div></div>
-    <button class="soft" id="visitLeave">🏠 Go home</button>
+    <button class="soft" id="visitLeave"><i data-i="home"></i> Go home</button>
   </div>
 
   <div id="hub" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2 id="hubTitle">Menu</h2><button class="x" data-act="closeHub">✕</button></div>
-      <div class="hubStats">
-        <div class="stat"><span>🪙</span><b id="coinCount">0</b><small>Coins</small></div>
-        <div class="stat hidden" id="ticketStat"><span>🎟️</span><b id="ticketCount">0</b><small>Tickets</small></div>
-        <button class="stat" id="clockChip" data-act="clock"><span id="clockIc">☀️</span><b id="clockTime">12:00</b><small id="clockWx">Sunny</small></button>
-        <button class="stat" id="comfortChip" data-act="comfort"><span>🏡</span><b id="comfortPawsMini">🐾</b><small>Comfort</small></button>
-      </div>
-      <div class="hubGrid">
-        <button class="tile" data-act="shop"><span>🛒</span><b>Shop</b><small>Toys, furniture, styles</small></button>
-        <button class="tile" data-act="decorate" id="tileDecorate"><span>🎨</span><b>Decorate</b><small>Move furniture, walls, floors</small></button>
-        <button class="tile" data-act="bag"><span>🎒</span><b>Toy bag</b><small id="tileBagSub">Pick what to throw</small></button>
-        <button class="tile" data-act="album"><span>📒</span><b>Collectibles</b><small id="tileAlbumSub">Your sticker book</small></button>
-        <button class="tile" data-act="daily"><span>📋</span><b>Challenges</b><small id="tileDailySub">Today's goals</small><i class="badge hidden" id="dailyBadge">3</i></button>
-        <button class="tile" data-act="settings"><span>⚙️</span><b>Settings</b><small>Backups, sharing</small></button>
+      <div class="sheetHead"><h2 id="hubTitle">Menu</h2><button class="x" data-act="closeHub" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <div class="hubStats">
+          <div class="stat"><i data-i="coin"></i><b id="coinCount">0</b><small>Coins</small></div>
+          <div class="stat hidden" id="ticketStat"><i data-i="ticket"></i><b id="ticketCount">0</b><small>Tickets</small></div>
+          <button class="stat" id="clockChip" data-act="clock"><span id="clockIc"></span><b id="clockTime">12:00</b><small id="clockWx">Sunny</small></button>
+          <button class="stat" id="comfortChip" data-act="comfort"><span class="paws" id="comfortPawsMini"></span><b>Comfort</b><small id="comfortWord">Cozy</small></button>
+        </div>
+        <div class="hubGrid">
+          <button class="tile" data-act="shop"><i data-i="shop"></i><b>Shop</b><small>Toys, furniture, styles</small></button>
+          <button class="tile" data-act="decorate" id="tileDecorate"><i data-i="brush"></i><b>Decorate</b><small>Move furniture, walls, floors</small></button>
+          <button class="tile" data-act="bag"><i data-i="bag"></i><b>Toy bag</b><small id="tileBagSub">Pick what to throw</small></button>
+          <button class="tile" data-act="album"><i data-i="book"></i><b>Collectibles</b><small id="tileAlbumSub">Your sticker book</small></button>
+          <button class="tile" data-act="daily"><i data-i="list"></i><b>Challenges</b><small id="tileDailySub">Today's goals</small><i class="badge hidden" id="dailyBadge">3</i></button>
+          <button class="tile" data-act="settings"><i data-i="gear"></i><b>Settings</b><small>Backups, sharing</small></button>
+        </div>
       </div>
     </div>
   </div>
 
-  <div id="bath" class="modal center hidden">
+  <div id="bath" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2 id="bathTitle">Bath time</h2><button class="x" id="bathClose">✕</button></div>
-      <b id="bathStep"></b>
-      <p class="sub" id="bathHint"></p>
-      <div id="bathShampoos" class="wardGrid"></div>
-      <div id="bathCanvasWrap" class="hidden">
-        <canvas id="bathCanvas" width="280" height="280"></canvas>
-        <div class="track big"><div class="fill clean" id="bathFill"></div></div>
+      <div class="sheetHead"><h2 id="bathTitle">Bath time</h2><button class="x" id="bathClose" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody center">
+        <b id="bathStep"></b>
+        <p class="sub" id="bathHint"></p>
+        <div id="bathShampoos" class="wardGrid"></div>
+        <div id="bathCanvasWrap" class="hidden">
+          <canvas id="bathCanvas" width="280" height="280"></canvas>
+          <div class="track big"><div class="fill clean" id="bathFill"></div></div>
+        </div>
+        <button id="bathDone" class="primary hidden">Done</button>
       </div>
-      <button id="bathDone" class="primary hidden">Done</button>
     </div>
   </div>
 
   <div id="kitchen" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>Kitchen</h2><button class="x" data-act="closeKitchen">✕</button></div>
-      <p class="sub" id="pantryLine"></p>
-      <div id="recipeList"></div>
-      <div id="cookGame" class="hidden">
-        <b id="cookRound"></b>
-        <div id="cookBar"><div id="cookZone"></div><div id="cookMarker"></div></div>
-        <div id="cookResult"></div>
-        <button id="cookTap" class="primary">Tap!</button>
+      <div class="sheetHead"><h2>Kitchen</h2><button class="x" data-act="closeKitchen" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <p class="sub" id="pantryLine"></p>
+        <div id="recipeList"></div>
+        <div id="cookGame" class="hidden">
+          <b id="cookRound"></b>
+          <div id="cookBar"><div id="cookZone"></div><div id="cookMarker"></div></div>
+          <div id="cookResult"></div>
+          <button id="cookTap" class="primary">Tap!</button>
+        </div>
       </div>
     </div>
   </div>
 
   <div id="meals" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>Treats</h2><button class="x" data-act="closeMeals">✕</button></div>
-      <p class="sub" id="mealSub"></p>
-      <div id="mealList" class="wardGrid"></div>
+      <div class="sheetHead"><h2>Treats</h2><button class="x" data-act="closeMeals" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <p class="sub" id="mealSub"></p>
+        <div id="mealList" class="wardGrid"></div>
+      </div>
     </div>
   </div>
 
   <div id="wardrobe" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>Wardrobe</h2><button class="x" data-act="closeWardrobe">✕</button></div>
-      <p class="sub" id="wardSub"></p>
-      <div id="wardList"></div>
+      <div class="sheetHead"><h2>Wardrobe</h2><button class="x" data-act="closeWardrobe" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <p class="sub" id="wardSub"></p>
+        <div id="wardList"></div>
+      </div>
     </div>
   </div>
 
   <div id="comfort" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>Home comfort</h2><button class="x" data-act="closeComfort">✕</button></div>
-      <div id="comfortPaws"></div>
-      <p class="sub" id="comfortSub"></p>
-      <div id="comfortList"></div>
+      <div class="sheetHead"><h2>Home comfort</h2><button class="x" data-act="closeComfort" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <div id="comfortPaws" class="paws big"></div>
+        <p class="sub" id="comfortSub"></p>
+        <div id="comfortList"></div>
+      </div>
     </div>
   </div>
 
   <div id="giftModal" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>🎁 Gift box</h2><button class="x" data-act="closeGift">✕</button></div>
-      <p class="sub" id="giftSub"></p>
-      <div id="giftList"></div>
+      <div class="sheetHead"><h2>Gift box</h2><button class="x" data-act="closeGift" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <p class="sub" id="giftSub"></p>
+        <div id="giftList"></div>
+      </div>
     </div>
   </div>
 
   <div id="map" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>🗺️ Where to?</h2><button class="x" data-act="closeMap">✕</button></div>
-      <p class="sub">New places unlock as you play. Every place has its own finds, vendors and surprises.</p>
-      <div id="mapList"></div>
+      <div class="sheetHead"><h2>Where to?</h2><button class="x" data-act="closeMap" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <div id="mapList"></div>
+      </div>
     </div>
   </div>
 
   <div id="daily" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>📋 Today's challenges</h2><button class="x" data-act="closeDaily">✕</button></div>
-      <p class="sub" id="dailySub"></p>
-      <div id="dailyList"></div>
+      <div class="sheetHead"><h2>Today's challenges</h2><button class="x" data-act="closeDaily" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <p class="sub" id="dailySub"></p>
+        <div id="dailyList"></div>
+      </div>
     </div>
   </div>
 
   <div id="album" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>📒 Collectibles</h2><button class="x" data-act="closeAlbum">✕</button><div id="albumTabs" class="headRow"></div></div>
-      <p class="sub" id="albumSub"></p>
-      <p class="sub albumHead" id="albumHead"></p>
-      <div id="albumGrid" class="wardGrid"></div>
+      <div class="sheetHead"><h2>Collectibles</h2><button class="x" data-act="closeAlbum" aria-label="Close"><i data-i="x"></i></button><div id="albumTabs" class="headRow"></div></div>
+      <div class="sheetBody">
+        <p class="sub" id="albumSub"></p>
+        <p class="sub albumHead" id="albumHead"></p>
+        <div id="albumGrid" class="wardGrid"></div>
+      </div>
     </div>
   </div>
 
@@ -206,23 +225,27 @@
     <div class="sheet">
       <div class="sheetHead">
         <h2>Trick book</h2>
-        <button class="x" data-act="closeBook">✕</button>
-        <p class="legend headRow">👆 tap · ✊ hold &amp; release · ✋ hold 3 s · ⬆️⬇️⬅️➡️ swipe · ⭕ draw a circle</p>
+        <button class="x" data-act="closeBook" aria-label="Close"><i data-i="x"></i></button>
+        <p class="legend headRow"><span><i data-i="tap"></i>tap</span><span><i data-i="hold"></i>hold &amp; release</span><span><i data-i="press"></i>hold 3 s</span><span><i data-i="up"></i><i data-i="down"></i><i data-i="left"></i><i data-i="right"></i>swipe</span><span><i data-i="circle"></i>circle</span></p>
       </div>
-      <p class="sub" id="bookSub"></p>
-      <div id="bookList"></div>
+      <div class="sheetBody">
+        <p class="sub" id="bookSub"></p>
+        <div id="bookList"></div>
+      </div>
     </div>
   </div>
 
   <div id="shop" class="modal hidden">
-    <div class="sheet">
+    <div class="sheet tall">
       <div class="sheetHead">
         <h2 id="shopTitle">Shop</h2>
-        <div class="pill" id="shopPurse">🪙 <span id="shopCoins">0</span></div>
-        <button class="x" data-act="closeShop">✕</button>
-        <div id="shopNav" class="headRow"></div>
+        <div class="pill" id="shopPurse"></div>
+        <button class="x" data-act="closeShop" aria-label="Close"><i data-i="x"></i></button>
+        <div id="shopNav" class="headRow segs"></div>
       </div>
-      <div id="shopList"></div>
+      <div class="sheetBody">
+        <div id="shopList"></div>
+      </div>
     </div>
   </div>
 
@@ -231,10 +254,12 @@
       <div class="sheetHead">
         <h2>Toy bag</h2>
         <div class="pill" id="bagCount">1/10</div>
-        <button class="x" data-act="closeBag">✕</button>
+        <button class="x" data-act="closeBag" aria-label="Close"><i data-i="x"></i></button>
       </div>
-      <p class="sub">Tap a toy to throw it next. Some toys can only be found on walks.</p>
-      <div id="toyGrid"></div>
+      <div class="sheetBody">
+        <p class="sub">Tap a toy to throw it next. Some toys can only be found on walks.</p>
+        <div id="toyGrid"></div>
+      </div>
     </div>
   </div>
 
@@ -242,14 +267,18 @@
     <div class="sheet">
       <div class="sheetHead">
         <h2>Puppies looking for a home</h2>
-        <button class="x" id="litterClose">✕</button>
+        <button class="x" id="litterClose" aria-label="Close"><i data-i="x"></i></button>
       </div>
-      <p class="sub" id="litterSub">Pick a puppy, or come back tomorrow for a new litter.</p>
-      <div id="pups"></div>
-      <div id="pupPick" class="hidden">
-        <p class="sub" id="pupDesc"></p>
-        <input id="pupName" class="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
-        <button id="adoptBtn" class="primary">Adopt</button>
+      <div class="sheetBody">
+        <p class="sub" id="litterSub">Pick a puppy, or come back tomorrow for a new litter.</p>
+        <div id="pups"></div>
+        <div id="pupPick" class="hidden">
+          <p class="sub" id="pupDesc"></p>
+          <div class="nameRow">
+            <input id="pupName" class="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
+            <button id="adoptBtn" class="primary">Adopt</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -258,43 +287,45 @@
     <div class="sheet">
       <div class="sheetHead">
         <h2>Settings</h2>
-        <button class="x" data-act="closeSettings">✕</button>
+        <button class="x" data-act="closeSettings" aria-label="Close"><i data-i="x"></i></button>
       </div>
-      <div class="section">💾 Back up your save</div>
-      <p class="sub">Your progress lives in this browser. Export it to keep a copy or to move it to another device.</p>
-      <div class="btnRow">
-        <button class="soft" id="exportBtn">Show save code</button>
-        <button class="soft" id="downloadBtn">Download file</button>
-      </div>
-      <div id="codeBox" class="hidden">
-        <textarea id="saveCode" readonly rows="4"></textarea>
-        <button class="soft" id="copyBtn">📋 Copy code</button>
-      </div>
-      <div class="section">📥 Import a save</div>
-      <textarea id="importCode" rows="3" placeholder="Paste a save code here"></textarea>
-      <div class="btnRow">
-        <button class="soft" id="importBtn">Import code</button>
-        <label class="soft fileBtn">Import file<input type="file" id="importFile" accept=".json,.txt,application/json,text/plain"></label>
-      </div>
-      <div class="section">🏡 Share your home</div>
-      <p class="sub">Send friends a link to look around your home. It never touches their save. Gifts you pack in a 🎁 Gift box can be opened once by each visitor.</p>
-      <button class="soft" id="visitBtn">Create visit link</button>
-      <div id="visitBox" class="hidden">
-        <textarea id="visitCode" readonly rows="3"></textarea>
-        <p class="sub" id="visitInfo"></p>
+      <div class="sheetBody">
+        <div class="section"><i data-i="save"></i>Back up your save</div>
+        <p class="sub">Your progress lives in this browser. Export it to keep a copy or to move it to another device.</p>
         <div class="btnRow">
-          <button class="soft" id="copyVisitBtn">📋 Copy link</button>
-          <button class="soft" id="shareVisitBtn">📤 Share</button>
+          <button class="soft" id="exportBtn">Show save code</button>
+          <button class="soft" id="downloadBtn">Download file</button>
         </div>
+        <div id="codeBox" class="hidden">
+          <textarea id="saveCode" readonly rows="4"></textarea>
+          <button class="soft" id="copyBtn"><i data-i="copy"></i> Copy code</button>
+        </div>
+        <div class="section"><i data-i="upload"></i>Import a save</div>
+        <textarea id="importCode" rows="3" placeholder="Paste a save code here"></textarea>
+        <div class="btnRow">
+          <button class="soft" id="importBtn">Import code</button>
+          <label class="soft fileBtn">Import file<input type="file" id="importFile" accept=".json,.txt,application/json,text/plain"></label>
+        </div>
+        <div class="section"><i data-i="home"></i>Share your home</div>
+        <p class="sub">Send friends a link to look around your home. It never touches their save. Gifts you pack in a Gift box can be opened once by each visitor.</p>
+        <button class="soft" id="visitBtn">Create visit link</button>
+        <div id="visitBox" class="hidden">
+          <textarea id="visitCode" readonly rows="3"></textarea>
+          <p class="sub" id="visitInfo"></p>
+          <div class="btnRow">
+            <button class="soft" id="copyVisitBtn"><i data-i="copy"></i> Copy link</button>
+            <button class="soft" id="shareVisitBtn"><i data-i="share"></i> Share</button>
+          </div>
+        </div>
+        <textarea id="openVisitCode" rows="2" placeholder="Got a visit link or code from a friend? Paste it here"></textarea>
+        <button class="soft" id="openVisitBtn">Visit</button>
+        <div class="section"><i data-i="undo"></i>Backup</div>
+        <p class="sub" id="restoreInfo"></p>
+        <button class="soft" id="restoreBtn">Restore previous save</button>
+        <div class="section"><i data-i="sprout"></i>New game</div>
+        <button class="soft danger" id="newGameBtn">Start a new game</button>
+        <p class="sub ver" id="verInfo"></p>
       </div>
-      <textarea id="openVisitCode" rows="2" placeholder="Got a visit link or code from a friend? Paste it here"></textarea>
-      <button class="soft" id="openVisitBtn">Visit</button>
-      <div class="section">↩️ Backup</div>
-      <p class="sub" id="restoreInfo"></p>
-      <button class="soft" id="restoreBtn">Restore previous save</button>
-      <div class="section">🌱 New game</div>
-      <button class="soft danger" id="newGameBtn">Start a new game</button>
-      <p class="sub ver" id="verInfo"></p>
     </div>
   </div>
 
@@ -309,18 +340,24 @@
   </div>
 
   <div id="start" class="modal center hidden">
-    <div class="sheet">
-      <h1>🐾 Voxel Paws</h1>
-      <p class="sub">Choose your first puppy.</p>
-      <div class="stepLabel">Breed</div>
-      <div id="breedGrid"></div>
-      <div class="stepLabel">Coat</div>
-      <div id="coatRow"></div>
+    <div class="sheet startSheet">
+      <h1><i data-i="paw"></i>Voxel Paws</h1>
+      <div class="startHero">
+        <div class="startPreview"><img id="startDog" alt=""><b id="startBreed"></b><small id="startCoat"></small></div>
+        <div class="startPick">
+          <div class="stepLabel">Breed</div>
+          <div id="breedGrid"></div>
+          <div class="stepLabel">Coat</div>
+          <div id="coatRow"></div>
+        </div>
+      </div>
       <div class="stepLabel">Personality</div>
       <div id="traitGrid"></div>
       <p class="sub" id="traitDesc"></p>
-      <input id="nameInput" class="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
-      <button id="startBtn" class="primary">Let's go!</button>
+      <div class="nameRow">
+        <input id="nameInput" class="nameInput" maxlength="14" placeholder="Name" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button id="startBtn" class="primary">Let's go!</button>
+      </div>
     </div>
   </div>
 
