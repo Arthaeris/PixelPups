@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Voxel Paws">
   <meta name="theme-color" content="#cfe6f2">
+  <meta name="color-scheme" content="light">
   <title>Voxel Paws</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -18,42 +19,34 @@
     <div id="topbar">
       <div id="pack"></div>
       <div id="topRight">
-        <div class="pill"><span>🪙</span> <span id="coinCount">0</span></div>
-        <div class="trRow">
-          <button class="roundBtn" data-act="bag" aria-label="Toy bag">🎒</button>
-          <button class="roundBtn" data-act="settings" aria-label="Settings">⚙️</button>
+        <div id="wallet" aria-live="polite">
+          <div class="wRow glass" data-k="coins"><span class="wIc">🪙</span><b class="wNum">0</b><span class="wDelta"></span></div>
+          <div class="wRow glass" data-k="tickets"><span class="wIc">🎟️</span><b class="wNum">0</b><span class="wDelta"></span></div>
         </div>
-        <div class="trRow">
-          <button class="roundBtn" data-act="album" aria-label="Collectibles book">📒</button>
-          <button class="roundBtn" data-act="daily" aria-label="Daily challenges">📋<i class="badge hidden" id="dailyBadge">3</i></button>
-        </div>
-        <button class="pill small chipBtn" id="clockChip" data-act="clock">☀️ 12:00</button>
-        <button class="pill small chipBtn" id="comfortChip" data-act="comfort">🏡 🐾</button>
-        <button class="pill small chipBtn hidden" id="locChip" data-act="locinfo"></button>
-        <div class="pill small hidden" id="buildPill">🏗️ <span id="buildTime">10:00</span></div>
+        <button class="chip glass hidden" id="locChip" data-act="locinfo"></button>
+        <div class="chip glass hidden" id="buildPill">🏗️ <span id="buildTime">10:00</span></div>
       </div>
     </div>
 
-    <div id="hint">Drag anywhere to walk · Tap your dog to pet</div>
+    <div id="hint" class="glass">Drag anywhere to walk · Tap your dog to pet</div>
 
-    <div id="actions" class="actionbar">
-      <button data-act="feed">🥣<small>Feed</small></button>
-      <button data-act="water">💧<small>Water</small></button>
-      <button data-act="ball"><span class="toyIcon">🎾</span><small>Throw</small></button>
-      <button data-act="walk">🦮<small>Walk</small></button>
-      <button data-act="decorate">🎨<small>Decorate</small></button>
-      <button data-act="shop">🛒<small>Shop</small></button>
-    </div>
+    <nav id="actions" class="dock glass">
+      <button data-act="bowls" aria-label="Fill food and water bowls"><span class="dIc">🥣</span><small>Bowls</small></button>
+      <button data-act="ball"><span class="dIc toyIcon">🎾</span><small>Throw</small></button>
+      <button data-act="walk"><span class="dIc">🦮</span><small>Walk</small></button>
+      <button data-act="menu" class="menuBtn" aria-label="Menu"><span class="dIc">🐾</span><small>Menu</small><i class="dot hidden"></i></button>
+    </nav>
 
-    <div id="parkActions" class="actionbar hidden">
+    <nav id="parkActions" class="dock glass hidden">
       <button data-act="ctx" id="ctxBtn" class="ctx hidden">✋<small>Stay</small></button>
-      <button data-act="ball"><span class="toyIcon">🎾</span><small>Throw</small></button>
-      <button data-act="tricks">🎓<small>Tricks</small></button>
+      <button data-act="ball"><span class="dIc toyIcon">🎾</span><small>Throw</small></button>
+      <button data-act="tricks"><span class="dIc">🎓</span><small>Tricks</small></button>
       <button data-act="leash" id="leashBtn">🔓<small>Unleash</small></button>
-      <button data-act="home">🏠<small>Go home</small></button>
-    </div>
+      <button data-act="home"><span class="dIc">🏠</span><small>Home</small></button>
+      <button data-act="menu" class="menuBtn" aria-label="Menu"><span class="dIc">🐾</span><small>Menu</small><i class="dot hidden"></i></button>
+    </nav>
 
-    <div id="decoBar" class="card hidden">
+    <div id="decoBar" class="panel glass hidden">
       <div class="tabs">
         <button class="decoTab sel" data-act="tab" data-tab="furn">🪑 Furniture</button>
         <button class="decoTab" data-act="tab" data-tab="style">🎨 Walls & floors</button>
@@ -67,7 +60,7 @@
       </div>
     </div>
 
-    <div id="buildBar" class="card hidden">
+    <div id="buildBar" class="panel glass hidden">
       <div class="barTitle">Where should the new room go?</div>
       <div class="barHelp">Tap a green ➕ area next to your home</div>
       <div class="decoBtns">
@@ -80,7 +73,7 @@
 
   <div id="trickMode" class="hidden">
     <div class="tmTop">
-      <div class="tmDog">
+      <div class="tmDog glass">
         <img id="tmPortrait" alt="">
         <div class="tmInfo">
           <b id="tmName">Dog</b>
@@ -88,19 +81,39 @@
           <small>Focus</small>
         </div>
       </div>
-      <button class="roundBtn" id="tmBook" aria-label="Trick book">📖</button>
-      <button class="roundBtn" id="tmExit" aria-label="Leave Trick Mode">✕</button>
+      <button class="roundBtn glass" id="tmBook" aria-label="Trick book">📖</button>
+      <button class="roundBtn glass" id="tmExit" aria-label="Leave Trick Mode">✕</button>
     </div>
-    <div id="tmHint"></div>
+    <div id="tmHint" class="glass"></div>
     <div id="tmSeq"></div>
     <div id="tmRing"></div>
   </div>
 
   <div id="toast"></div>
 
-  <div id="visitBar" class="card hidden">
+  <div id="visitBar" class="panel glass hidden">
     <div><b id="visitName">Visiting</b><div class="sub" id="visitHint"></div></div>
     <button class="soft" id="visitLeave">🏠 Go home</button>
+  </div>
+
+  <div id="hub" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2 id="hubTitle">Menu</h2><button class="x" data-act="closeHub">✕</button></div>
+      <div class="hubStats">
+        <div class="stat"><span>🪙</span><b id="coinCount">0</b><small>Coins</small></div>
+        <div class="stat hidden" id="ticketStat"><span>🎟️</span><b id="ticketCount">0</b><small>Tickets</small></div>
+        <button class="stat" id="clockChip" data-act="clock"><span id="clockIc">☀️</span><b id="clockTime">12:00</b><small id="clockWx">Sunny</small></button>
+        <button class="stat" id="comfortChip" data-act="comfort"><span>🏡</span><b id="comfortPawsMini">🐾</b><small>Comfort</small></button>
+      </div>
+      <div class="hubGrid">
+        <button class="tile" data-act="shop"><span>🛒</span><b>Shop</b><small>Toys, furniture, styles</small></button>
+        <button class="tile" data-act="decorate" id="tileDecorate"><span>🎨</span><b>Decorate</b><small>Move furniture, walls, floors</small></button>
+        <button class="tile" data-act="bag"><span>🎒</span><b>Toy bag</b><small id="tileBagSub">Pick what to throw</small></button>
+        <button class="tile" data-act="album"><span>📒</span><b>Collectibles</b><small id="tileAlbumSub">Your sticker book</small></button>
+        <button class="tile" data-act="daily"><span>📋</span><b>Challenges</b><small id="tileDailySub">Today's goals</small><i class="badge hidden" id="dailyBadge">3</i></button>
+        <button class="tile" data-act="settings"><span>⚙️</span><b>Settings</b><small>Backups, sharing</small></button>
+      </div>
+    </div>
   </div>
 
   <div id="bath" class="modal center hidden">
@@ -182,9 +195,8 @@
 
   <div id="album" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>📒 Collectibles</h2><button class="x" data-act="closeAlbum">✕</button></div>
+      <div class="sheetHead"><h2>📒 Collectibles</h2><button class="x" data-act="closeAlbum">✕</button><div id="albumTabs" class="headRow"></div></div>
       <p class="sub" id="albumSub"></p>
-      <div id="albumTabs"></div>
       <p class="sub albumHead" id="albumHead"></p>
       <div id="albumGrid" class="wardGrid"></div>
     </div>
@@ -195,9 +207,9 @@
       <div class="sheetHead">
         <h2>Trick book</h2>
         <button class="x" data-act="closeBook">✕</button>
+        <p class="legend headRow">👆 tap · ✊ hold &amp; release · ✋ hold 3 s · ⬆️⬇️⬅️➡️ swipe · ⭕ draw a circle</p>
       </div>
       <p class="sub" id="bookSub"></p>
-      <p class="sub legend">👆 tap · ✊ hold &amp; release · ✋ hold 3 s · ⬆️⬇️⬅️➡️ swipe · ⭕ draw a circle</p>
       <div id="bookList"></div>
     </div>
   </div>
@@ -206,8 +218,9 @@
     <div class="sheet">
       <div class="sheetHead">
         <h2 id="shopTitle">Shop</h2>
-        <div class="pill small">🪙 <span id="shopCoins">0</span></div>
+        <div class="pill" id="shopPurse">🪙 <span id="shopCoins">0</span></div>
         <button class="x" data-act="closeShop">✕</button>
+        <div id="shopNav" class="headRow"></div>
       </div>
       <div id="shopList"></div>
     </div>
@@ -217,7 +230,7 @@
     <div class="sheet">
       <div class="sheetHead">
         <h2>Toy bag</h2>
-        <div class="pill small" id="bagCount">1/10</div>
+        <div class="pill" id="bagCount">1/10</div>
         <button class="x" data-act="closeBag">✕</button>
       </div>
       <p class="sub">Tap a toy to throw it next. Some toys can only be found on walks.</p>
