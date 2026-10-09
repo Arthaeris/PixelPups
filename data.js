@@ -8,7 +8,7 @@ window.VP_DATA = (function () {
   const CONFIG = {
     SAVE_KEY: 'voxelpaws-save-v1',     // keep this name so old saves are found
     BACKUP_KEY: 'voxelpaws-backup',
-    SAVE_VERSION: 9,
+    SAVE_VERSION: 12,
     AUTO_REFILL_MINUTES: 20,           // luxury feeder / fountain refill this long after being emptied
     OFFLEASH_COME_LEVEL: 2,            // Come must reach this level before a dog can go off-leash
     TIME_ZONE: 'Europe/Berlin',        // all clocks, weather and daily resets use German time
@@ -429,6 +429,14 @@ window.VP_DATA = (function () {
     forest:   { name: 'Forest stripes', price: 45, pattern: 'stripes', c1: '#6f9a6b', c2: '#628c5e', trim: '#3c5a3a' },
     brick:    { name: 'Brick',          price: 60, pattern: 'brick',   c1: '#b8573f', c2: '#e8d7c3', trim: '#7d3a2a' },
     panel:    { name: 'Wood panels',    price: 60, pattern: 'planksV', c1: '#b98a5a', c2: '#a57a4d', trim: '#6e4b2c' },
+    // earned, never sold: from neighbors' stories and home upgrades
+    workshop:   { name: 'Workshop panels', earned: true, pattern: 'planksV', c1: '#9fb7c9', c2: '#8ea7ba', trim: '#56708a' },
+    seaside:    { name: 'Seaside stripes', earned: true, pattern: 'stripes', c1: '#d6eefa', c2: '#ffffff', trim: '#4f8fbf' },
+    boudoir:    { name: 'Petal dots',      earned: true, pattern: 'dots',    c1: '#fbe6ef', c2: '#e7a6c3', trim: '#b86e90' },
+    sunny:      { name: 'Sunny yellow',    earned: true, pattern: 'plain',   c1: '#fbe7a6', trim: '#d1a94c' },
+    nursery:    { name: 'Meadow check',    earned: true, pattern: 'check',   c1: '#e3f1dc', c2: '#d2e8c8', trim: '#8bb07a' },
+    terracotta: { name: 'Terracotta brick', earned: true, pattern: 'brick',  c1: '#cf7f55', c2: '#f1e2cf', trim: '#8f4b2d' },
+    royal:      { name: 'Royal stripes',   earned: true, pattern: 'stripes', c1: '#3b4f8a', c2: '#34467c', trim: '#c9a85b' },
   };
   const FLOORS = {
     oak:      { name: 'Oak checker',  price: 0,  pattern: 'check',  c1: '#d8b689', c2: '#cba579' },
@@ -439,6 +447,13 @@ window.VP_DATA = (function () {
     teal:     { name: 'Teal carpet',  price: 40, pattern: 'carpet', c1: '#7cc4bd', c2: '#70b8b1' },
     stone:    { name: 'Stone',        price: 55, pattern: 'tiles',  c1: '#b4b0a8', c2: '#9a968e' },
     marble:   { name: 'Marble',       price: 90, pattern: 'marble', c1: '#f4f2ee', c2: '#d7d3cc' },
+    bakery:   { name: 'Bakery tiles',   earned: true, pattern: 'tiles',  c1: '#f3d9b1', c2: '#e2c08f' },
+    garden:   { name: 'Lawn check',     earned: true, pattern: 'check',  c1: '#b9d99a', c2: '#a8cc86' },
+    study:    { name: 'Cherry planks',  earned: true, pattern: 'planks', c1: '#7a3f2e', c2: '#6c3627' },
+    herring:  { name: 'Honey planks',   earned: true, pattern: 'planks', c1: '#c99a63', c2: '#b8874f' },
+    cork:     { name: 'Cork carpet',    earned: true, pattern: 'carpet', c1: '#d9b58a', c2: '#cfa97c' },
+    terrazzo: { name: 'Terrazzo',       earned: true, pattern: 'marble', c1: '#ece5da', c2: '#c9bba6' },
+    parquet:  { name: 'Parquet',        earned: true, pattern: 'check',  c1: '#a87443', c2: '#8f5f33' },
   };
   const DEFAULT_ROOM = { wall: 'cream', floor: 'oak' };
 
@@ -563,28 +578,28 @@ window.VP_DATA = (function () {
     },
     oldtown: {
       name: 'Old Town', icon: '🏘️', desc: 'Cobblestones, a café and a plaza. Wait for green at the crosswalks — and show off tricks on the plaza for coins.',
-      unlock: { all: [{ kind: 'obedience', n: 12 }, { kind: 'walks', n: 8 }] }, hint: 'A dog reaches Obedience 12 and you go on 8 walks',
+      unlock: { all: [{ kind: 'rank', n: 3 }, { kind: 'stars', loc: 'park', n: 2 }, { kind: 'obedience', n: 8 }] }, hint: '',
       dirt: { dry: 'grime', wet: 'grime', extra: 'icecream' }, walkers: [4, 6], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 55, find: 22, ingredient: 15, toy: 8 }, ingredients: ['pastry', 'egg', 'cheese', 'apple'],
       vendors: ['cafe', 'boutique'], plazaCap: 40,
     },
     forest: {
       name: 'Whispering Forest', icon: '🌲', desc: 'Winding trails, squirrels and three hidden glades off the beaten path.',
-      unlock: { all: [{ kind: 'locWalks', loc: 'oldtown', n: 6 }, { kind: 'finds', loc: 'oldtown', n: 4 }] }, hint: 'Go on 6 walks in Old Town and find 4 of its collectibles',
+      unlock: { all: [{ kind: 'rank', n: 5 }, { kind: 'stars', loc: 'oldtown', n: 2 }, { kind: 'finds', loc: 'oldtown', n: 4 }] }, hint: '',
       dirt: { dry: 'burrs', wet: 'mud', extra: 'sap' }, walkers: [1, 3], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 45, find: 25, ingredient: 20, toy: 10 }, ingredients: ['mushroom', 'berries', 'honey'],
       vendors: ['ranger'], needs: { energy: 1.15 },
     },
     beach: {
       name: 'Sunny Beach', icon: '🏖️', desc: 'Dig spots, waves and crabs. At low tide (real tide times) the sea pulls back and reveals tide pools.',
-      unlock: { all: [{ kind: 'glades', n: 3 }, { kind: 'locWalks', loc: 'forest', n: 6 }] }, hint: 'Find all 3 hidden glades in the Whispering Forest and walk there 6 times',
+      unlock: { all: [{ kind: 'rank', n: 7 }, { kind: 'stars', loc: 'forest', n: 2 }, { kind: 'glades', n: 3 }] }, hint: '',
       dirt: { dry: 'sand', wet: 'sand', extra: 'seaweed', water: 'salt' }, walkers: [2, 4], loop: { x: 11, z0: -5, z1: 11 },
       loot: { coins: 50, find: 25, ingredient: 12, toy: 13 }, ingredients: ['fish', 'apple'],
       vendors: ['kiosk'], needs: { thirst: 1.3 },
     },
     alpine: {
       name: 'Alpine Meadow', icon: '🏔️', desc: 'Wind, wildflowers and cows with bells. Touch all four hiking checkpoints to reach the summit.',
-      unlock: { all: [{ kind: 'treasure', n: 3 }, { kind: 'locWalks', loc: 'beach', n: 5 }] }, hint: 'Dig up 3 buried treasures on Sunny Beach',
+      unlock: { all: [{ kind: 'rank', n: 9 }, { kind: 'stars', loc: 'beach', n: 2 }, { kind: 'treasure', n: 2 }] }, hint: '',
       dirt: { dry: 'burrs', wet: 'mud', snow: 'snow' }, walkers: [1, 3], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 48, find: 25, ingredient: 17, toy: 10 }, ingredients: ['cheese', 'berries', 'honey'],
       vendors: ['hut'], needs: { energy: 1.25 },
@@ -592,35 +607,35 @@ window.VP_DATA = (function () {
     // ----- Phase 5 -----
     caves: {
       name: 'Crystal Caves', icon: '💎', desc: 'Dark tunnels and bats. Ask a dog to 💬 Speak: the echo makes hidden crystals glow.',
-      unlock: { all: [{ kind: 'acc', id: 'headlamp' }, { kind: 'locWalks', loc: 'forest', n: 10 }] }, hint: 'Own a Headlamp (Ranger hut, Whispering Forest) and walk in the forest 10 times',
+      unlock: { all: [{ kind: 'rank', n: 11 }, { kind: 'stars', loc: 'forest', n: 3 }, { kind: 'acc', id: 'headlamp' }] }, hint: '',
       dirt: { dry: 'dust', wet: 'dust', extra: 'slime' }, walkers: [0, 1], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 50, find: 25, ingredient: 8, toy: 8 }, ingredients: ['mushroom'],
       vendors: ['miner'], needs: { energy: 1.1 }, indoor: true,
     },
     snowy: {
       name: 'Snowy Village', icon: '⛄', desc: 'Always snowy. Go sledding, play snowball fetch and fuel the rocket at the observatory. Extra festive in December!',
-      unlock: { kind: 'summits', n: 3 }, hint: 'Reach the summit on the Alpine Meadow 3 times',
+      unlock: { all: [{ kind: 'rank', n: 12 }, { kind: 'stars', loc: 'alpine', n: 2 }, { kind: 'summits', n: 2 }] }, hint: '',
       dirt: { dry: 'frost', wet: 'slush', snow: 'frost' }, walkers: [2, 4], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 52, find: 25, ingredient: 13, toy: 10 }, ingredients: ['pumpkin', 'honey', 'apple'],
       vendors: ['igloo'], needs: { energy: 1.15 }, snowy: true,
     },
     carnival: {
       name: 'Moonlight Carnival', icon: '🎡', desc: 'Only open in the evening. Do the trick a stall asks for to win 🎟️ tickets, trade them for prizes, ride the Ferris wheel.',
-      unlock: { all: [{ kind: 'loc', loc: 'oldtown' }, { kind: 'walks', n: 20 }] }, hint: 'Go on 20 walks in total', hours: [18, 24],
+      unlock: { all: [{ kind: 'rank', n: 8 }, { kind: 'stars', loc: 'oldtown', n: 3 }] }, hint: '', hours: [18, 24],
       dirt: { dry: 'confetti', wet: 'mud', extra: 'cottoncandy' }, walkers: [4, 7], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 60, find: 25, ingredient: 5, toy: 10 }, ingredients: ['apple', 'honey'],
       vendors: ['prizes'], ticketCap: 40,
     },
     fairy: {
       name: 'Fairy Realm', icon: '🧚', desc: 'Talking animals, floating toys and four dog statues that guard a secret.',
-      unlock: { kind: 'portal' }, hint: 'A hidden portal somewhere in the Whispering Forest…',
+      unlock: { all: [{ kind: 'rank', n: 14 }, { kind: 'stars', loc: 'forest', n: 4 }, { kind: 'portal' }] }, hint: '',
       dirt: { dry: 'glitter', wet: 'pollen', extra: 'pollen' }, walkers: [0, 2], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 45, find: 30, ingredient: 15, toy: 10 }, ingredients: ['berries', 'honey', 'mushroom'],
       vendors: ['fairyshop'], magic: true,
     },
     moon: {
       name: 'Moon Base', icon: '🚀', desc: 'Low gravity: toys fly high and far. Dig in craters — one hides a space capsule.',
-      unlock: { kind: 'rocket', n: 6 }, hint: 'Fuel the rocket at the Snowy Village observatory with 6 moonstones from the caves',
+      unlock: { all: [{ kind: 'rank', n: 16 }, { kind: 'stars', loc: 'snowy', n: 2 }, { kind: 'rocket', n: 6 }] }, hint: '',
       dirt: { dry: 'moondust', wet: 'moondust' }, walkers: [0, 1], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 50, find: 30, ingredient: 0, toy: 12 }, ingredients: [],
       vendors: ['station'], indoor: true, lowGravity: true,
@@ -912,6 +927,140 @@ window.VP_DATA = (function () {
     fishingrod: { name: 'Fishing rod',       slot: 'back', model: 'rod', color: '#8d6e4f', unlock: 'rainwalks5' },
   };
 
+  // ===================================================================
+  // Round 8 (progression): your trainer rank and mastery of every place.
+  // Many features open up as your rank grows.
+  // ===================================================================
+  const RANK_MAX = 30;
+  const rankNeed = (r) => Math.round(60 + 30 * Math.pow(r - 1, 1.5));   // XP from rank r to r + 1
+  const RANK_TITLES = ['Puppy Pal', 'Leash Learner', 'Park Regular', 'Bath Buddy', 'Treat Chef', 'Pack Walker', 'Home Builder', 'Trail Friend',
+    'Neighborhood Favorite', 'Garden Keeper', 'Cave Explorer', 'Snow Scout', 'Seasoned Trainer', 'Fairy Friend', 'Pack Leader', 'Star Trainer',
+    'Master Walker', 'Master Groomer', 'Master Chef', 'Legendary Trainer', 'Legend II', 'Legend III', 'Legend IV', 'Legend V', 'Legend VI',
+    'Legend VII', 'Legend VIII', 'Legend IX', 'Legend X', 'Paw of Fame'];
+  // feature -> the rank it opens at
+  const RANK_UNLOCKS = {
+    tricks:   { rank: 2, name: 'Trick Mode', text: 'Teach your dogs tricks with gestures' },
+    minimap:  { rank: 2, name: 'Mini-map', text: 'A little map on walks' },
+    daily:    { rank: 3, name: 'Daily challenges', text: 'Three goals every day, with coin rewards' },
+    styles:   { rank: 3, name: 'Walls & floors', text: 'New wallpaper and floors in the shop' },
+    boutique: { rank: 3, name: 'Dog outfits', text: 'The boutique and dressing up your dogs' },
+    photo:    { rank: 3, name: 'Photo mode', text: 'Take pictures of your pack' },
+    bath:     { rank: 4, name: 'Bath time', text: 'Bathtubs and shampoo for proper baths' },
+    clothes:  { rank: 4, name: 'Your style', text: 'Clothes for you in the shop' },
+    events:   { rank: 4, name: 'Daily events', text: 'A little surprise every day' },
+    kitchen:  { rank: 5, name: 'Cooking', text: 'Stoves, a pantry and treats to cook' },
+    exams:    { rank: 5, name: 'Training exams', text: 'Your dogs can earn badges, each with a perk' },
+    offleash: { rank: 6, name: 'Off-leash walks', text: 'Let well-trained dogs run free' },
+    adopt:    { rank: 6, name: 'A bigger pack', text: 'Adopt more puppies' },
+    rooms:    { rank: 7, name: 'Extra rooms', text: 'Build onto your home' },
+    specialties: { rank: 7, name: 'Specialties', text: 'Dogs you’ve bonded with pick something they’re great at' },
+    stories:  { rank: 6, name: 'Neighbor stories', text: 'Get to know the neighbors and help them out' },
+    house:    { rank: 7, name: 'Home upgrades', text: 'Grow your home from a cozy flat to a dream estate' },
+    gifts:    { rank: 9, name: 'Gift boxes', text: 'Visit links and gifts for friends' },
+    gardens:  { rank: 10, name: 'Gardens', text: 'Turn rooms into gardens' },
+    luxury:   { rank: 12, name: 'Luxury furniture', text: 'The fanciest pieces in the shop' },
+  };
+  // XP and place-mastery points for things you do. cap = how often it counts per game day.
+  const XP = {
+    walk: { xp: 20 }, sniff: { xp: 2, m: 2, cap: 40 }, fetch: { xp: 2, m: 1, cap: 12 }, play: { xp: 3, cap: 10 }, trick: { xp: 4, m: 1, cap: 30 },
+    bath: { xp: 15, cap: 6 }, cook: { xp: 12, cap: 8 }, treat: { xp: 4, cap: 10 }, tidy: { xp: 3, cap: 6 }, recall: { xp: 4, m: 1, cap: 10 },
+    crosswalk: { xp: 6, m: 6, cap: 15 }, plaza: { xp: 8, m: 6, cap: 10 }, glade: { xp: 25, m: 20 }, beachdig: { xp: 4, m: 4, cap: 20 },
+    crab: { xp: 3, m: 3, cap: 10 }, summit: { xp: 30, m: 25 }, crystal: { xp: 6, m: 5, cap: 20 }, echo: { xp: 3, m: 2, cap: 15 },
+    sled: { xp: 6, m: 6, cap: 15 }, ferris: { xp: 5, m: 4, cap: 6 }, tickets: { xp: 1, m: 1, cap: 60 }, statue: { xp: 4, m: 3, cap: 20 },
+    floattoy: { xp: 5, m: 4, cap: 20 }, crater: { xp: 4, m: 4, cap: 20 }, cow: { xp: 3, m: 3, cap: 10 }, squirrel: { xp: 3, m: 3, cap: 10 },
+  };
+  const XP_MISC = { newFind: 25, dupFind: 3, challenge: 40, allChallenges: 60, firstVisit: 40, adopt: 50, room: 60, trickLevel: 10, event: 30 };
+  const MASTERY_STARS = [0, 30, 100, 220, 400, 650];   // points for 0..5 stars
+  // ===================================================================
+  // Training exams: five badges per dog. In the exam, the examiner asks for tricks one by one.
+  // req: count tricks at lvl or better, must = specific tricks and levels, secrets = secret tricks known.
+  // ===================================================================
+  const BADGES = [
+    { id: 'bronze',   name: 'Good Dog',     rank: 5,  req: { must: { sit: 2, come: 2, paw: 2 } },          asks: 5,  need: 4,  fee: 25,  coins: 60,  xp: 80,  perk: 'Tricks work 5% more often' },
+    { id: 'silver',   name: 'Smart Dog',    rank: 8,  req: { count: 6, lvl: 3, must: { stay: 3, down: 3 } }, asks: 7,  need: 6,  fee: 60,  coins: 150, xp: 150, perk: 'Focus lasts 20% longer in Trick Mode' },
+    { id: 'gold',     name: 'Star Pupil',   rank: 12, req: { count: 10, lvl: 4 },                           asks: 9,  need: 8,  fee: 120, coins: 300, xp: 250, perk: 'Always comes back when called, and learns tricks 20% faster' },
+    { id: 'platinum', name: 'Show Dog',     rank: 16, req: { count: 15, lvl: 4, secrets: 1 },               asks: 10, need: 10, fee: 200, coins: 500, xp: 400, perk: 'Crowds, booths and fans pay 50% more' },
+    { id: 'champion', name: 'Champion',     rank: 20, req: { count: 15, lvl: 5, secrets: 3 },               asks: 12, need: 12, fee: 300, coins: 800, xp: 600, perk: 'You earn 10% more XP from everything' },
+  ];
+  // ===================================================================
+  // Bond: hearts with each dog. Bond grows by caring for and playing with a dog, up to a limit per day.
+  // ===================================================================
+  const BOND = {
+    perDay: 40,
+    hearts: [0, 25, 75, 150, 300, 500],
+    names: ['Just met', 'Friends', 'Buddies', 'Close pals', 'Best friends', 'Soulmates'],
+    perks: ['', 'A thank-you gift: 30 coins', 'Can pick a specialty', 'Gets hungry, thirsty and tired 10% slower', 'Learns tricks 25% faster, and its specialty can reach level 3', 'Never grumpy with you'],
+    xp: [0, 40, 60, 100, 150, 250],
+  };
+  // ===================================================================
+  // Specialties: one per dog, picked at 2 hearts. Levels grow by doing the thing.
+  // ===================================================================
+  const SPECIALTIES = {
+    sniffer:   { name: 'Super Sniffer', icon: 'search',  desc: 'Finds collectibles more often when sniffing', lv: ['25% more finds', '50% more finds', '80% more finds'], grows: 'Grows with sniffing on walks' },
+    forager:   { name: 'Forager',       icon: 'sprout',  desc: 'Digs up more ingredients and toys', lv: ['30% more', '60% more', 'Twice as many'], grows: 'Grows with sniffing on walks' },
+    athlete:   { name: 'Athlete',       icon: 'bolt',    desc: 'Walks earn coins faster', lv: ['15% faster', '30% faster', '50% faster'], grows: 'Grows with walking and fetch' },
+    performer: { name: 'Performer',     icon: 'sparkle', desc: 'Tricks work more often and crowds pay more', lv: ['+3% tricks, crowds pay 25% more', '+6% tricks, crowds pay 50% more', '+10% tricks, crowds pay double'], grows: 'Grows with every trick' },
+    charmer:   { name: 'Charmer',       icon: 'heart',   desc: 'Makes dog friends faster and neighbors bring more gifts', lv: ['Friends 30% faster', 'Friends 60% faster, more gifts', 'Friends twice as fast, even more gifts'], grows: 'Grows with meeting dogs on walks' },
+  };
+  const SPEC_LEVELS = [0, 50, 150];        // specialty points for level 1, 2, 3
+  const SPEC_CHANGE = 200;                 // coins to switch to another specialty (starts over)
+
+  // ===================================================================
+  // Neighbor stories: four chapters each. A new chapter is ready the in-game day after the last one.
+  // task kinds: meet, play (n), bring (ing, n), show (find), trick (id, lvl), badge (id), at (loc), dressed, clean, meal (id), comfort (n)
+  // reward: coins, xp, wall/floor (earned styles), item (furniture into your inventory)
+  // ===================================================================
+  const STORIES = {
+    Lena: [
+      { say: 'Hi, I’m Lena! Bruno and I run the bakery on the corner. Well, I run it. Bruno supervises the crumbs.', task: { kind: 'meet' }, reward: { coins: 20 } },
+      { say: 'The vet says Bruno needs to slim down. Could you bring me 3 carrots? He thinks they’re cookies if I call them cookies.', task: { kind: 'bring', ing: 'carrot', n: 3 }, reward: { coins: 50, xp: 40 } },
+      { say: 'He’s moping without his treats. A playdate with your dog would cheer him up!', task: { kind: 'play', n: 2 }, reward: { coins: 60, xp: 50 } },
+      { say: 'Bruno copies everything. If he sees a really good Sit, maybe he’ll stop begging at the counter.', task: { kind: 'trick', id: 'sit', lvl: 3 }, reward: { coins: 120, xp: 100, floor: 'bakery' } },
+    ],
+    Jonas: [
+      { say: 'I’m Jonas. Kiki and I are building an agility course. So far she mostly runs in circles.', task: { kind: 'meet' }, reward: { coins: 20 } },
+      { say: 'Can your dog Jump? Kiki learns best by watching other dogs.', task: { kind: 'trick', id: 'jump', lvl: 2 }, reward: { coins: 50, xp: 40 } },
+      { say: 'I need ideas for the course. Old Town has the best little things. Got a postcard from there to show me?', task: { kind: 'show', id: 'postcard' }, reward: { coins: 60, xp: 50 } },
+      { say: 'The course is ready! Kiki’s rule: only dogs with a Good Dog badge may test it.', task: { kind: 'badge', id: 'bronze' }, reward: { coins: 120, xp: 100, wall: 'workshop', item: 'hurdle' } },
+    ],
+    Mia: [
+      { say: 'Oh! Hello. Fritz is a bit shy. I’m Mia. I grow vegetables… when Fritz doesn’t dig them up.', task: { kind: 'meet' }, reward: { coins: 20 } },
+      { say: 'Fritz never plays with anyone. Would your dog say hello? Gently?', task: { kind: 'play', n: 1 }, reward: { coins: 50, xp: 40 } },
+      { say: 'I’m baking a pie for the street party. Could you spare 2 handfuls of berries?', task: { kind: 'bring', ing: 'berries', n: 2 }, reward: { coins: 60, xp: 50 } },
+      { say: 'Fritz has gotten so brave! Meet us in the Whispering Forest, he wants to show you something.', task: { kind: 'at', loc: 'forest' }, reward: { coins: 120, xp: 100, floor: 'garden', item: 'sunflower' } },
+    ],
+    Paul: [
+      { say: 'Hey! I’m Paul, and this storm cloud of fur is Nala. She’d swim all day if I let her.', task: { kind: 'meet' }, reward: { coins: 20 } },
+      { say: 'It’s Nala’s birthday soon. Fish is her favorite. Could you bring 2?', task: { kind: 'bring', ing: 'fish', n: 2 }, reward: { coins: 50, xp: 40 } },
+      { say: 'Come find us on the beach! Nala wants to race your dog along the waves.', task: { kind: 'at', loc: 'beach' }, reward: { coins: 80, xp: 60 } },
+      { say: 'Those two are best buddies now. Three more playdates and I’ll call it official.', task: { kind: 'play', n: 3 }, reward: { coins: 150, xp: 100, wall: 'seaside' } },
+    ],
+    Emma: [
+      { say: 'Darling! I’m Emma, and this is Coco. Coco has more outfits than I do.', task: { kind: 'meet' }, reward: { coins: 20 } },
+      { say: 'Coco only plays with well-dressed dogs. Bring one of yours in an outfit next time!', task: { kind: 'dressed' }, reward: { coins: 50, xp: 40 } },
+      { say: 'Next week is the poodle parade. Coco insists on spotless company: all your dogs fresh from the bath.', task: { kind: 'clean' }, reward: { coins: 60, xp: 50 } },
+      { say: 'Tea party at ours! Bring Pupcakes, homemade please. Coco can tell.', task: { kind: 'meal', id: 'pupcakes' }, reward: { coins: 150, xp: 100, wall: 'boudoir' } },
+    ],
+    Felix: [
+      { say: 'Name’s Felix. Rocky and I are on our daily stroll. Very, very slowly.', task: { kind: 'meet' }, reward: { coins: 20 } },
+      { say: 'Rocky’s favorite trick is Lie down. Show him yours, he’ll be so proud.', task: { kind: 'trick', id: 'down', lvl: 2 }, reward: { coins: 50, xp: 40 } },
+      { say: 'Our chess club needs snacks. Could you bring some cheese? Two pieces should do.', task: { kind: 'bring', ing: 'cheese', n: 2 }, reward: { coins: 60, xp: 50 } },
+      { say: 'Rocky says a home is only as good as its naps. Is yours cozy? Four paws of comfort, I’d say.', task: { kind: 'comfort', n: 4 }, reward: { coins: 150, xp: 100, floor: 'study', item: 'armchair' } },
+    ],
+  };
+  // ===================================================================
+  // Home tiers: what your home is, how many rooms it can have, and what it does for your dogs
+  // ===================================================================
+  const HOUSE_TIERS = [
+    { id: 'flat',   name: 'Cozy flat',    rooms: 2,  perk: 'Where it all starts' },
+    { id: 'house',  name: 'Little house', rooms: 4,  rank: 7,  cost: 300,  req: { rooms: 2, comfort: 2, items: 12 },               perk: 'Naps at home restore 15% more energy', wall: 'sunny', floor: 'herring' },
+    { id: 'family', name: 'Family home',  rooms: 7,  rank: 10, cost: 900,  req: { rooms: 4, comfort: 3, items: 22, dogs: 2 },      perk: 'Dogs stay happy longer at home', wall: 'nursery', floor: 'cork' },
+    { id: 'villa',  name: 'Garden villa', rooms: 11, rank: 14, cost: 2000, req: { rooms: 6, gardens: 1, comfort: 4, items: 35 },   perk: 'Auto-feeders and fountains refill twice as fast', wall: 'terracotta', floor: 'terrazzo' },
+    { id: 'estate', name: 'Dream estate', rooms: 16, rank: 18, cost: 4000, req: { rooms: 9, comfort: 5, items: 50, luxury: 2 },    perk: 'A daily allowance of 100 coins', wall: 'royal', floor: 'parquet' },
+  ];
+
+  const MASTERY_PERKS = ['', 'A first star', 'Sniff spots here recover 30% faster', 'Vendors here are 10% cheaper', 'Secret finds here are twice as likely', 'Master of this place: 300 coins and 200 XP'];
+
   return {
     CONFIG, NEEDS, STATS, TRAITS, BREEDS, LEGACY_COATS, ITEMS, CATS, TOYS, WALLS, FLOORS, DEFAULT_ROOM, WEATHER, WEATHER_ODDS, DAYLIGHT, DOG_NAMES,
     TRICKS, SECRET_TRICKS, TRICK_XP, TRICK_LEVELS, TRICK_SUCCESS, TRICK_SNAP, TRICK_FOCUS, COMPAT, FRIEND_LEVEL, NEIGHBORS, GIFTS, GIFT_CHANCE, GIFT_FRIEND_BONUS, RECALL,
@@ -921,5 +1070,7 @@ window.VP_DATA = (function () {
     CHALLENGES, CHALLENGE_BONUS, RECORDS,
     ECHO, CAPSULE, HELMET_CHANCE, LOW_GRAVITY, PUZZLE, SLED_COINS,
     EVENTS, LOOK, DEFAULT_LOOK, OUTFITS,
+    RANK_MAX, rankNeed, RANK_TITLES, RANK_UNLOCKS, XP, XP_MISC, MASTERY_STARS, MASTERY_PERKS,
+    BADGES, BOND, SPECIALTIES, SPEC_LEVELS, SPEC_CHANGE, STORIES, HOUSE_TIERS,
   };
 })();
