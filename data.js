@@ -8,7 +8,7 @@ window.VP_DATA = (function () {
   const CONFIG = {
     SAVE_KEY: 'voxelpaws-save-v1',     // keep this name so old saves are found
     BACKUP_KEY: 'voxelpaws-backup',
-    SAVE_VERSION: 12,
+    SAVE_VERSION: 13,
     AUTO_REFILL_MINUTES: 20,           // luxury feeder / fountain refill this long after being emptied
     OFFLEASH_COME_LEVEL: 2,            // Come must reach this level before a dog can go off-leash
     TIME_ZONE: 'Europe/Berlin',        // all clocks, weather and daily resets use German time
@@ -437,6 +437,14 @@ window.VP_DATA = (function () {
     nursery:    { name: 'Meadow check',    earned: true, pattern: 'check',   c1: '#e3f1dc', c2: '#d2e8c8', trim: '#8bb07a' },
     terracotta: { name: 'Terracotta brick', earned: true, pattern: 'brick',  c1: '#cf7f55', c2: '#f1e2cf', trim: '#8f4b2d' },
     royal:      { name: 'Royal stripes',   earned: true, pattern: 'stripes', c1: '#3b4f8a', c2: '#34467c', trim: '#c9a85b' },
+    // from the monthly sets
+    hearts:     { name: 'Valentine dots',  earned: true, pattern: 'dots',    c1: '#fde3ea', c2: '#f27a9b', trim: '#c4506f' },
+    blossom:    { name: 'Blossom stripes', earned: true, pattern: 'stripes', c1: '#fff0f4', c2: '#fbd7e3', trim: '#d38aa3' },
+    starry:     { name: 'Starry night',    earned: true, pattern: 'dots',    c1: '#26315f', c2: '#f5e27a', trim: '#141b3a' },
+    harvest:    { name: 'Harvest check',   earned: true, pattern: 'check',   c1: '#f6c98a', c2: '#e9b26d', trim: '#a8642b' },
+    frost:      { name: 'Frost stripes',   earned: true, pattern: 'stripes', c1: '#eef7fd', c2: '#d6ebf8', trim: '#7fa9c8' },
+    sunshine:   { name: 'Sunshine dots',   earned: true, pattern: 'dots',    c1: '#fff6cf', c2: '#ffd34d', trim: '#d8a523' },
+    critterwall: { name: 'Woodland panels', earned: true, pattern: 'planksV', c1: '#a9c49a', c2: '#98b588', trim: '#5f7d52' },
   };
   const FLOORS = {
     oak:      { name: 'Oak checker',  price: 0,  pattern: 'check',  c1: '#d8b689', c2: '#cba579' },
@@ -454,6 +462,13 @@ window.VP_DATA = (function () {
     cork:     { name: 'Cork carpet',    earned: true, pattern: 'carpet', c1: '#d9b58a', c2: '#cfa97c' },
     terrazzo: { name: 'Terrazzo',       earned: true, pattern: 'marble', c1: '#ece5da', c2: '#c9bba6' },
     parquet:  { name: 'Parquet',        earned: true, pattern: 'check',  c1: '#a87443', c2: '#8f5f33' },
+    confetti: { name: 'Confetti carpet', earned: true, pattern: 'carpet', c1: '#f6eadf', c2: '#ecdccd' },
+    meadow:   { name: 'Spring meadow',  earned: true, pattern: 'check',  c1: '#c8e6a0', c2: '#b7da8a' },
+    picnic:   { name: 'Picnic check',   earned: true, pattern: 'check',  c1: '#ffffff', c2: '#ef8e8e' },
+    sand:     { name: 'Sandy tiles',    earned: true, pattern: 'tiles',  c1: '#f3e2bd', c2: '#e2cc9c' },
+    chalk:    { name: 'Chalkboard',     earned: true, pattern: 'planks', c1: '#3f5b4c', c2: '#36503f' },
+    cocoa:    { name: 'Cocoa carpet',   earned: true, pattern: 'carpet', c1: '#8d6248', c2: '#82593f' },
+    snowdrift: { name: 'Snowdrift',     earned: true, pattern: 'marble', c1: '#fbfdff', c2: '#dde9f2' },
   };
   const DEFAULT_ROOM = { wall: 'cream', floor: 'oak' };
 
@@ -954,6 +969,7 @@ window.VP_DATA = (function () {
     adopt:    { rank: 6, name: 'A bigger pack', text: 'Adopt more puppies' },
     rooms:    { rank: 7, name: 'Extra rooms', text: 'Build onto your home' },
     specialties: { rank: 7, name: 'Specialties', text: 'Dogs you’ve bonded with pick something they’re great at' },
+    critters: { rank: 4, name: 'Critter guide', text: 'Spot little animals while your dogs sniff around' },
     stories:  { rank: 6, name: 'Neighbor stories', text: 'Get to know the neighbors and help them out' },
     house:    { rank: 7, name: 'Home upgrades', text: 'Grow your home from a cozy flat to a dream estate' },
     gifts:    { rank: 9, name: 'Gift boxes', text: 'Visit links and gifts for friends' },
@@ -1059,6 +1075,77 @@ window.VP_DATA = (function () {
     { id: 'estate', name: 'Dream estate', rooms: 16, rank: 18, cost: 4000, req: { rooms: 9, comfort: 5, items: 50, luxury: 2 },    perk: 'A daily allowance of 100 coins', wall: 'royal', floor: 'parquet' },
   ];
 
+  // ===================================================================
+  // Monthly sets: four little things that only turn up in that month (sniffing anywhere), back next year.
+  // ===================================================================
+  const SEASONS = {
+    1:  { name: 'New Year',       finds: [['s_spark', 'Firework spark', '🎆'], ['s_luckypig', 'Lucky pig', '🐷'], ['s_scarf', 'Wool scarf', '🧣'], ['s_luckyclover', 'Lucky clover', '🍀']], reward: { coins: 200, xp: 150, floor: 'confetti' } },
+    2:  { name: 'Hearts',         finds: [['s_letter', 'Love letter', '💌'], ['s_choco', 'Chocolate wrapper', '🍫'], ['s_rose', 'Red rose', '🌹'], ['s_mask', 'Carnival mask', '🎭']], reward: { coins: 200, xp: 150, wall: 'hearts' } },
+    3:  { name: 'Spring wakes',   finds: [['s_tulip', 'Tulip', '🌷'], ['s_hatch', 'Hatchling shell', '🐣'], ['s_sprout', 'First sprout', '🌱'], ['s_kite', 'Lost kite', '🪁']], reward: { coins: 200, xp: 150, floor: 'meadow' } },
+    4:  { name: 'Egg hunt',       finds: [['s_egg', 'Painted egg', '🥚'], ['s_bunny', 'Chocolate bunny', '🐰'], ['s_raincharm', 'Rain charm', '☔'], ['s_basket', 'Picnic basket', '🧺']], reward: { coins: 200, xp: 150, floor: 'picnic' } },
+    5:  { name: 'Blossoms',       finds: [['s_blossom', 'Cherry blossom', '🌸'], ['s_bee', 'Bumblebee', '🐝'], ['s_berry', 'Wild strawberry', '🍓'], ['s_daisy', 'Daisy chain', '🌼']], reward: { coins: 200, xp: 150, wall: 'blossom' } },
+    6:  { name: 'Summer days',    finds: [['s_icestick', 'Ice cream stick', '🍦'], ['s_shades', 'Lost shades', '🕶️'], ['s_spiral', 'Spiral shell', '🐚'], ['s_parasol', 'Parasol tassel', '⛱️']], reward: { coins: 200, xp: 150, floor: 'sand' } },
+    7:  { name: 'Heatwave',       finds: [['s_melon', 'Melon slice', '🍉'], ['s_sunseed', 'Sunflower seed', '🌻'], ['s_chime', 'Wind chime', '🎐'], ['s_juice', 'Juice box', '🧃']], reward: { coins: 200, xp: 150, wall: 'sunshine' } },
+    8:  { name: 'Starry nights',  finds: [['s_shooting', 'Shooting star', '🌠'], ['s_scope', 'Tiny telescope', '🔭'], ['s_camp', 'Camp badge', '⛺'], ['s_cricket', 'Cricket', '🦗']], reward: { coins: 200, xp: 150, wall: 'starry' } },
+    9:  { name: 'Back to school', finds: [['s_pencil', 'Pencil stub', '✏️'], ['s_clip', 'Paper clip', '📎'], ['s_apple', 'Teacher’s apple', '🍎'], ['s_ruler', 'Ruler', '📏']], reward: { coins: 200, xp: 150, floor: 'chalk' } },
+    10: { name: 'Harvest',        finds: [['s_pumpkin', 'Mini pumpkin', '🎃'], ['s_maple', 'Maple leaf', '🍁'], ['s_chestnut', 'Chestnut', '🌰'], ['s_toadstool', 'Toadstool', '🍄']], reward: { coins: 200, xp: 150, wall: 'harvest' } },
+    11: { name: 'Cozy days',      finds: [['s_candle', 'Candle stub', '🕯️'], ['s_crunch', 'Crunchy leaf', '🍂'], ['s_cocoa', 'Cocoa mug', '☕'], ['s_yarn', 'Ball of yarn', '🧶']], reward: { coins: 200, xp: 150, floor: 'cocoa' } },
+    12: { name: 'Winter magic',   finds: [['s_present', 'Tiny present', '🎁'], ['s_treestar', 'Tree star', '🌟'], ['s_jingle', 'Jingle bell', '🔔'], ['s_ginger', 'Gingerbread', '🍪']], reward: { coins: 200, xp: 150, wall: 'frost', floor: 'snowdrift' } },
+  };
+  const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  for (const [m, S] of Object.entries(SEASONS)) for (const [id, name, icon] of S.finds) FINDS[id] = { name, icon, loc: 'season', month: +m, weight: 0 };
+  // ===================================================================
+  // Collection sets: finds from all over that belong together. Finish one for a prize.
+  // ===================================================================
+  const SETS = [
+    { id: 'feathers', name: 'Feathers',          finds: ['feather', 'owlfeather', 'eagle'], reward: { coins: 150, xp: 120 } },
+    { id: 'plush',    name: 'Plushie family',    finds: ['plushbear', 'plushbunny', 'plushdino', 'plushunicorn'], reward: { coins: 150, xp: 120 } },
+    { id: 'souvenir', name: 'Travel souvenirs',  finds: ['postcard', 'keychain', 'minitram', 'stub', 'satellite'], reward: { coins: 250, xp: 180 } },
+    { id: 'flora',    name: 'Pressed flowers',   finds: ['leaf', 'clover', 'oakleaf', 'edelweiss', 'gentian', 'moonflower'], reward: { coins: 300, xp: 220 } },
+    { id: 'sea',      name: 'Treasures of the sea', finds: ['scallop', 'starfish', 'crabclaw', 'piratecoin', 'moonshell'], reward: { coins: 250, xp: 180 } },
+    { id: 'shiny',    name: 'Shiny things',      finds: ['seaglass', 'quartz', 'amethyst', 'pearl', 'icecrystal'], reward: { coins: 300, xp: 220, item: 'crystallamp' } },
+    { id: 'winter',   name: 'Winter wonders',    finds: ['snowcharm', 'mitten', 'sleighbell', 'snowflake', 'candycane'], reward: { coins: 300, xp: 220 } },
+    { id: 'lost',     name: 'Lost and found',    finds: ['sock', 'button', 'umbrella', 'elfshoe', 'bottle'], reward: { coins: 300, xp: 220, item: 'rainbowrug' } },
+    { id: 'stones',   name: 'Rock collection',   finds: ['pebble', 'starpebble', 'fossil', 'geode', 'fairystone', 'moonstone'], reward: { coins: 400, xp: 300, item: 'goldstatue' } },
+    { id: 'space',    name: 'Space junk',        finds: ['moonrock', 'meteorite', 'satellite', 'patch', 'ufobolt'], reward: { coins: 400, xp: 300, item: 'cloudbed' } },
+  ];
+  // ===================================================================
+  // Critter guide: little animals your dogs sniff out. when = night, day, rain, snow or sun.
+  // ev = an event that also counts as spotting it.
+  // ===================================================================
+  const CRITTERS = {
+    duck:      { name: 'Mallard',       icon: '🦆', loc: 'park' },
+    hedgehog:  { name: 'Hedgehog',      icon: '🦔', loc: 'park', when: 'night' },
+    frog:      { name: 'Pond frog',     icon: '🐸', loc: 'park', when: 'rain' },
+    ladybug:   { name: 'Ladybug',       icon: '🐞', loc: 'park', when: 'sun' },
+    pigeon:    { name: 'Pigeon',        icon: '🕊️', loc: 'oldtown' },
+    cat:       { name: 'Corner cat',    icon: '🐈', loc: 'oldtown', when: 'day' },
+    mouse:     { name: 'Town mouse',    icon: '🐁', loc: 'oldtown', when: 'night' },
+    squirrel:  { name: 'Red squirrel',  icon: '🐿️', loc: 'forest', ev: 'squirrel' },
+    deer:      { name: 'Deer',          icon: '🦌', loc: 'forest', when: 'day' },
+    owl:       { name: 'Tawny owl',     icon: '🦉', loc: 'forest', when: 'night' },
+    beetle:    { name: 'Stag beetle',   icon: '🪲', loc: 'forest', when: 'rain' },
+    crab:      { name: 'Shore crab',    icon: '🦀', loc: 'beach', ev: 'crab' },
+    turtle:    { name: 'Sea turtle',    icon: '🐢', loc: 'beach', when: 'night' },
+    dolphin:   { name: 'Dolphin',       icon: '🐬', loc: 'beach', when: 'sun' },
+    cow:       { name: 'Alpine cow',    icon: '🐄', loc: 'alpine', ev: 'cow' },
+    goat:      { name: 'Mountain goat', icon: '🐐', loc: 'alpine', when: 'day' },
+    hawk:      { name: 'Golden eagle',  icon: '🦅', loc: 'alpine', when: 'sun' },
+    bat:       { name: 'Cave bat',      icon: '🦇', loc: 'caves' },
+    spider:    { name: 'Cave spider',   icon: '🕷️', loc: 'caves' },
+    cavefish:  { name: 'Blind cave fish', icon: '🐟', loc: 'caves' },
+    hare:      { name: 'Snow hare',     icon: '🐇', loc: 'snowy', when: 'snow' },
+    reindeer:  { name: 'Reindeer',      icon: '🦌', loc: 'snowy', when: 'day' },
+    penguin:   { name: 'Lost penguin',  icon: '🐧', loc: 'snowy', when: 'night' },
+    raccoon:   { name: 'Raccoon',       icon: '🦝', loc: 'carnival' },
+    moth:      { name: 'Lantern moth',  icon: '🦋', loc: 'carnival' },
+    unicorn:   { name: 'Unicorn',       icon: '🦄', loc: 'fairy', when: 'night' },
+    caterpillar: { name: 'Glow caterpillar', icon: '🐛', loc: 'fairy' },
+    alien:     { name: 'Moon visitor',  icon: '👽', loc: 'moon' },
+  };
+  const CRITTER_CHANCE = 0.08;           // chance a sniff turns up a critter instead of loot
+  const CRITTER_REWARD = { coins: 500, xp: 400, wall: 'critterwall' };   // for spotting every one
+
   const MASTERY_PERKS = ['', 'A first star', 'Sniff spots here recover 30% faster', 'Vendors here are 10% cheaper', 'Secret finds here are twice as likely', 'Master of this place: 300 coins and 200 XP'];
 
   return {
@@ -1071,6 +1158,6 @@ window.VP_DATA = (function () {
     ECHO, CAPSULE, HELMET_CHANCE, LOW_GRAVITY, PUZZLE, SLED_COINS,
     EVENTS, LOOK, DEFAULT_LOOK, OUTFITS,
     RANK_MAX, rankNeed, RANK_TITLES, RANK_UNLOCKS, XP, XP_MISC, MASTERY_STARS, MASTERY_PERKS,
-    BADGES, BOND, SPECIALTIES, SPEC_LEVELS, SPEC_CHANGE, STORIES, HOUSE_TIERS,
+    BADGES, BOND, SPECIALTIES, SPEC_LEVELS, SPEC_CHANGE, STORIES, HOUSE_TIERS, SEASONS, MONTHS, SETS, CRITTERS, CRITTER_CHANCE, CRITTER_REWARD,
   };
 })();
