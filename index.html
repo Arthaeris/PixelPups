@@ -25,6 +25,7 @@
         </div>
         <button class="chip glass hidden" id="locChip" data-act="locinfo"></button>
         <div class="chip glass hidden" id="buildPill"><i data-i="crane"></i><span id="buildTime">10:00</span></div>
+        <div id="minimap" class="glass hidden" aria-label="Map of this place"><canvas id="mmCanvas"></canvas><div id="mmLegend"></div></div>
       </div>
     </div>
 
@@ -90,6 +91,38 @@
   </div>
 
   <div id="toast"></div>
+  <div id="tips" aria-live="polite"></div>
+  <div id="spotlight" class="hidden"></div>
+  <div id="fader"></div>
+  <div id="toyPicker" class="glass hidden"></div>
+
+  <div id="photoBar" class="hidden">
+    <button class="roundBtn glass" id="photoMe" aria-label="Show or hide yourself"><i data-i="dog"></i></button>
+    <button id="shutter" aria-label="Take photo"><span></span></button>
+    <button class="roundBtn glass" id="photoExit" aria-label="Leave photo mode"><i data-i="x"></i></button>
+  </div>
+  <div id="photoFlash"></div>
+  <div id="photoPreview" class="modal center hidden">
+    <div class="sheet">
+      <img id="photoImg" alt="Your photo">
+      <div class="btnRow center">
+        <button class="soft" id="photoShare"><i data-i="share"></i> Share</button>
+        <a class="soft" id="photoSave" download="voxel-paws.jpg"><i data-i="save"></i> Save</a>
+        <button class="soft" id="photoDone">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="title" class="hidden">
+    <div class="titleTop"><h1 class="logo"><i data-i="paw"></i>Voxel Paws</h1><p id="titleSub"></p></div>
+    <div class="titleCard glass">
+      <button id="playBtn" class="primary">Play</button>
+      <div class="titleRow">
+        <button class="soft" id="titleSettings"><i data-i="gear"></i> Settings</button>
+        <button class="soft" id="titleHelp"><i data-i="question"></i> How to play</button>
+      </div>
+    </div>
+  </div>
 
   <div id="visitBar" class="panel glass hidden">
     <div><b id="visitName">Visiting</b><div class="sub" id="visitHint"></div></div>
@@ -106,13 +139,15 @@
           <button class="stat" id="clockChip" data-act="clock"><span id="clockIc"></span><b id="clockTime">12:00</b><small id="clockWx">Sunny</small></button>
           <button class="stat" id="comfortChip" data-act="comfort"><span class="paws" id="comfortPawsMini"></span><b>Comfort</b><small id="comfortWord">Cozy</small></button>
         </div>
+        <button class="eventRow hidden" id="eventRow" data-act="event"><span id="eventIc"></span><span class="evTxt"><b id="eventTitle"></b><small id="eventText"></small></span></button>
         <div class="hubGrid">
           <button class="tile" data-act="shop"><i data-i="shop"></i><b>Shop</b><small>Toys, furniture, styles</small></button>
           <button class="tile" data-act="decorate" id="tileDecorate"><i data-i="brush"></i><b>Decorate</b><small>Move furniture, walls, floors</small></button>
           <button class="tile" data-act="bag"><i data-i="bag"></i><b>Toy bag</b><small id="tileBagSub">Pick what to throw</small></button>
           <button class="tile" data-act="album"><i data-i="book"></i><b>Collectibles</b><small id="tileAlbumSub">Your sticker book</small></button>
           <button class="tile" data-act="daily"><i data-i="list"></i><b>Challenges</b><small id="tileDailySub">Today's goals</small><i class="badge hidden" id="dailyBadge">3</i></button>
-          <button class="tile" data-act="settings"><i data-i="gear"></i><b>Settings</b><small>Backups, sharing</small></button>
+          <button class="tile" data-act="photo"><i data-i="camera"></i><b>Photo</b><small>Snap a picture of your pack</small></button>
+          <button class="tile" data-act="settings"><i data-i="gear"></i><b>Settings</b><small>Sound, backups, sharing</small></button>
         </div>
       </div>
     </div>
@@ -126,7 +161,7 @@
         <p class="sub" id="bathHint"></p>
         <div id="bathShampoos" class="wardGrid"></div>
         <div id="bathCanvasWrap" class="hidden">
-          <canvas id="bathCanvas" width="280" height="280"></canvas>
+          <div id="bathStage"><canvas id="bathGL"></canvas><canvas id="bathCanvas" width="280" height="280"></canvas></div>
           <div class="track big"><div class="fill clean" id="bathFill"></div></div>
         </div>
         <button id="bathDone" class="primary hidden">Done</button>
@@ -290,6 +325,15 @@
         <button class="x" data-act="closeSettings" aria-label="Close"><i data-i="x"></i></button>
       </div>
       <div class="sheetBody">
+        <div class="section"><i data-i="note"></i>Sound</div>
+        <label class="toggle"><span>Sound effects</span><input type="checkbox" id="optSfx"><i></i></label>
+        <label class="toggle"><span>Jukebox music</span><input type="checkbox" id="optMusic"><i></i></label>
+        <p class="sub small">Music plays at home while a Jukebox is switched on.</p>
+        <div class="section"><i data-i="question"></i>Help</div>
+        <div class="btnRow">
+          <button class="soft" id="replayTut">Replay the tutorial</button>
+          <button class="soft" id="resetTips">Show tips again</button>
+        </div>
         <div class="section"><i data-i="save"></i>Back up your save</div>
         <p class="sub">Your progress lives in this browser. Export it to keep a copy or to move it to another device.</p>
         <div class="btnRow">
