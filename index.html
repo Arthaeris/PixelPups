@@ -139,6 +139,7 @@
           <button class="stat" id="clockChip" data-act="clock"><span id="clockIc"></span><b id="clockTime">12:00</b><small id="clockWx">Sunny</small></button>
           <button class="stat" id="comfortChip" data-act="comfort"><span class="paws" id="comfortPawsMini"></span><b>Comfort</b><small id="comfortWord">Cozy</small></button>
         </div>
+        <button class="rankRow" id="rankRow" data-act="ranks" aria-label="Trainer rank"></button>
         <button class="eventRow hidden" id="eventRow" data-act="event"><span id="eventIc"></span><span class="evTxt"><b id="eventTitle"></b><small id="eventText"></small></span></button>
         <div class="hubGrid">
           <button class="tile" data-act="shop"><i data-i="shop"></i><b>Shop</b><small>Toys, furniture, styles</small></button>
@@ -147,6 +148,8 @@
           <button class="tile" data-act="album"><i data-i="book"></i><b>Collectibles</b><small id="tileAlbumSub">Your sticker book</small></button>
           <button class="tile" data-act="daily"><i data-i="list"></i><b>Challenges</b><small id="tileDailySub">Today's goals</small><i class="badge hidden" id="dailyBadge">3</i></button>
           <button class="tile" data-act="me"><i data-i="person"></i><b>You</b><small>Your look and clothes</small></button>
+          <button class="tile" data-act="house"><i data-i="home"></i><b>Home</b><small id="tileHouseSub">Upgrade your home</small></button>
+          <button class="tile" data-act="people"><i data-i="wave"></i><b>Neighbors</b><small id="tilePeopleSub">Their stories</small></button>
           <button class="tile" data-act="photo"><i data-i="camera"></i><b>Photo</b><small>Snap a picture of your pack</small></button>
           <button class="tile" data-act="settings"><i data-i="gear"></i><b>Settings</b><small>Sound, backups, sharing</small></button>
         </div>
@@ -189,12 +192,25 @@
         <b id="bathStep"></b>
         <p class="sub" id="bathHint"></p>
         <div id="bathShampoos" class="wardGrid"></div>
-        <div id="bathCanvasWrap" class="hidden">
-          <div id="bathStage"><canvas id="bathGL"></canvas><canvas id="bathCanvas" width="280" height="280"></canvas></div>
-          <div class="track big"><div class="fill clean" id="bathFill"></div></div>
-        </div>
-        <button id="bathDone" class="primary hidden">Done</button>
       </div>
+    </div>
+  </div>
+
+  <div id="bathFull" class="hidden">
+    <canvas id="bathGL"></canvas>
+    <canvas id="bathCanvas"></canvas>
+    <div class="bfTop glass">
+      <div class="bfDots" id="bfDots"><i></i><i></i><i></i></div>
+      <b id="bfStep"></b>
+      <small id="bfHint"></small>
+      <div class="track"><div class="fill clean" id="bathFill"></div></div>
+    </div>
+    <button class="roundBtn glass" id="bathQuit" aria-label="Stop the bath"><i data-i="x"></i></button>
+    <button class="bfTurn glass" id="bathTurn"><i data-i="rotate"></i><small>Turn</small></button>
+    <div class="bfResult glass hidden" id="bathResult">
+      <b id="bathResTitle"></b>
+      <small id="bathResText"></small>
+      <button id="bathDone" class="primary">Done</button>
     </div>
   </div>
 
@@ -260,6 +276,59 @@
       <div class="sheetHead"><h2>Where to?</h2><button class="x" data-act="closeMap" aria-label="Close"><i data-i="x"></i></button></div>
       <div class="sheetBody">
         <div id="mapList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="dogSheet" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2 id="dsName">Dog</h2><button class="x" data-act="closeDogSheet" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <div class="section"><i data-i="heart"></i>Bond</div>
+        <div id="dsBond"></div>
+        <div class="section"><i data-i="sparkle"></i>Specialty</div>
+        <div id="dsSpec"></div>
+        <div class="section"><i data-i="star"></i>Badges</div>
+        <div id="dsBadges"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="house" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Your home</h2><button class="x" data-act="closeHouse" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <div class="row" id="hsNow"></div>
+        <div class="section"><i data-i="home"></i>Upgrades</div>
+        <div id="hsList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="people" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Neighbors</h2><button class="x" data-act="closePeople" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <p class="sub" id="ppSub"></p>
+        <div id="ppList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="ranks" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Trainer rank</h2><button class="x" data-act="closeRanks" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <div class="rankRow big" id="rkHead"></div>
+        <p class="sub">Walks, finds, tricks, baths, cooking and challenges all earn XP. New ranks open up new things to do.</p>
+        <div class="section"><i data-i="sparkle"></i>Coming up</div>
+        <div id="rkNext"></div>
+        <div id="rkPlaces"></div>
+        <div class="section"><i data-i="check"></i>Unlocked</div>
+        <div class="chips" id="rkDone"></div>
+        <div class="section"><i data-i="map"></i>Place mastery</div>
+        <p class="sub">Walking, sniffing and finding things in a place earns it stars. Two stars make sniff spots there recover faster, three get you 10% off at its vendors, four make secret finds twice as likely.</p>
+        <div id="rkStars"></div>
       </div>
     </div>
   </div>
