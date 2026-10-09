@@ -115,7 +115,7 @@
   };
   // Menus show drawn icons and models instead of emoji. Text from data.js still carries
   // emoji (handy in the 3D world), so they are taken out of any text shown in a menu.
-  const EMOJI_RE = /(?:[#*0-9]\uFE0F?\u20E3)|(?:(?![\u2605\u00A9\u00AE\u2122\u2192\u2190])[\p{Extended_Pictographic}\p{Regional_Indicator}])(?:\uFE0F|\u200D[\p{Extended_Pictographic}\u2640\u2642\u2695]\uFE0F?|[\u{1F3FB}-\u{1F3FF}])*\uFE0F?/gu;
+  const EMOJI_RE = /(?:[#*0-9]\uFE0F?\u20E3)|(?:(?![\u2605\u2665\u00A9\u00AE\u2122\u2192\u2190])[\p{Extended_Pictographic}\p{Regional_Indicator}])(?:\uFE0F|\u200D[\p{Extended_Pictographic}\u2640\u2642\u2695]\uFE0F?|[\u{1F3FB}-\u{1F3FF}])*\uFE0F?/gu;
   const MONEY = { '🪙': 'coin', '🎟️': 'ticket', '🎟': 'ticket' };
   const EMOJI_SP = new RegExp(EMOJI_RE.source + ' ?', 'gu');
   const plain = (t) => {
@@ -292,8 +292,8 @@
   // State
   // =====================================================================
   const freeStyles = () => [
-    ...Object.keys(D.WALLS).filter((k) => !D.WALLS[k].price),
-    ...Object.keys(D.FLOORS).filter((k) => !D.FLOORS[k].price),
+    ...Object.keys(D.WALLS).filter((k) => !D.WALLS[k].price && !D.WALLS[k].earned),
+    ...Object.keys(D.FLOORS).filter((k) => !D.FLOORS[k].price && !D.FLOORS[k].earned),
   ];
   function defaultState() {
     return {
@@ -344,6 +344,13 @@
       lookDone: false,                 // new players make their character first
       tutorial: 'new',                 // the guided start: 'new' until done or skipped
       event: null,                     // today's little event
+      xp: 0,                           // trainer XP: your rank comes from this
+      rankSeen: 1,                     // the highest rank already celebrated
+      mastery: {},                     // place -> mastery points (stars)
+      xpDay: null,                     // how much of each activity counted today
+      houseTier: 0,                    // 0 = cozy flat … 4 = dream estate
+      stories: {},                     // neighbor -> { ch: chapters done, n: progress, day: game day of the last one }
+      allowanceDay: '',
     };
   }
   let state = defaultState();
@@ -499,7 +506,7 @@
   const roomStyle = (cx, cz) => Object.assign({}, D.DEFAULT_ROOM, home().rooms[chunkKey(cx, cz)]);
   const isGardenChunk = (cx, cz) => !!(home().gardens || {})[chunkKey(cx, cz)];
   const isGardenTile = (i, j) => isGardenChunk(Math.floor(i / CHUNK), Math.floor(j / CHUNK));
-  const gardensUnlocked = () => state.chunks.length >= D.GARDEN_UNLOCK_SECTIONS;
+  const gardensUnlocked = () => state.chunks.length >= D.GARDEN_UNLOCK_SECTIONS && unlockedFeat('gardens');
   const ARTS = ['#f6a5c0', '#9ad0a7', '#ffd27a', '#a7b8f5'];
 
   function buildRoom() {
@@ -694,6 +701,139 @@
   const inPond = (x, z, m = 0) => S.ponds.some((p) => x > p.x0 - m && x < p.x1 + m && z > p.z0 - m && z < p.z1 + m);
   const onPath = (x, z) => S.onPath(x, z);
   const locUnlocked = (id) => id === 'park' || (state.unlocked || []).includes(id);
+  // =====================================================================
+  // Trainer rank and place mastery. Features open up as your rank grows.
+  // =====================================================================
+  function rankInfo(xp = state.xp || 0) {
+    let r = 1, left = xp;
+    while (r < D.RANK_MAX && left >= D.rankNeed(r)) { left -= D.rankNeed(r); r++; }
+    return { rank: r, into: left, need: r >= D.RANK_MAX ? 0 : D.rankNeed(r) };
+  }
+  function xpAtRank(r) { let t = 0; for (let k = 1; k < r; k++) t += D.rankNeed(k); return t; }
+  function rank() { return (/[?&]maxrank\b/.test(location.search) ? D.RANK_MAX : 0) || rankInfo().rank; }
+  function rankTitle(r) { return D.RANK_TITLES[clamp(r, 1, D.RANK_MAX) - 1]; }
+  function featRank(f) { return D.RANK_UNLOCKS[f] ? D.RANK_UNLOCKS[f].rank : 0; }
+  function unlockedFeat(f) { return !!visit || rank() >= featRank(f); }
+  function needRank(f) {
+    if (unlockedFeat(f)) return true;
+    const U = D.RANK_UNLOCKS[f];
+    toast(`${U.name} unlocks at Trainer rank ${U.rank}`);
+    sfx('fail');
+    return false;
+  }
+  function gainXP(n) {
+    if (visit || !n) return;
+    if (dogs.some((d) => d.hasBadge('champion'))) n *= 1.1;
+    state.xp = (state.xp || 0) + Math.round(n);
+    const r = rank();
+    if (r > (state.rankSeen || 1)) {
+      for (let k = (state.rankSeen || 1) + 1; k <= r; k++) celebrateRank(k);
+      state.rankSeen = r;
+      save();
+    }
+    renderRankRow();
+  }
+  // things you do: XP, and points toward mastering the place you are in (capped per game day)
+  function earn(ev, amt = 1) {
+    const X = D.XP[ev];
+    if (!X || visit) return;
+    if (X.cap) {
+      const day = clockNow.gameDay;
+      if (!state.xpDay || state.xpDay.day !== day) state.xpDay = { day, n: {} };
+      const used = state.xpDay.n[ev] || 0;
+      if (used >= X.cap) return;
+      amt = Math.min(amt, X.cap - used);
+      state.xpDay.n[ev] = used + amt;
+    }
+    gainXP(X.xp * amt);
+    if (X.m && place === 'park') addMastery(loc, X.m * amt);
+  }
+  function starsOf(l) {
+    const p = (state.mastery || {})[l] || 0;
+    let s = 0;
+    D.MASTERY_STARS.forEach((t, i) => { if (p >= t) s = i; });
+    return s;
+  }
+  function starProgress(l) {
+    const p = (state.mastery || {})[l] || 0, s = starsOf(l);
+    if (s >= 5) return { s, have: p, next: null };
+    return { s, have: p - D.MASTERY_STARS[s], next: D.MASTERY_STARS[s + 1] - D.MASTERY_STARS[s] };
+  }
+  function addMastery(l, n) {
+    if (!D.LOCATIONS[l] || visit || !n) return;
+    state.mastery = state.mastery || {};
+    const before = starsOf(l);
+    state.mastery[l] = (state.mastery[l] || 0) + n;
+    const after = starsOf(l);
+    for (let k = before + 1; k <= after; k++) starUp(l, k);
+  }
+  const starsHTML = (n) => `<span class="stars">${'★'.repeat(n)}<span class="off">${'★'.repeat(5 - n)}</span></span>`;
+  function starUp(l, n) {
+    sfx('unlock');
+    news({ title: `${'★'.repeat(n)} ${D.LOCATIONS[l].name}`, text: n === 1 ? 'You’re getting to know this place. More stars bring perks here.' : D.MASTERY_PERKS[n], th: TH('loc', l) });
+    if (n === 5) { state.coins += 300; setTimeout(() => gainXP(200), 50); }
+    setTimeout(checkLocUnlocks, 100);
+    save();
+  }
+  function celebrateRank(r) {
+    const feats = Object.values(D.RANK_UNLOCKS).filter((U) => U.rank === r);
+    const places = Object.keys(D.LOCATIONS).filter((id) => reqsOf(id).some((U) => U.kind === 'rank' && U.n === r) && !locUnlocked(id));
+    sfx('unlock');
+    try { confetti(player.root.position.clone().add(new V3(0, 1.8, 0)), 10); } catch (_) { /* fine */ }
+    const what = feats.map((U) => U.name).concat(places.length ? ['a step toward a new place'] : []);
+    news({ title: `Rank ${r}: ${rankTitle(r)}`, text: what.length ? `New: ${what.join(', ')}.` : 'Keep it up!', th: rankBadge(r) });
+    setTimeout(() => { refreshGates(); checkLocUnlocks(); ensureDaily(); ensureEvent(); }, 60);
+  }
+  const rankBadge = (r) => `<span class="rankBadge">${r}</span>`;
+
+  // show what's locked: hub tiles, dog card buttons, the dock, the decorate tabs
+  const TILE_FEAT = { daily: 'daily', photo: 'photo', people: 'stories', house: 'house' };
+  const CARD_FEAT = { tricks: 'tricks', treat: 'kitchen', style: 'boutique', bath: 'bath' };
+  function refreshGates() {
+    document.querySelectorAll('#hub .tile[data-act]').forEach((t) => {
+      const f = TILE_FEAT[t.dataset.act];
+      const locked = !!f && !unlockedFeat(f);
+      t.classList.toggle('rlocked', locked);
+      let tag = t.querySelector('.rtag');
+      if (locked && !tag) { tag = document.createElement('i'); tag.className = 'rtag'; t.appendChild(tag); }
+      if (tag) { tag.textContent = locked ? `Rank ${featRank(f)}` : ''; tag.classList.toggle('hidden', !locked); }
+    });
+    document.querySelectorAll('[data-dact]').forEach((b) => { const f = CARD_FEAT[b.dataset.dact]; b.classList.toggle('rlocked', !!f && !unlockedFeat(f)); });
+    // dock buttons only show up once they do something
+    document.querySelectorAll('.dock [data-act=tricks]').forEach((b) => b.classList.toggle('hidden', !unlockedFeat('tricks')));
+    const lb = $('leashBtn');
+    if (lb) lb.classList.toggle('hidden', !unlockedFeat('offleash'));
+    document.querySelectorAll('.decoTab[data-tab=style]').forEach((b) => b.classList.toggle('rlocked', !unlockedFeat('styles')));
+    renderRankRow();
+  }
+  // the rank bar in the menu
+  function renderRankRow() {
+    const el = $('rankRow');
+    if (!el) return;
+    const I = rankInfo(), r = rank();
+    const pct = I.need ? Math.round((I.into / I.need) * 100) : 100;
+    const key = `${r}|${pct}`;
+    if (el.dataset.k === key) return;
+    el.dataset.k = key;
+    el.innerHTML = `${rankBadge(r)}<span class="rkTxt"><b>${esc(rankTitle(r))}</b><small>${I.need ? `${I.into} / ${I.need} XP to rank ${r + 1}` : 'Highest rank!'}</small><span class="track"><span class="fill" style="width:${pct}%"></span></span></span>`;
+  }
+  function openRanks() {
+    const r = rank(), I = rankInfo();
+    const up = Object.entries(D.RANK_UNLOCKS).sort((a, b) => a[1].rank - b[1].rank);
+    const placeRows = Object.keys(D.LOCATIONS).map((id) => [id, (reqsOf(id).find((U) => U.kind === 'rank') || {}).n]).filter(([id, n]) => n && locUnlocked(id) === false && locNext(id));
+    $('rkHead').innerHTML = `${rankBadge(r)}<span class="rkTxt"><b>${esc(rankTitle(r))}</b><small>${I.need ? `${I.into} / ${I.need} XP to rank ${r + 1} · ${(state.xp || 0)} XP in total` : 'Highest rank!'}</small><span class="track"><span class="fill" style="width:${I.need ? Math.round((I.into / I.need) * 100) : 100}%"></span></span></span>`;
+    const next = up.filter(([, U]) => U.rank > r);
+    const done = up.filter(([, U]) => U.rank <= r);
+    $('rkNext').innerHTML = next.length ? next.map(([, U]) => `<div class="row"><div class="ic">${rankBadge(U.rank)}</div><div class="txt"><b>${esc(U.name)}</b><small>${esc(U.text)}</small></div></div>`).join('') : '<p class="sub">Everything is unlocked. Ranks keep counting for bragging rights.</p>';
+    $('rkPlaces').innerHTML = placeRows.length ? `<p class="sub">New places also need a certain rank. The map shows what the next ones need.</p>` : '';
+    $('rkDone').innerHTML = done.map(([, U]) => `<span class="chip">${esc(U.name)}</span>`).join('');
+    $('rkStars').innerHTML = Object.keys(D.LOCATIONS).filter(locUnlocked).map((id) => {
+      const P = starProgress(id);
+      return `<div class="row"><div class="ic">${TH('loc', id)}</div><div class="txt"><b>${esc(D.LOCATIONS[id].name)} ${starsHTML(P.s)}</b>${P.next ? `<div class="track"><div class="fill" style="width:${Math.round((P.have / P.next) * 100)}%"></div></div><small>${P.have} / ${P.next} to the next star</small>` : '<small>Mastered</small>'}</div></div>`;
+    }).join('');
+    $('ranks').classList.remove('hidden');
+  }
+  $('ranks').addEventListener('click', (e) => { if (e.target.id === 'ranks' || e.target.closest('[data-act="closeRanks"]')) $('ranks').classList.add('hidden'); });
   // what kind of dirt a walk here gives right now
   function walkDirt() {
     const W = localWeather(), Dd = LOC().dirt;
@@ -997,7 +1137,8 @@
     if (place === 'park') {
       walkDist += moved;
       walkTotal += moved;
-      while (walkDist >= 10) { walkDist -= 10; addCoins(1, pos); }
+      const step = 10 / specMult(null, 'athlete');
+      while (walkDist >= step) { walkDist -= step; addCoins(1, pos); dogs.forEach((d) => addSpec(d, 'athlete', 0.2)); }
       if (pos.z > 18.5 && Math.abs(pos.x) < 1.3) { goHome(); return; }
     }
 
@@ -1029,6 +1170,13 @@
       this.traits = Array.isArray(data.traits) && data.traits.every((t) => D.TRAITS[t]) && data.traits.length === 2 ? data.traits.slice() : randomTraits();
       this.revealed = !!data.revealed;
       this.bond = data.bond || 0;
+      this.bondDay = data.bondDay || '';
+      this.bondToday = +data.bondToday || 0;
+      this.bondSeen = data.bondSeen == null ? heartsOfBond(this.bond) : +data.bondSeen;
+      this.badges = Array.isArray(data.badges) ? D.BADGES.map((B) => B.id).filter((id) => data.badges.includes(id)) : [];
+      this.examDay = data.examDay == null ? -1 : +data.examDay;
+      this.spec = D.SPECIALTIES[data.spec] ? data.spec : null;
+      this.specPts = +data.specPts || 0;
       this.born = data.born || Date.now();
       this.grown = !!data.grown;
       this.hunger = data.hunger ?? 85;
@@ -1119,6 +1267,7 @@
         dirt: Object.fromEntries(Object.entries(this.dirt).filter(([, v]) => v >= 0.05).map(([k, v]) => [k, r(v)])),
         favToy: this.favToy, favLast: this.favLast, othersSince: this.othersSince, toyPlays: this.toyPlays, recentPlays: this.recentPlays,
         lastToys: this.lastToys, rest: this.rest, favSpot: this.favSpot, tricks: this.tricks, acc: this.acc,
+        bondDay: this.bondDay, bondToday: this.bondToday, bondSeen: this.bondSeen, badges: this.badges, examDay: this.examDay, spec: this.spec, specPts: Math.round(this.specPts),
       };
     }
 
@@ -1137,9 +1286,24 @@
       });
       return m;
     }
+    hearts() { return heartsOfBond(this.bond); }
+    hasBadge(id) { return this.badges.includes(id); }
+    specLvl() { if (!this.spec) return 0; let l = 1; D.SPEC_LEVELS.forEach((t, i) => { if (this.specPts >= t) l = i + 1; }); return Math.min(l, this.hearts() >= 4 ? 3 : 2); }
+    specAs(id) { return this.spec === id && unlockedFeat('specialties') ? this.specLvl() : 0; }
+    needMul() { return this.hearts() >= 3 ? 0.9 : 1; }
+    learnMul() { return (this.hearts() >= 4 ? 1.25 : 1) * (this.hasBadge('gold') ? 1.2 : 1); }
     flag(f) { return this.traits.some((t) => D.TRAITS[t] && D.TRAITS[t].flags.includes(f)); }
     addBond(n) {
+      // bond grows a little every day: caring for a dog for many days is what builds hearts
+      if (n > 0) {
+        const key = clockNow.dateKey;
+        if (this.bondDay !== key) { this.bondDay = key; this.bondToday = 0; }
+        n = Math.min(n, D.BOND.perDay - this.bondToday);
+        if (n <= 0) return;
+        this.bondToday += n;
+      }
       this.bond += n;
+      checkHearts(this);
       if (!this.revealed && this.bond >= CONFIG.BOND_REVEAL) {
         this.revealed = true;
         const T = D.TRAITS[this.traits[1]];
@@ -1307,9 +1471,10 @@
       const pup = this.isPuppy();
       if (place === 'park') {
         const R = D.NEEDS.park, X = LOC().needs || {};
-        this.hunger -= R.hunger * this.mod('hunger') * (X.hunger || 1) * dt;
-        this.thirst -= R.thirst * (X.thirst || 1) * dt;
-        this.energy -= R.energy * this.mod('energy') * this.mod('walkEnergy') * (pup ? 1.3 : 1) * (X.energy || 1) * dt;
+        const nm = this.needMul();
+        this.hunger -= R.hunger * this.mod('hunger') * (X.hunger || 1) * nm * dt;
+        this.thirst -= R.thirst * (X.thirst || 1) * nm * dt;
+        this.energy -= R.energy * this.mod('energy') * this.mod('walkEnergy') * (pup ? 1.3 : 1) * (X.energy || 1) * nm * dt;
         const coat = this.acc.body && D.ACCESSORIES[this.acc.body].rainproof && W.precip ? 0.5 : 1;
         const rate = R.clean * this.mod('dirt') * (W.muddy ? D.NEEDS.rainDirt : 1) * (W.precip === 'snow' ? 1.3 : 1) * coat * dt;
         this.clean -= rate;
@@ -1321,12 +1486,13 @@
         this.happy += joy * (joy > 0 ? evMult('joy') : 1) * dt;
       } else {
         const R = D.NEEDS.home;
-        this.hunger -= R.hunger * this.mod('hunger') * dt;
-        this.thirst -= R.thirst * dt;
+        const nm = this.needMul();
+        this.hunger -= R.hunger * this.mod('hunger') * nm * dt;
+        this.thirst -= R.thirst * nm * dt;
         const cozy = (this.claim && D.ITEMS[this.claim.type] && D.ITEMS[this.claim.type].regen || 1) * (nearLitFire(this.root.position) ? 1.5 : 1);
-        if (this.state === 'sleep') this.energy += R.sleepRegen * cozy * dt;
+        if (this.state === 'sleep') this.energy += R.sleepRegen * cozy * (houseTier() >= 1 ? 1.15 : 1) * dt;
         else if (this.state === 'lounge' || this.state === 'hide') this.energy += R.loungeRegen * cozy * dt;
-        else this.energy -= R.energy * this.mod('energy') * (pup ? 1.4 : 1) * dt;
+        else this.energy -= R.energy * this.mod('energy') * (pup ? 1.4 : 1) * nm * dt;
         this.clean -= R.clean * dt;
         const pos = this.root.position;
         if (W.precip && isGardenTile(Math.floor(pos.x), Math.floor(pos.z))) {
@@ -1342,6 +1508,7 @@
         if (this.state === 'lounge') decay -= 0.05;
         if (W.precip === 'rain' && this.flag('rainJoy')) decay -= 0.03;
         decay -= D.COMFORT_BONUS * (comfort.paws - 1);
+        if (houseTier() >= 2) decay -= 0.02;
         if (musicOn()) decay -= 0.03;
         if (this.state === 'watch') decay -= 0.04 * (this.flag('lounges') ? 2 : 1);
         this.happy -= decay * dt;
@@ -1360,6 +1527,7 @@
 
     // overall mood from the needs: great dogs find more on walks, grumpy ones ignore tricks
     mood() {
+      if (this.hearts() >= 5 && (this.happy < 30 || this.hunger < CRITICAL || this.thirst < CRITICAL)) return 'good';
       if (this.happy < 30 || this.hunger < CRITICAL || this.thirst < CRITICAL) return 'grumpy';
       if (this.happy >= 80 && this.hunger >= 40 && this.thirst >= 40 && this.energy >= 30 && this.clean >= 40) return 'great';
       return 'good';
@@ -1862,7 +2030,7 @@
     finishSniff() {
       const spot = this.spot;
       if (spot && spot.cooldown <= 0) {
-        spot.cooldown = 45;
+        spot.cooldown = 45 / (starsOf(loc) >= 2 ? 1.3 : 1);
         this.happy = Math.min(100, this.happy + 10);
         walkLoot(this, spot);
         if (spot.kind === 'pine') addDirt(this, 'sap', 6);
@@ -1945,6 +2113,7 @@
         this.happy = Math.min(this.missing() ? CONFIG.MISS_CAP : 100, this.happy + joy);
         this.energy = Math.max(0, this.energy - 4);
         this.addBond(1);
+        addSpec(this, 'athlete', 2);
         this.faceTo(pp);
         spawnEmoji(type === this.favToy && !snow ? '💞' : '❤️', this.headWorld(0.4), { size: 0.4 });
         const bonus = (place === 'park' ? 1 : 0) + (def.coins || 0);
@@ -2178,6 +2347,7 @@
   // =====================================================================
   const friendship = (a, b) => state.friends[pairKey(a, b)] || 0;
   function addFriendship(a, b, n) {
+    if (n > 0) n *= Math.max(a.npc ? 1 : specMult(a, 'charmer'), b.npc ? 1 : specMult(b, 'charmer'));
     const k = pairKey(a.id, b.id);
     const before = state.friends[k] || 0;
     const v = clamp(before + n, 0, 100);
@@ -2239,6 +2409,8 @@
     });
     encCooldown.set(pairKey(a.id, b.id), animT + 25);
     const mine = [a, b].filter((d) => !d.npc);
+    if (kind !== 'scuffle') mine.forEach((d) => addSpec(d, 'charmer', 4));
+    if (kind === 'play' && mine.length === 1) { const npc = [a, b].find((d) => d.npc); if (npc) setTimeout(() => storyPlay(npc), 1200); }
     if (kind === 'play') {
       addFriendship(a, b, 8);
       mine.forEach((d) => { d.happy = Math.min(100, d.happy + 10); });
@@ -2337,7 +2509,13 @@
     // fewer neighbors are out in bad weather or at night
     const fewer = (W.lightning ? 3 : W.precip ? 1 : 0) + (nightLevel > 0.5 ? 1 : 0);
     const count = Math.max(W.lightning ? 0 : 1, lo + Math.floor(Math.random() * (hi - lo + 1)) - fewer);
-    for (const info of shuffle(D.NEIGHBORS).slice(0, count)) {
+    // neighbors with a story to tell are more likely to be out, and always where they asked to meet you
+    const order = shuffle(D.NEIGHBORS);
+    const want = order.filter((N) => storyReady(N.owner) && (() => { const C = storyOf(N.owner) && storyChapter(N.owner); return !C || C.task.kind !== 'at' || C.task.loc === loc; })());
+    const must = want.find((N) => { const C = storyOf(N.owner) && storyChapter(N.owner); return C && C.task.kind === 'at' && C.task.loc === loc; });
+    const lead = must || (want.length && Math.random() < 0.75 ? pick(want) : null);
+    if (lead) { order.splice(order.indexOf(lead), 1); order.unshift(lead); }
+    for (const info of order.slice(0, Math.max(count, lead ? 1 : 0))) {
       const parts = ART.buildPlayer({ shirt: info.shirt, hair: info.hair });
       parkRoot.add(parts.root);
       const w = { info, parts, t: rand(0, loopLength()), dir: pick([1, -1]), speed: rand(0.9, 1.3), pause: 0, met: false, phase: 0 };
@@ -2373,14 +2551,14 @@
       w.parts.legR.rotation.x = -s;
       w.parts.armL.rotation.x = -s * 0.8;
       w.parts.armR.rotation.x = -0.45;
-      if (!w.met && pos.distanceTo(pp) < 2.2) { w.met = true; neighborGift(w); }
+      if (!w.met && pos.distanceTo(pp) < 2.2) { w.met = true; if (!storyMeet(w)) neighborGift(w); }
       w.dog.update(dt);
       w.dog.updateLeash();
     }
   }
   function neighborGift(w) {
     const friends = dogs.some((d) => friendship(d.id, w.dog.id) >= D.FRIEND_LEVEL);
-    if (Math.random() > D.GIFT_CHANCE + (friends ? D.GIFT_FRIEND_BONUS : 0)) return;
+    if (Math.random() > D.GIFT_CHANCE * [1, 1, 1.3, 1.6][packSpec('charmer')] + (friends ? D.GIFT_FRIEND_BONUS : 0)) return;
     w.pause = Math.max(w.pause, 2.5);
     const at = w.parts.root.position.clone();
     let r = Math.random() * D.GIFTS.reduce((s, g) => s + g.weight, 0);
@@ -2444,7 +2622,7 @@
       return;
     }
     if (g.kind === 'style') {
-      const options = [...Object.keys(D.WALLS), ...Object.keys(D.FLOORS)].filter((id) => !state.styles.includes(id));
+      const options = [...Object.keys(D.WALLS), ...Object.keys(D.FLOORS)].filter((id) => !state.styles.includes(id) && !(D.WALLS[id] || D.FLOORS[id]).earned);
       if (options.length) {
         const id = pick(options), def = D.WALLS[id] || D.FLOORS[id];
         state.styles.push(id);
@@ -2467,6 +2645,7 @@
     refreshLeashBtn();
   }
   function unleashDogs() {
+    if (!needRank('offleash')) return;
     const ok = dogs.filter((d) => d.trickLvl('come') >= CONFIG.OFFLEASH_COME_LEVEL);
     if (!ok.length) {
       toast(`Teach 📣 Come up to level ${CONFIG.OFFLEASH_COME_LEVEL} in 🎓 Trick Mode first`);
@@ -2487,7 +2666,7 @@
     const stay = [];
     for (const d of out) {
       const lvl = d.trickLvl('come');
-      if (Math.random() < D.RECALL[lvl]) {
+      if (d.hasBadge('gold') || Math.random() < D.RECALL[lvl]) {
         d.offLeash = false;
         d.returning = true;
         d.tricks.come = (d.tricks.come || 0) + 0.5;
@@ -2514,6 +2693,7 @@
   function enterTrickMode(d) {
     d = d || selected || dogs[0];
     if (!d || mode !== 'normal') return;
+    if (!needRank('tricks')) return;
     setTimeout(() => tip('trickmode', { title: 'Trick Mode', text: 'Draw gestures anywhere: swipe, tap, hold or circle. The book (top right) lists every trick and its gesture. Each try uses a little focus.', icon: 'cap' }), 600);
     if (d.state === 'hide') { toast(`${d.name} is too scared of the storm to focus ⛈️`); return; }
     if (d.energy < 8) { toast(`${d.name} is too tired for tricks 😴`); return; }
@@ -2553,6 +2733,8 @@
   }
   function exitTrickMode() {
     if (!tm) return;
+    if (tm.exam && !tm.exam.done) { examEnd(false, true); toast('Exam called off. You can try again tomorrow.'); }
+    $('trickMode').classList.remove('exam');
     const d = tm.dog;
     tm = null;
     mode = 'normal';
@@ -2564,6 +2746,7 @@
   }
   function snapOut() {
     const d = tm.dog;
+    if (tm.exam && !tm.exam.done) examEnd(false, true);
     exitTrickMode();
     toast(`${d.name} lost focus and wandered off 🦋`);
     spawnEmoji('💭', d.headWorld(0.4), { size: 0.45 });
@@ -2576,6 +2759,7 @@
     if (d.flag('zooms')) drain *= 1.6;
     if (d.flag('quick')) drain *= 0.6;
     if (d.isPuppy()) drain *= 1.3;
+    if (d.hasBadge('silver')) drain *= 0.8;
     tm.focus -= drain * dt;
     $('focusFill').style.width = clamp(tm.focus, 0, 100) + '%';
     $('focusFill').className = tm.focus < 25 ? 'low' : '';
@@ -2610,12 +2794,13 @@
       id = k;
       break;
     }
-    if (!id) { confuse(d, TF.unknown); toast(`🤔 ${d.name} doesn't know what you mean`); return; }
+    if (!id) { confuse(d, TF.unknown); toast(`🤔 ${d.name} doesn't know what you mean`); examTry(null, null); return; }
     const T = ALL_TRICKS[id];
     const missing = (T.needs || []).filter((n) => d.trickLvl(n) < 1);
     if (missing.length) {
       confuse(d, TF.unknown);
       toast(`${d.name} needs to learn ${missing.map((n) => `${ALL_TRICKS[n].icon} ${ALL_TRICKS[n].name}`).join(' and ')} first`);
+      examTry(null, null);
       return;
     }
     const lvl = d.trickLvl(id);
@@ -2624,6 +2809,7 @@
       confuse(d, TF.fail);
       toast(`${d.name} is grumpy and ignores you. Some food, water or play might help.`);
       tip('grumpy', { title: 'A grumpy dog', text: 'Hungry, thirsty or bored dogs get grumpy and sometimes ignore tricks. Look after their needs and they’ll cheer up.', icon: 'heart' });
+      examTry(null, null);
       return;
     }
     let p = D.TRICK_SUCCESS[lvl] * (0.7 + 0.3 * clamp(tm.focus, 0, 100) / 100);
@@ -2633,11 +2819,14 @@
     if (d.energy < 25) p *= 0.8;
     if (d.flag('quick')) p += 0.08;
     if (d.flag('stormFear')) p += place === 'home' ? 0.05 : -0.08;
+    if (d.hasBadge('bronze')) p += 0.05;
+    p += [0, 0.03, 0.06, 0.1][d.specAs('performer')];
     p = clamp(p, 0.05, 0.99);
-    if (Math.random() < p) { performTrick(d, id); return; }
+    if (Math.random() < p) { performTrick(d, id); examTry(id, id); return; }
     if (lvl === 0) d.tricks[id] = (d.tricks[id] || 0) + 0.35;
     confuse(d, TF.fail);
     toast(lvl === 0 ? `${d.name} is trying to figure out ${T.secret ? 'what you want' : T.name}… keep practicing!` : `${d.name} almost got it — try again!`);
+    if (tm.exam) { examTry(null, id); return; }
     if (Math.random() < D.TRICK_SNAP[lvl] * (d.isPuppy() ? 1.6 : 1)) setTimeout(() => { if (tm && tm.dog === d) snapOut(); }, 700);
   }
   function confuse(d, cost) {
@@ -2649,8 +2838,9 @@
   function performTrick(d, id) {
     const T = ALL_TRICKS[id];
     const before = d.trickLvl(id);
-    d.tricks[id] = (d.tricks[id] || 0) + (d.flag('quick') ? 1.5 : 1);
+    d.tricks[id] = (d.tricks[id] || 0) + (d.flag('quick') ? 1.5 : 1) * d.learnMul();
     const after = d.trickLvl(id);
+    addSpec(d, 'performer', 2);
     d.trickId = id;
     d.trickFace = d.root.rotation.y;
     d.setState('trick', T.dur);
@@ -2666,12 +2856,13 @@
     progress('trick:' + id);
     sfx('trick');
     const show = place === 'park' && eventOn('show');
-    if (show && state.event.n < show.max) { state.event.n++; addCoins(show.coins, d.root.position); if (state.event.n >= show.max) state.event.done = true; }
+    if (show && state.event.n < show.max) { state.event.n++; addCoins(show.coins, d.root.position); if (state.event.n >= show.max) eventDone(); }
     if (T.secret && !state.secrets.includes(id)) {
       state.secrets.push(id);
       news({ title: 'Secret trick discovered!', text: `${d.name} can do ${T.name}.`, th: thumbOf.pic(T.icon) });
       confetti(head);
     } else if (after > before) {
+      gainXP(D.XP_MISC.trickLevel);
       if (after === 1) news({ title: 'New trick learned', text: `${d.name} learned ${T.name}!`, th: thumbOf.pic(T.icon) });
       else toast(`${T.name} is now ${D.TRICK_LEVELS[after]} (Lv ${after})`);
       if (after === 5) confetti(head);
@@ -2679,11 +2870,12 @@
       if (d.ui) refreshCardStatic(d);
     } else spawnEmoji('👏', head, { size: 0.4 });
     if (place === 'park' && loc === 'caves' && id === 'speak') setTimeout(() => doEcho(d), 600);
+    if (place === 'park') storyTrick(d, id);
     if (place === 'park' && loc === 'carnival') carnivalTrick(d, id, after);
     else if (place === 'park' && loc === 'oldtown' && inPlaza(player.root.position)) plazaPerformance(d, after);
     else if (place === 'park' && after >= 3) {
       const fan = walkers.find((w) => w.parts.root.position.distanceTo(d.root.position) < 5);
-      if (fan && Math.random() < 0.3) setTimeout(() => { addCoins(1 + Math.floor(Math.random() * 3), fan.parts.root.position); toast(`👏 ${fan.info.owner} loved that trick!`); }, 900);
+      if (fan && Math.random() < 0.3) setTimeout(() => { addCoins(Math.round((1 + Math.floor(Math.random() * 3)) * showMult(d)), fan.parts.root.position); toast(`👏 ${fan.info.owner} loved that trick!`); }, 900);
     }
     if (id === 'come' && after >= CONFIG.OFFLEASH_COME_LEVEL && before < CONFIG.OFFLEASH_COME_LEVEL) {
       setTimeout(() => toast(`🔓 ${d.name} can go off-leash on walks now!`), 1600);
@@ -2712,6 +2904,463 @@
       L.appendChild(r);
     }
   }
+
+  // =====================================================================
+  // Bond hearts, specialties and training exams (one dog at a time)
+  // =====================================================================
+  function heartsOfBond(b) {
+    let h = 0;
+    D.BOND.hearts.forEach((t, i) => { if (b >= t) h = i; });
+    return h;
+  }
+  const heartsHTML = (n) => `<span class="hearts">${'♥'.repeat(n)}<span class="off">${'♥'.repeat(5 - n)}</span></span>`;
+  function checkHearts(d) {
+    if (d.npc || !dogs.includes(d)) return;
+    const h = d.hearts();
+    if (h <= d.bondSeen) return;
+    for (let k = d.bondSeen + 1; k <= h; k++) {
+      sfx('unlock');
+      news({ title: `${d.name}: ${D.BOND.names[k]}`, text: k === 2 && !unlockedFeat('specialties') ? `${D.BOND.perks[k]} once you reach Trainer rank ${featRank('specialties')}.` : D.BOND.perks[k] + '.', th: `<span class="heartBadge">${k}</span>` });
+      if (k === 1) state.coins += 30;
+      gainXP(D.BOND.xp[k]);
+      try { spawnEmoji('💕', d.headWorld(0.5), { size: 0.5, life: 1.6 }); } catch (_) { /* fine */ }
+    }
+    d.bondSeen = h;
+    if (h >= 2 && unlockedFeat('specialties') && !d.spec) setTimeout(() => tip('specPick', { title: 'Pick a specialty', text: `${d.name} trusts you enough to get really good at something. Open their bubble and tap the hearts.`, icon: 'heart' }), 2500);
+    if (d.ui) refreshCardStatic(d);
+    save();
+  }
+  // the strongest specialty among the dogs on this walk / at home
+  const packSpec = (id) => Math.max(0, ...dogs.map((d) => d.specAs(id)));
+  const SPEC_MULT = {
+    sniffer: [1, 1.25, 1.5, 1.8], forager: [1, 1.3, 1.6, 2], athlete: [1, 1.15, 1.3, 1.5], performer: [1, 1.25, 1.5, 2], charmer: [1, 1.3, 1.6, 2],
+  };
+  const specMult = (d, id) => SPEC_MULT[id][d ? d.specAs(id) : packSpec(id)];
+  function addSpec(d, id, n) {
+    if (!d || d.npc || visit || d.spec !== id || !unlockedFeat('specialties')) return;
+    const before = d.specLvl();
+    d.specPts += n;
+    const after = d.specLvl();
+    if (after > before) {
+      const S = D.SPECIALTIES[id];
+      sfx('unlock');
+      news({ title: `${d.name}: ${S.name} level ${after}`, text: S.lv[after - 1] + '.', th: IC(S.icon) });
+      gainXP(40 * after);
+      if (d.ui) refreshCardStatic(d);
+    } else if (before === 2 && d.hearts() < 4 && d.specPts >= D.SPEC_LEVELS[2] && !d.specCapTold) {
+      d.specCapTold = true;
+      toast(`${d.name} is ready for ${D.SPECIALTIES[id].name} level 3, once you two are Best friends`);
+    }
+  }
+  // show-off coins: the best performer and any show dog in the pack
+  const showMult = (d) => specMult(d, 'performer') * (d && d.hasBadge('platinum') ? 1.5 : 1);
+
+  // ----- badges -----
+  const SECRET_IDS = Object.keys(ALL_TRICKS).filter((id) => ALL_TRICKS[id].secret);
+  function badgeRows(d, B) {
+    const R = B.req, rows = [];
+    for (const [id, l] of Object.entries(R.must || {})) rows.push({ text: `${ALL_TRICKS[id].name} at ${D.TRICK_LEVELS[l]}`, have: Math.min(d.trickLvl(id), l), need: l });
+    if (R.count) {
+      const n = Object.keys(D.TRICKS).filter((id) => d.trickLvl(id) >= R.lvl).length;
+      rows.push({ text: R.count >= Object.keys(D.TRICKS).length ? `Every trick at ${D.TRICK_LEVELS[R.lvl]}` : `${R.count} tricks at ${D.TRICK_LEVELS[R.lvl]} or better`, have: Math.min(n, R.count), need: R.count });
+    }
+    if (R.secrets) {
+      const n = SECRET_IDS.filter((id) => d.trickLvl(id) >= 1).length;
+      rows.push({ text: `Knows ${R.secrets} secret trick${R.secrets > 1 ? 's' : ''}`, have: Math.min(n, R.secrets), need: R.secrets });
+    }
+    rows.forEach((r) => { r.ok = r.have >= r.need; });
+    return rows;
+  }
+  const nextBadge = (d) => D.BADGES.find((B) => !d.hasBadge(B.id));
+  function examBlock(d, B) {
+    if (rank() < B.rank) return `Opens at Trainer rank ${B.rank}`;
+    if (!badgeRows(d, B).every((r) => r.ok)) return 'Train the tricks above first';
+    if (d.examDay === clockNow.gameDay) return 'The examiner is back tomorrow';
+    if (d.isPuppy()) return 'Puppies can’t take exams yet';
+    if (state.coins < B.fee) return `The exam costs ${B.fee} coins`;
+    return '';
+  }
+  function startExam(d, id) {
+    const B = D.BADGES.find((x) => x.id === id);
+    if (!B || !needRank('exams') || d.hasBadge(id) || nextBadge(d) !== B) return;
+    const why = examBlock(d, B);
+    if (why) { toast(why); return; }
+    hideSheet('dogSheet');
+    if (mode !== 'normal') { toast('Finish what you’re doing first'); return; }
+    enterTrickMode(d);
+    if (!tm || tm.dog !== d) return;
+    state.coins -= B.fee;
+    updateHud();
+    // the examiner's list: tricks the dog knows, the badge's own ones more often, never the same twice in a row
+    const known = Object.keys(D.TRICKS).filter((t) => d.trickLvl(t) >= 1);
+    const must = Object.keys(B.req.must || {});
+    const asks = [];
+    for (let i = 0; i < B.asks; i++) {
+      let t;
+      do { t = must.length && Math.random() < 0.5 ? pick(must) : pick(known); } while (known.length > 1 && t === asks[asks.length - 1]);
+      asks.push(t);
+    }
+    tm.exam = { id, asks, i: 0, ok: 0, miss: 0, allowed: B.asks - B.need, done: false };
+    tm.focus = 100;
+    $('trickMode').classList.add('exam');
+    examShow();
+    sfx('tip');
+  }
+  function examShow() {
+    const E = tm && tm.exam;
+    if (!E || E.done || E.i >= E.asks.length) return;
+    const B = D.BADGES.find((x) => x.id === E.id), T = ALL_TRICKS[E.asks[E.i]];
+    $('tmHint').innerHTML = `<span class="exHead">${esc(B.name)} exam · ${E.i + 1} of ${E.asks.length}</span><span class="exAsk">${TH('pic', T.icon)}<b>${esc(T.name)}</b></span><span class="exMiss">${E.allowed ? `Misses ${E.miss} of ${E.allowed} allowed` : 'No misses allowed'}</span>`;
+  }
+  // a try during an exam: right trick done well, or a miss
+  function examTry(okId, triedId) {
+    const E = tm && tm.exam;
+    if (!E || E.done) return;
+    const want = E.asks[E.i];
+    if (okId && okId === want) { E.ok++; E.i++; spawnEmoji('✅', tm.dog.headWorld(0.6), { size: 0.4 }); }
+    else { E.miss++; E.i++; }
+    if (E.miss > E.allowed) { examEnd(false); return; }
+    if (E.i >= E.asks.length) { examEnd(true); return; }
+    if (triedId && triedId !== want) setTimeout(() => toast(`That was ${ALL_TRICKS[triedId].name}. The examiner asked for ${ALL_TRICKS[want].name}.`), 300);
+    setTimeout(examShow, 500);
+  }
+  function examEnd(pass, quiet) {
+    const E = tm && tm.exam;
+    if (!E || E.done) return;
+    E.done = true;
+    const d = tm.dog, B = D.BADGES.find((x) => x.id === E.id);
+    $('trickMode').classList.remove('exam');
+    if (pass) {
+      d.badges.push(B.id);
+      state.coins += B.coins;
+      gainXP(B.xp);
+      sfx('unlock');
+      try { confetti(d.root.position.clone().add(new V3(0, 1.2, 0)), 10); } catch (_) { /* fine */ }
+      news({ title: `${d.name} passed: ${B.name}!`, text: `${B.perk}. Prize: ${B.coins} coins.`, th: `<span class="medal ${B.id}">${IC('star')}</span>` });
+      $('tmHint').textContent = `${B.name} badge earned!`;
+    } else {
+      d.examDay = clockNow.gameDay;
+      if (!quiet) toast(`${d.name} didn’t pass this time. Keep practicing and try again tomorrow.`);
+      $('tmHint').textContent = 'Exam over';
+    }
+    if (d.ui) refreshCardStatic(d);
+    updateHud();
+    save();
+    setTimeout(() => { if (tm && tm.exam === E) { tm.exam = null; if (pass) exitTrickMode(); } }, 1600);
+  }
+
+  // ----- the dog sheet: hearts, specialty, badges -----
+  let sheetDog = null;
+  function openDogSheet(d) {
+    sheetDog = d;
+    renderDogSheet();
+    $('dogSheet').classList.remove('hidden');
+  }
+  function hideSheet(id) { $(id).classList.add('hidden'); }
+  function renderDogSheet() {
+    const d = sheetDog;
+    if (!d) return;
+    $('dsName').textContent = d.name;
+    const h = d.hearts(), H = D.BOND.hearts;
+    const into = h >= 5 ? 1 : (d.bond - H[h]) / (H[h + 1] - H[h]);
+    const today = d.bondDay === clockNow.dateKey ? d.bondToday : 0;
+    $('dsBond').innerHTML = `<div class="bondHead">${heartsHTML(h)}<b>${esc(D.BOND.names[h])}</b></div>` +
+      (h < 5 ? `<div class="track"><div class="fill" style="width:${Math.round(into * 100)}%"></div></div><small class="sub">${Math.floor(d.bond - H[h])} / ${H[h + 1] - H[h]} to ${esc(D.BOND.names[h + 1])}${today >= D.BOND.perDay ? ' · that’s enough bonding for today' : ''}</small>` : '<small class="sub">As close as can be.</small>') +
+      D.BOND.names.slice(1).map((nm, i) => `<div class="req${h > i ? ' done' : ''}">${IC(h > i ? 'check' : 'heart')}<div><small class="note"><b>${esc(nm)}</b> · ${esc(D.BOND.perks[i + 1])}</small></div></div>`).join('');
+    // specialty
+    let sp = '';
+    if (!unlockedFeat('specialties')) sp = `<p class="sub">Specialties open at Trainer rank ${featRank('specialties')}.</p>`;
+    else if (!d.spec && h < 2) sp = `<p class="sub">When you two are Buddies (2 hearts), ${esc(d.name)} can pick something to be great at.</p>`;
+    else if (!d.spec || d.specPicking) {
+      sp = `<p class="sub">Pick one. ${esc(d.name)} gets better at it by doing it.</p><div class="specGrid">` + Object.entries(D.SPECIALTIES).map(([id, S]) =>
+        `<button class="specOpt${d.spec === id ? ' sel' : ''}" data-spec="${id}">${IC(S.icon)}<b>${esc(S.name)}</b><small>${esc(S.desc)}</small></button>`).join('') + '</div>' +
+        (d.spec ? `<button class="ghost" data-act="specCancel">Keep ${esc(D.SPECIALTIES[d.spec].name)}</button>` : '');
+    } else {
+      const S = D.SPECIALTIES[d.spec], l = d.specLvl();
+      const nextAt = D.SPEC_LEVELS[l];
+      const capped = l === 2 && h < 4;
+      sp = `<div class="row"><div class="ic">${IC(S.icon)}</div><div class="txt"><b>${esc(S.name)} · level ${l}</b><small>${esc(S.lv[l - 1])}</small>` +
+        (l < 3 ? `<div class="track"><div class="fill" style="width:${Math.round(Math.min(1, (d.specPts - D.SPEC_LEVELS[l - 1]) / (nextAt - D.SPEC_LEVELS[l - 1])) * 100)}%"></div></div><small>${capped && d.specPts >= nextAt ? 'Level 3 needs Best friends (4 hearts)' : `${esc(S.grows)} · ${Math.floor(d.specPts)} / ${nextAt}`}</small>` : '<small>Top level</small>') +
+        `</div></div><button class="ghost" data-act="specChange">Switch specialty (${D.SPEC_CHANGE} coins, starts over)</button>`;
+    }
+    $('dsSpec').innerHTML = sp;
+    // badges
+    let bg = '';
+    if (!unlockedFeat('exams')) bg = `<p class="sub">Training exams open at Trainer rank ${featRank('exams')}.</p>`;
+    else {
+      const nb = nextBadge(d);
+      bg = D.BADGES.map((B) => {
+        const got = d.hasBadge(B.id);
+        const head = `<span class="medal ${B.id}${got ? '' : ' off'}">${IC('star')}</span>`;
+        if (got) return `<div class="row badgeRow got"><div class="ic">${head}</div><div class="txt"><b>${esc(B.name)}</b><small>${esc(B.perk)}</small></div></div>`;
+        if (B !== nb) return `<div class="row badgeRow later"><div class="ic">${head}</div><div class="txt"><b>${esc(B.name)}</b><small>${rank() < B.rank ? `Rank ${B.rank}` : 'After the badge before it'} · ${esc(B.perk)}</small></div></div>`;
+        const rows = badgeRows(d, B).map((r) => `<div class="req${r.ok ? ' done' : ''}">${IC(r.ok ? 'check' : 'dot')}<div><small class="note">${esc(r.text)}</small>${r.need > 1 ? `<div class="track"><div class="fill" style="width:${Math.round((r.have / r.need) * 100)}%"></div></div><small class="prog">${r.have} of ${r.need}</small>` : ''}</div></div>`).join('');
+        const why = examBlock(d, B);
+        return `<div class="row badgeRow next"><div class="ic">${head}</div><div class="txt"><b>${esc(B.name)}</b><small>${esc(B.perk)}</small>${rows}<small class="exInfo">${B.asks} tricks, ${B.asks - B.need ? `up to ${B.asks - B.need} miss${B.asks - B.need > 1 ? 'es' : ''}` : 'no misses'} · fee ${B.fee} coins · prize ${B.coins} coins</small>` +
+          `<button class="primary small" data-exam="${B.id}"${why ? ' disabled' : ''}>${why ? esc(why) : 'Take the exam'}</button></div></div>`;
+      }).join('');
+    }
+    $('dsBadges').innerHTML = bg;
+  }
+  $('dogSheet').addEventListener('click', (e) => {
+    const d = sheetDog;
+    if (e.target.id === 'dogSheet' || e.target.closest('[data-act="closeDogSheet"]')) { if (d) d.specPicking = false; hideSheet('dogSheet'); return; }
+    if (!d) return;
+    const so = e.target.closest('[data-spec]');
+    if (so) {
+      const id = so.dataset.spec;
+      if (d.spec && d.spec !== id) {
+        if (state.coins < D.SPEC_CHANGE) { toast(`Switching costs ${D.SPEC_CHANGE} coins`); return; }
+        state.coins -= D.SPEC_CHANGE;
+        updateHud();
+      }
+      if (d.spec !== id) { d.spec = id; d.specPts = 0; d.specCapTold = false; news({ title: `${d.name} is a ${D.SPECIALTIES[id].name}`, text: D.SPECIALTIES[id].desc + '.', th: IC(D.SPECIALTIES[id].icon) }); sfx('unlock'); }
+      d.specPicking = false;
+      if (d.ui) refreshCardStatic(d);
+      save();
+      renderDogSheet();
+      return;
+    }
+    if (e.target.closest('[data-act="specChange"]')) { d.specPicking = true; renderDogSheet(); return; }
+    if (e.target.closest('[data-act="specCancel"]')) { d.specPicking = false; renderDogSheet(); return; }
+    const ex = e.target.closest('[data-exam]');
+    if (ex && !ex.disabled) startExam(d, ex.dataset.exam);
+  });
+  // one line on the dog card: hearts, specialty and badges
+  function bondLine(d) {
+    const B = [...d.badges].reverse().find(Boolean);
+    const bits = [`${heartsHTML(d.hearts())}<span>${esc(D.BOND.names[d.hearts()])}</span>`];
+    if (d.spec && unlockedFeat('specialties')) bits.push(`<span>${esc(D.SPECIALTIES[d.spec].name)} ${d.specLvl()}</span>`);
+    else if (!d.spec && d.hearts() >= 2 && unlockedFeat('specialties')) bits.push('<span class="new">Pick a specialty</span>');
+    if (B) bits.push(`<span class="medal ${B}">${IC('star')}</span>`);
+    return bits.join('');
+  }
+
+  // =====================================================================
+  // Home tiers: from a cozy flat to a dream estate
+  // =====================================================================
+  const houseTier = () => clamp(state.houseTier || 0, 0, D.HOUSE_TIERS.length - 1);
+  const roomCap = () => Math.min(CONFIG.MAX_CHUNKS, D.HOUSE_TIERS[houseTier()].rooms);
+  const luxuryCount = () => state.furniture.filter((f) => D.ITEMS[f.type] && D.ITEMS[f.type].cat === 'luxury').length;
+  function houseRows(T) {
+    const R = T.req || {}, rows = [];
+    const add = (text, have, need) => rows.push({ text, have: Math.min(have, need), need, ok: have >= need });
+    if (R.rooms) add(`${R.rooms} rooms`, state.chunks.length, R.rooms);
+    if (R.gardens) add(`A garden`, Object.keys(state.gardens || {}).length, R.gardens);
+    if (R.comfort) add(`${R.comfort} paws of comfort`, comfort.paws, R.comfort);
+    if (R.items) add(`${R.items} things placed in your home`, state.furniture.length, R.items);
+    if (R.dogs) add(`${R.dogs} dogs`, dogs.length, R.dogs);
+    if (R.luxury) add(`${R.luxury} luxury pieces placed`, luxuryCount(), R.luxury);
+    return rows;
+  }
+  function houseBlock(T) {
+    if (!unlockedFeat('house')) return `Opens at Trainer rank ${featRank('house')}`;
+    if (rank() < T.rank) return `Opens at Trainer rank ${T.rank}`;
+    if (!houseRows(T).every((r) => r.ok)) return 'Not ready yet';
+    if (state.coins < T.cost) return `Costs ${T.cost} coins`;
+    return '';
+  }
+  function upgradeHouse() {
+    const T = D.HOUSE_TIERS[houseTier() + 1];
+    if (!T || !needRank('house')) return;
+    const why = houseBlock(T);
+    if (why) { toast(why); return; }
+    state.coins -= T.cost;
+    state.houseTier = houseTier() + 1;
+    for (const id of [T.wall, T.floor]) if (id && !state.styles.includes(id)) state.styles.push(id);
+    gainXP(120 * state.houseTier);
+    sfx('unlock');
+    try { if (place === 'home') confetti(player.root.position.clone().add(new V3(0, 1.6, 0)), 12); } catch (_) { /* fine */ }
+    news({ title: `Your home is now a ${T.name}!`, text: `${T.perk}. Room for ${T.rooms} rooms, plus a new wallpaper and floor in Decorate.`, th: IC('home') });
+    updateHud();
+    save();
+    renderHouse();
+  }
+  function checkAllowance() {
+    if (visit || houseTier() < 4) return;
+    const key = clockNow.dateKey;
+    if (state.allowanceDay === key) return;
+    state.allowanceDay = key;
+    state.coins += 100;
+    setTimeout(() => news({ title: 'Your daily allowance', text: 'The estate brings in 100 coins today.', th: IC('coin') }), 1500);
+    updateHud();
+    save();
+  }
+  function openHouse() {
+    if (!needRank('house')) return;
+    renderHouse();
+    $('house').classList.remove('hidden');
+  }
+  function renderHouse() {
+    const t = houseTier(), cur = D.HOUSE_TIERS[t];
+    $('hsNow').innerHTML = `<div class="ic">${IC('home')}</div><div class="txt"><b>${esc(cur.name)}</b><small>${t ? esc(cur.perk) : 'Upgrade it to fit more rooms and make life nicer for your dogs.'} · room for ${cur.rooms} rooms</small></div>`;
+    $('hsList').innerHTML = D.HOUSE_TIERS.map((T, i) => {
+      if (i === 0) return '';
+      const done = i <= t, next = i === t + 1;
+      const head = `<div class="ic tierNo${done ? ' done' : ''}">${i + 1}</div>`;
+      if (done) return `<div class="row badgeRow got">${head}<div class="txt"><b>${esc(T.name)}</b><small>${esc(T.perk)}</small></div></div>`;
+      if (!next) return `<div class="row badgeRow later">${head}<div class="txt"><b>${esc(T.name)}</b><small>Rank ${T.rank} · ${T.rooms} rooms · ${esc(T.perk)}</small></div></div>`;
+      const rows = houseRows(T).map((r) => `<div class="req${r.ok ? ' done' : ''}">${IC(r.ok ? 'check' : 'dot')}<div><small class="note">${esc(r.text)}</small>${r.need > 1 ? `<div class="track"><div class="fill" style="width:${Math.round((r.have / r.need) * 100)}%"></div></div><small class="prog">${r.have} of ${r.need}</small>` : ''}</div></div>`).join('');
+      const why = houseBlock(T);
+      return `<div class="row badgeRow next">${head}<div class="txt"><b>${esc(T.name)}</b><small>${esc(T.perk)} · room for ${T.rooms} rooms · a new wallpaper and floor</small>${rows}` +
+        `<button class="primary small" data-act="upgradeHouse"${why ? ' disabled' : ''}>${why ? esc(why) : `Upgrade for ${T.cost} coins`}</button></div></div>`;
+    }).join('');
+  }
+  $('house').addEventListener('click', (e) => {
+    if (e.target.id === 'house' || e.target.closest('[data-act="closeHouse"]')) { $('house').classList.add('hidden'); return; }
+    if (e.target.closest('[data-act="upgradeHouse"]')) upgradeHouse();
+  });
+
+  // =====================================================================
+  // Neighbor stories: meet them on walks, help them out, chapter by chapter
+  // =====================================================================
+  const nbOf = (owner) => D.NEIGHBORS.find((N) => N.owner === owner);
+  const storyOf = (owner) => (state.stories || {})[owner];
+  function storyChapter(owner) {
+    const S = D.STORIES[owner], st = storyOf(owner);
+    if (!S || !st || st.ch >= S.length) return null;
+    return S[st.ch];
+  }
+  // a chapter opens the in-game day after the one before
+  function storyReady(owner) {
+    const S = D.STORIES[owner];
+    if (!S || !unlockedFeat('stories') || visit) return false;
+    const st = storyOf(owner);
+    if (!st) return true;
+    return st.ch < S.length && (st.ch === 0 || st.day !== clockNow.gameDay);
+  }
+  function taskLine(owner, C) {
+    const T = C.task, st = storyOf(owner) || { n: 0 }, N = nbOf(owner), dog = N ? N.dog.name : 'their dog';
+    switch (T.kind) {
+      case 'meet': return 'Say hello on a walk';
+      case 'play': return `Let your dog play with ${dog} (${Math.min(st.n || 0, T.n)} of ${T.n})`;
+      case 'bring': return `Bring ${ingCount(T.ing, T.n)} (you have ${state.pantry[T.ing] || 0})`;
+      case 'show': return `Show a ${D.FINDS[T.id].name.toLowerCase()} from ${D.LOCATIONS[D.FINDS[T.id].loc].name}${state.finds[T.id] ? ' (you have one)' : ''}`;
+      case 'trick': return `Do ${ALL_TRICKS[T.id].name} at ${D.TRICK_LEVELS[T.lvl]} or better near ${dog}`;
+      case 'badge': return `Bring a dog with the ${D.BADGES.find((B) => B.id === T.id).name} badge`;
+      case 'at': return `Meet them in ${locUnlocked(T.loc) ? D.LOCATIONS[T.loc].name : 'a place you haven’t found yet'}`;
+      case 'dressed': return 'Bring a dog wearing an outfit';
+      case 'clean': return 'Bring all your dogs at least 90% clean';
+      case 'meal': return `Bring ${D.RECIPES[T.id].name} (you have ${state.meals.filter((m) => m.id === T.id).length})`;
+      case 'comfort': return `Reach ${T.n} paws of comfort at home`;
+      default: return '';
+    }
+  }
+  const ingCount = (id, n) => {
+    const nm = D.INGREDIENTS[id].name.toLowerCase();
+    if (/(fish|cheese|honey)$/.test(nm)) return `${n === 1 ? 'some' : n + ' portions of'} ${nm}`;
+    if (n === 1) return `${/^[aeiou]/.test(nm) ? 'an' : 'a'} ${nm}`;
+    return `${n} ${/s$/.test(nm) ? nm : /y$/.test(nm) ? nm.slice(0, -1) + 'ies' : nm + 's'}`;
+  };
+  function rewardText(R) {
+    const bits = [];
+    if (R.coins) bits.push(`${R.coins} coins`);
+    if (R.wall) bits.push(`${D.WALLS[R.wall].name} wallpaper`);
+    if (R.floor) bits.push(`${D.FLOORS[R.floor].name} floor`);
+    if (R.item) bits.push(`a ${D.ITEMS[R.item].name.toLowerCase()}`);
+    return bits.join(', ');
+  }
+  // can this chapter be finished right now, while you stand next to them?
+  function taskDone(owner, T) {
+    const st = storyOf(owner);
+    switch (T.kind) {
+      case 'meet': return true;
+      case 'play': return (st.n || 0) >= T.n;
+      case 'bring': return (state.pantry[T.ing] || 0) >= T.n;
+      case 'show': return (state.finds[T.id] || 0) > 0;
+      case 'trick': return !!st.trickOk;
+      case 'badge': return dogs.some((d) => d.hasBadge(T.id));
+      case 'at': return place === 'park' && loc === T.loc;
+      case 'dressed': return dogs.some((d) => Object.keys(d.acc || {}).length > 0);
+      case 'clean': return dogs.every((d) => d.clean >= 90);
+      case 'meal': return state.meals.some((m) => m.id === T.id);
+      case 'comfort': return comfort.paws >= T.n;
+      default: return false;
+    }
+  }
+  function storyMeet(w) {
+    const owner = w.info.owner;
+    if (!storyReady(owner)) return false;
+    state.stories = state.stories || {};
+    if (!state.stories[owner]) state.stories[owner] = { ch: 0, n: 0, day: -1 };
+    const C = storyChapter(owner);
+    if (!C) return false;
+    w.pause = Math.max(w.pause, 3);
+    if (taskDone(owner, C.task)) { storyComplete(owner, w); return true; }
+    if (!w.asked) {
+      w.asked = true;
+      news({ title: owner, text: `${C.say} ${taskLine(owner, C)}.`, th: TH('dog', `${nbOf(owner).dog.breed}|${nbOf(owner).dog.coat}`) });
+      state.stories[owner].asked = st0(owner).ch;
+      setTimeout(() => tip('stories', { title: 'Neighbor stories', text: 'Neighbors ask for little favors. Check what they need in Menu → Neighbors, then meet them on a walk.', icon: 'person' }), 3000);
+      save();
+    }
+    return true;
+  }
+  const st0 = (owner) => state.stories[owner];
+  function storyComplete(owner, w) {
+    const S = D.STORIES[owner], st = st0(owner), C = S[st.ch], T = C.task, R = C.reward;
+    if (T.kind === 'bring') state.pantry[T.ing] -= T.n;
+    if (T.kind === 'meal') state.meals.splice(state.meals.findIndex((m) => m.id === T.id), 1);
+    st.ch++;
+    st.n = 0;
+    st.trickOk = false;
+    st.day = clockNow.gameDay;
+    if (R.coins) state.coins += R.coins;
+    if (R.xp) gainXP(R.xp);
+    for (const id of [R.wall, R.floor]) if (id && !state.styles.includes(id)) state.styles.push(id);
+    if (R.item) state.inventory[R.item] = (state.inventory[R.item] || 0) + 1;
+    sfx('unlock');
+    const N = nbOf(owner);
+    const said = T.kind === 'meet' ? C.say : `Thank you! ${st.ch >= S.length ? `${N.dog.name} and I won’t forget this.` : 'Come find us again tomorrow.'}`;
+    news({ title: st.ch >= S.length ? `${owner}’s story is complete` : owner, text: `${said} You got ${rewardText(R)}.`, th: TH('dog', `${N.dog.breed}|${N.dog.coat}`) });
+    if (w) { try { spawnEmoji('💕', w.parts.root.position.clone().add(new V3(0, 2, 0)), { size: 0.5, life: 1.6, vy: 0.5 }); w.pause = Math.max(w.pause, 3); } catch (_) { /* fine */ } }
+    updateHud();
+    save();
+  }
+  // their dog played with yours, or they watched a trick: chapters that count those
+  function storyPlay(npc) {
+    const w = walkers.find((x) => x.dog === npc);
+    if (!w || !storyReady(w.info.owner) || !storyOf(w.info.owner)) return;
+    const C = storyChapter(w.info.owner);
+    if (!C || C.task.kind !== 'play') return;
+    const st = st0(w.info.owner);
+    st.n = (st.n || 0) + 1;
+    if (st.n >= C.task.n) storyComplete(w.info.owner, w);
+    else toast(`${w.info.owner}: ${st.n} of ${C.task.n}, ${w.dog.name} loves this!`);
+  }
+  function storyTrick(d, id) {
+    for (const w of walkers) {
+      const owner = w.info.owner;
+      if (!storyReady(owner) || !storyOf(owner)) continue;
+      const C = storyChapter(owner);
+      if (!C || C.task.kind !== 'trick' || C.task.id !== id) continue;
+      if (w.parts.root.position.distanceTo(d.root.position) > 6) continue;
+      if (d.trickLvl(id) < C.task.lvl) { setTimeout(() => toast(`${owner}: Nice! But ${w.dog.name} needs to see it done at ${D.TRICK_LEVELS[C.task.lvl]}.`), 900); continue; }
+      st0(owner).trickOk = true;
+      setTimeout(() => storyComplete(owner, w), 900);
+    }
+  }
+  function openPeople() {
+    if (!needRank('stories')) return;
+    renderPeople();
+    $('people').classList.remove('hidden');
+  }
+  function renderPeople() {
+    const known = Object.keys(state.stories || {}).filter((o) => D.STORIES[o] && nbOf(o));
+    const total = Object.keys(D.STORIES).length;
+    $('ppSub').textContent = known.length ? `${known.filter((o) => st0(o).ch >= D.STORIES[o].length).length} of ${total} stories finished. Meet neighbors on walks to carry on.` : 'Meet neighbors on walks. Some of them have stories to tell.';
+    $('ppList').innerHTML = known.map((o) => {
+      const N = nbOf(o), S = D.STORIES[o], st = st0(o), C = storyChapter(o);
+      const dots = S.map((_, i) => `<i class="${i < st.ch ? 'on' : ''}"></i>`).join('');
+      let line;
+      if (!C) line = '<small>Story complete. Thanks for being a good neighbor!</small>';
+      else if (!storyReady(o)) line = '<small>Next chapter tomorrow</small>';
+      else if (st.asked !== st.ch && st.ch > 0) line = '<small>They have something new to tell you. Meet them on a walk.</small>';
+      else line = `<small class="quote">“${esc(C.say)}”</small><small class="task">${esc(taskLine(o, C))}</small><small>Reward: ${esc(rewardText(C.reward))}</small>`;
+      return `<div class="row storyRow"><div class="ic"><img class="nbPortrait" src="${ART.portraitURL(N.dog.breed, N.dog.coat)}" alt=""></div><div class="txt"><b>${esc(o)} &amp; ${esc(N.dog.name)}</b><span class="chDots">${dots}</span>${line}</div></div>`;
+    }).join('') + (known.length < total ? `<p class="sub">${total - known.length} more neighbor${total - known.length > 1 ? 's have' : ' has'} a story to share.</p>` : '');
+  }
+  $('people').addEventListener('click', (e) => { if (e.target.id === 'people' || e.target.closest('[data-act="closePeople"]')) $('people').classList.add('hidden'); });
 
   // gestures
   const tmEl = $('trickMode'), ringEl = $('tmRing');
@@ -2814,6 +3463,7 @@
         '<div class="alerts"></div>' +
       '</div>' +
       '<div class="details">' +
+        '<button class="bondRow" data-dact="profile"></button>' +
         '<div class="chips"></div>' +
         D.STATS.map((s) => `<div class="bar ${s.k}"><span class="bic">${IC(STAT_IC[s.k])}<i class="badge">!</i></span><div class="track"><div class="fill ${s.k}"></div></div></div>`).join('') +
         '<div class="favs"></div>' +
@@ -2826,6 +3476,7 @@
       alerts: el.querySelector('.alerts'),
       chips: el.querySelector('.chips'),
       favs: el.querySelector('.favs'),
+      bondRow: el.querySelector('.bondRow'),
       fills: [...el.querySelectorAll('.fill')],
       badges: [...el.querySelectorAll('.bic .badge')],
     };
@@ -2836,11 +3487,12 @@
       if (chip) { toast(chip.dataset.tip); return; }
       const btn = e.target.closest('[data-dact]');
       if (btn) {
-        if (btn.dataset.dact === 'towel') startTowel(d);
+        if (btn.dataset.dact === 'profile') openDogSheet(d);
+        else if (btn.dataset.dact === 'towel') startTowel(d);
         else if (btn.dataset.dact === 'tricks') { d.ui.open = false; el.classList.remove('open'); enterTrickMode(d); }
-        else if (btn.dataset.dact === 'treat') openMeals(d);
-        else if (btn.dataset.dact === 'style') openWardrobe(d);
-        else if (btn.dataset.dact === 'bath') { if (place !== 'home') toast('Baths happen at home 🛁'); else openBath(d); }
+        else if (btn.dataset.dact === 'treat') { if (needRank('kitchen')) openMeals(d); }
+        else if (btn.dataset.dact === 'style') { if (needRank('boutique')) openWardrobe(d); }
+        else if (btn.dataset.dact === 'bath') { if (!needRank('bath')) return; if (place !== 'home') toast('Baths happen at home 🛁'); else openBath(d); }
         return;
       }
       selected = d;
@@ -2852,6 +3504,7 @@
     });
     $('pack').appendChild(el);
     refreshCardStatic(d);
+    refreshGates();
   }
   // parts of the card that only change now and then
   function refreshCardStatic(d) {
@@ -2878,6 +3531,7 @@
     const bf = bestFriend(d);
     const friendLine = bf && bf.value >= 15 ? `<div>${bf.value >= D.FRIEND_LEVEL ? 'Best friend' : 'Getting to know'}: ${esc(bf.name)} 💕</div>` : '';
     u.favs.innerHTML = `<div>Favorite toy: ${esc(fav)}</div>${spot}${friendLine}`;
+    u.bondRow.innerHTML = bondLine(d);
   }
   function updatePack() {
     for (const d of dogs) {
@@ -3087,7 +3741,7 @@
     save();
   }
   function autoRefill() {
-    const mins = CONFIG.AUTO_REFILL_MINUTES * 60000;
+    const mins = CONFIG.AUTO_REFILL_MINUTES * 60000 / (houseTier() >= 3 ? 2 : 1);
     for (const f of state.furniture) {
       if (!D.ITEMS[f.type].auto || f.filled) continue;
       if (!f.emptiedAt) f.emptiedAt = Date.now();
@@ -3191,7 +3845,8 @@
     return e;
   }
   function openBath(d) {
-    if (!d) return;
+    if (!d || !needRank('bath')) return;
+    if (bath) closeBath();
     const tub = state.furniture.find((f) => f.type === 'bathtub');
     if (!tub) { toast('Place a 🛁 Bathtub first (🐾 Menu → 🛒 Shop → Dog stuff)'); return; }
     if (['fetch', 'return', 'trick', 'attend'].includes(d.state)) { toast('Wait a moment — they are busy'); return; }
@@ -3211,8 +3866,6 @@
   }
   function renderBathPick() {
     $('bathStep').textContent = 'Pick a shampoo';
-    $('bathCanvasWrap').classList.add('hidden');
-    $('bathDone').classList.add('hidden');
     const L = $('bathShampoos');
     L.classList.remove('hidden');
     L.innerHTML = '';
@@ -3234,34 +3887,82 @@
     L.appendChild(w);
   }
   const bathImg = new Image();
-  // ----- the bath in 3D: the real voxel dog sits in the tub and reacts to your finger -----
-  let B3 = null;   // null = not tried yet, false = no 3D here (falls back to the flat picture)
+  // ----- bath time fills the whole screen: the real voxel dog stands in a wide, low tub and reacts to your finger -----
+  let B3 = null;   // null = not tried yet, false = no 3D here (falls back to a flat picture)
+  const bathSize = () => [Math.max(200, window.innerWidth || 390), Math.max(300, window.innerHeight || 844)];
+  function bathTub(parent) {
+    const g = new THREE.Group();
+    const white = '#ffffff', outer = '#8fd0e0', lip = '#f4fbfd', grout = '#d3e8f1';
+    box(g, 9, 0.04, 7, '#e9cfa8', 0, -0.02, 0);                                   // a warm wooden floor
+    for (let k = -8; k <= 8; k++) box(g, 0.02, 0.005, 7, '#d6b98f', k * 0.5, 0.001, 0);
+    box(g, 9, 4, 0.1, '#e8f5fb', 0, 2, -1.6);                                     // tiled wall behind
+    for (let k = -12; k <= 12; k++) box(g, 0.015, 4, 0.02, grout, k * 0.3, 2, -1.54);
+    for (let k = 1; k <= 13; k++) box(g, 9, 0.015, 0.02, grout, 0, k * 0.3, -1.54);
+    box(g, 2.7, 0.08, 1.6, white, 0, 0.04, 0);                                    // the tub: wide and low
+    for (const z of [-0.78, 0.78]) { box(g, 2.7, 0.36, 0.08, outer, 0, 0.2, z); box(g, 2.8, 0.06, 0.16, lip, 0, 0.4, z); }
+    for (const x of [-1.33, 1.33]) { box(g, 0.08, 0.36, 1.6, outer, x, 0.2, 0); box(g, 0.16, 0.06, 1.7, lip, x, 0.4, 0); }
+    for (const [x, z] of [[-1.2, -0.68], [1.2, -0.68], [-1.2, 0.68], [1.2, 0.68]]) box(g, 0.14, 0.06, 0.14, '#e0b84a', x, -0.01, z);
+    const water = box(g, 2.58, 0.02, 1.48, new THREE.MeshLambertMaterial({ color: '#9fd8f5', transparent: true, opacity: 0.45 }), 0, 0.26, 0);
+    water.userData.water = true;
+    for (const [x, z, s] of [[-1.05, 0.5, 0.16], [-0.95, 0.58, 0.11], [1.0, -0.5, 0.14], [1.12, -0.44, 0.1], [0.9, 0.55, 0.12]]) box(g, s, s * 0.7, s, '#ffffff', x, 0.3, z);
+    const duck = new THREE.Group();                                                // a rubber duck in the corner
+    box(duck, 0.2, 0.14, 0.16, '#ffd54a', 0, 0, 0);
+    box(duck, 0.11, 0.11, 0.11, '#ffd54a', 0.07, 0.11, 0);
+    box(duck, 0.06, 0.03, 0.06, '#ff8a3d', 0.15, 0.1, 0);
+    duck.position.set(-0.95, 0.32, -0.45);
+    duck.rotation.y = 0.6;
+    g.add(duck);
+    box(g, 0.5, 0.05, 0.22, '#ffffff', 1.75, 0.9, -1.45);                         // a shelf with bottles
+    box(g, 0.11, 0.24, 0.1, '#ff8fb1', 1.62, 1.04, -1.45);
+    box(g, 0.1, 0.18, 0.1, '#7fc8f8', 1.8, 1.01, -1.45);
+    box(g, 0.09, 0.2, 0.09, '#a7e3a1', 1.94, 1.02, -1.45);
+    parent.add(g);
+    return { g, duck };
+  }
   function bath3d() {
     if (B3 !== null) return B3 || null;
     try {
       const cv = $('bathGL');
       const r = new THREE.WebGLRenderer({ canvas: cv, alpha: true, antialias: true });
       r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-      r.setSize(280, 280, false);
       r.setClearColor(0x000000, 0);
       const sc = new THREE.Scene();
       sc.add(new THREE.HemisphereLight(0xffffff, 0xa8b8c8, 0.95));
       const sun = new THREE.DirectionalLight(0xffffff, 0.55);
       sun.position.set(2, 4, 3);
       sc.add(sun);
-      const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 40);
-      cam.position.set(2.0, 1.75, 2.85);
-      cam.lookAt(0, 0.62, 0);
-      const tub = ART.buildItem('bathtub');
-      tub.traverse((o) => { if (o.isMesh && o.position.y > 0.45 && o.position.y < 0.5) o.visible = false; });   // the toy bubbles in the model
-      tub.scale.setScalar(1.4);
-      sc.add(tub);
+      const cam = new THREE.PerspectiveCamera(40, 1, 0.1, 40);
+      const T = bathTub(sc);
       const t = new V3(1, 2, 3).project(cam);
       if (!isFinite(t.x)) throw new Error('no projection');
-      B3 = { r, sc, cam, tub, ray: new THREE.Raycaster(), parts: null, fx: [] };
+      B3 = { r, sc, cam, tub: T.g, duck: T.duck, ray: new THREE.Raycaster(), parts: null, fx: [], ppu: 140 };
+      bathFrame();
     } catch (_) { B3 = false; }
     return B3 || null;
   }
+  // fit the camera to the screen: the dog fills the width on a phone, and stays big in landscape too
+  function bathFrame() {
+    const B = B3;
+    const [W, H] = bathSize();
+    if (bath) { bath.W = W; bath.H = H; }
+    if (!B) return;
+    B.r.setSize(W, H, false);
+    const target = new V3(0, 0.42, 0), pos = new V3(0.8, 1.8, 3.1);
+    const dist = pos.distanceTo(target), a = W / H;
+    const wantW = 1.75, wantH = 2.0;
+    const vFromW = 2 * Math.atan(Math.tan(Math.atan(wantW / 2 / dist)) / a), vFromH = 2 * Math.atan(wantH / 2 / dist);
+    B.cam.fov = THREE.MathUtils ? THREE.MathUtils.radToDeg(Math.max(vFromW, vFromH)) : Math.max(vFromW, vFromH) * 57.2958;
+    B.cam.aspect = a;
+    B.cam.position.copy(pos);
+    B.cam.lookAt(target.x, target.y + (a < 1 ? -0.05 : 0.22), target.z);   // landscape: keep the dog clear of the bar on top
+    B.cam.updateProjectionMatrix();
+    // pixels per world unit around the dog: rubbing reach and strength scale with it
+    const p0 = target.clone().project(B.cam), p1 = target.clone().add(new V3(1, 0, 0)).project(B.cam);
+    B.ppu = Math.max(60, Math.hypot((p1.x - p0.x) * W / 2, (p1.y - p0.y) * H / 2));
+  }
+  window.addEventListener('resize', () => { if (bath && bath.step !== 'pick') { bathFrame(); bathCanvasFit(); drawBath(); } });
+  // how much bigger things are than in the old 280-pixel picture
+  const bathK = () => (B3 && B3.parts ? B3.ppu / 143 : Math.min(bath.W, bath.H) / 280);
   const bv = new V3(), bc = new V3();
   function bathSetupDog(d) {
     const B = bath3d();
@@ -3271,30 +3972,40 @@
     B.fx = [];
     const P = ART.buildDog(d.breed, d.coat);
     P.root.traverse((o) => { if (o.isMesh && o.material && o.material.transparent && o.material.opacity < 0.5) o.visible = false; });
-    P.root.scale.setScalar(d.isPuppy() ? 0.8 : 1);
-    P.root.position.set(0, 0.44, 0);
-    P.root.rotation.y = Math.PI / 2 - 0.35;
-    P.patches.forEach((m) => { m.visible = false; m.scale.setScalar(1); });
+    P.root.scale.setScalar(d.isPuppy() ? 0.85 : 1);
+    P.root.position.set(0, 0.08, 0);
+    P.patches.forEach((m) => { m.visible = false; m.scale.setScalar(1); m.userData.patch = true; });
     B.sc.add(P.root);
     B.parts = P;
-    B.yaw = P.root.rotation.y;
-    B.t = 0; B.rub = 0; B.shake = 0; B.hop = 0; B.ptr = null;
+    B.side = 0;
+    B.yaw = Math.PI / 2 - 0.3;
+    P.root.rotation.y = B.yaw;
+    B.t = 0; B.rub = 0; B.shake = 0; B.hop = 0; B.ptr = null; B.turning = 0; B.blind = 0; B.visT = 0; B.idleTurns = 0;
   }
-  // screen position (0-280) of a point; far off screen when it's on the side facing away
-  function bathProject(m, facing = true) {
+  // screen position of a point, and whether you can actually see it from here (not behind the dog or the tub)
+  function bathProject(m) {
     const B = B3;
     m.getWorldPosition(bv);
-    if (facing) {
-      B.parts.root.getWorldPosition(bc); bc.y += 0.35;
-      const toCam = B.cam.position.clone().sub(bc).normalize();
-      if (bv.clone().sub(bc).dot(toCam) < -0.03) return [-999, -999];
-    }
-    bv.project(B.cam);
-    return [(bv.x * 0.5 + 0.5) * 280, (-bv.y * 0.5 + 0.5) * 280];
+    bc.copy(bv).project(B.cam);
+    return [(bc.x * 0.5 + 0.5) * bath.W, (-bc.y * 0.5 + 0.5) * bath.H];
+  }
+  function bathOccluders() {
+    const B = B3, out = [];
+    B.parts.root.traverse((o) => { if (o.isMesh && o.visible && !o.userData.fx && !o.userData.patch) out.push(o); });
+    B.tub.traverse((o) => { if (o.isMesh && !o.userData.water) out.push(o); });
+    return out;
+  }
+  function bathSeen(m, occ) {
+    const B = B3;
+    m.getWorldPosition(bv);
+    const dir = bv.clone().sub(B.cam.position), dist = dir.length();
+    B.ray.set(B.cam.position, dir.normalize());
+    const h = B.ray.intersectObjects(occ, false)[0];
+    return !h || h.distance > dist - 0.06;
   }
   function bathHit(x, y) {
     const B = B3;
-    B.ray.setFromCamera({ x: x / 140 - 1, y: 1 - y / 140 }, B.cam);
+    B.ray.setFromCamera({ x: (x / bath.W) * 2 - 1, y: 1 - (y / bath.H) * 2 }, B.cam);
     const meshes = [];
     B.parts.root.traverse((o) => { if (o.isMesh && o.visible && !o.userData.fx) meshes.push(o); });
     const h = B.ray.intersectObjects(meshes, false)[0];
@@ -3308,37 +4019,59 @@
     m.rotation.set(rand(0, 1), rand(0, 1), rand(0, 1));
     return m;
   }
+  const bathItems = () => (bath.step === 'scrub' ? bath.spots.filter((x) => x.hp > 0) : bath.step === 'rinse' || bath.step === 'dry' ? bath.foam : []);
+  function bathTurn(auto) {
+    const B = B3;
+    if (!B || !B.parts || B.turning > 0) return;
+    B.yaw += Math.PI;
+    B.side = 1 - B.side;
+    B.turning = 0.9;
+    sfx('bubble');
+    if (auto) { B.idleTurns++; toast(`${bath.dog.name} turns around`); }
+  }
   function updateBath3D(dt) {
     const B = B3;
-    if (!B || !B.parts || $('bath').classList.contains('hidden')) return;
+    if (!B || !B.parts || $('bathFull').classList.contains('hidden')) return;
     const P = B.parts;
     B.t += dt;
     B.rub = Math.max(0, B.rub - dt);
-    // turn around when everything on this side is done
-    const items = bath.step === 'scrub' ? bath.spots.filter((x) => x.hp > 0) : bath.step === 'rinse' || bath.step === 'dry' ? bath.foam : [];
-    if (items.length && items.every((x) => x.mesh && x.x < -500) && !B.turning) {
-      B.turning = true;
-      B.yaw += Math.PI;
-      toast(`${bath.dog.name} turns around`);
-      setTimeout(() => { B.turning = false; }, 900);
+    B.turning = Math.max(0, B.turning - dt);
+    P.root.rotation.y = angleLerp(P.root.rotation.y, B.yaw, damp(0.004, dt));
+    // which spots you can reach from here: anything you can see. Checked a few times a second.
+    const items = bathItems();
+    B.visT -= dt;
+    if (B.visT <= 0 && B.turning <= 0) {
+      B.visT = 0.15;
+      const occ = bathOccluders();
+      let seen = 0;
+      for (const it of items) if (it.mesh) { it.seen = it.forced || bathSeen(it.mesh, occ); if (it.seen) seen++; }
+      // nothing left on this side: turn around once. If the other side has nothing in view either, show what's left anyway.
+      if (items.length && !seen) {
+        B.blind += 0.15;
+        if (B.blind > 0.5) {
+          B.blind = 0;
+          if (B.idleTurns < 1) bathTurn(true);
+          else items.forEach((it) => { it.seen = true; it.forced = true; });
+        }
+      } else { B.blind = 0; if (seen) B.idleTurns = 0; }
     }
-    P.root.rotation.y = angleLerp(P.root.rotation.y, B.yaw, damp(0.02, dt));
     // reactions: a happy wiggle while you scrub, a head turn toward your finger, a big shake after rinsing
     const wag = B.rub > 0 ? 16 : 6;
     P.tail.rotation[P.wagAxis] = Math.sin(B.t * wag) * (B.rub > 0 ? 0.6 : 0.3);
     if (B.ptr) {
-      const look = clamp((B.ptr[0] - 140) / 140, -1, 1) * 0.6, tilt = clamp((B.ptr[1] - 140) / 140, -1, 1) * 0.25;
-      P.head.rotation.y = lerp(P.head.rotation.y, B.rub > 0 ? -look : 0, damp(0.05, dt));
+      const look = clamp((B.ptr[0] - bath.W / 2) / (bath.W / 2), -1, 1) * 0.6, tilt = clamp((B.ptr[1] - bath.H / 2) / (bath.H / 2), -1, 1) * 0.25;
+      P.head.rotation.y = lerp(P.head.rotation.y, B.rub > 0 ? -look * (B.side ? -1 : 1) : 0, damp(0.05, dt));
       P.head.rotation.x = lerp(P.head.rotation.x, B.rub > 0 ? tilt : 0, damp(0.05, dt));
     }
     P.body.rotation.z = B.shake > 0 ? Math.sin(B.t * 42) * 0.32 * Math.min(1, B.shake) : lerp(P.body.rotation.z, B.rub > 0 ? Math.sin(B.t * 9) * 0.05 : 0, 0.2);
     if (B.shake > 0) {
       B.shake -= dt;
-      if (Math.random() < 0.6) B.fx.push({ m: box(B.sc, 0.04, 0.04, 0.04, M_DROP, rand(-0.35, 0.35), rand(0.5, 0.8), rand(-0.25, 0.25)), v: new V3(rand(-1.6, 1.6), rand(0.5, 1.8), rand(-1.6, 1.6)), life: 0.7 });
+      if (Math.random() < 0.7) B.fx.push({ m: box(B.sc, 0.05, 0.05, 0.05, M_DROP, rand(-0.4, 0.4), rand(0.5, 0.9), rand(-0.3, 0.3)), v: new V3(rand(-2, 2), rand(0.6, 2), rand(-1.6, 1.6)), life: 0.8 });
     }
-    if (B.hop > 0) { B.hop -= dt; P.root.position.y = 0.44 + Math.max(0, Math.sin((1 - B.hop) * Math.PI * 2)) * 0.18; }
+    if (B.hop > 0) { B.hop -= dt; P.root.position.y = 0.08 + Math.max(0, Math.sin((1 - B.hop) * Math.PI * 2)) * 0.2; }
     P.earL.rotation.z = -0.12 + Math.sin(B.t * 7) * (B.rub > 0 ? 0.12 : 0.03);
-    // water, sparkles and spray
+    B.duck.position.y = 0.32 + Math.sin(B.t * 2) * 0.012;
+    B.duck.rotation.z = Math.sin(B.t * 1.6) * 0.08;
     for (const f of B.fx) {
       f.life -= dt;
       f.v.y -= 6 * dt;
@@ -3354,13 +4087,26 @@
     }
     for (const f of bath.foam) if (f.mesh) [f.x, f.y] = bathProject(f.mesh);
     B.r.render(B.sc, B.cam);
+    drawBathMarks();
   }
   const M_DROP = new THREE.MeshLambertMaterial({ color: '#8fd3ff', transparent: true, opacity: 0.85 });
+  function bathCanvasFit() {
+    const c = $('bathCanvas'), dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.width = Math.round(bath.W * dpr);
+    c.height = Math.round(bath.H * dpr);
+    c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
   function startScrub(shampoo) {
     const d = bath.dog;
     bath.shampoo = shampoo;
     bath.step = 'scrub';
     bath.meter = 0;
+    [bath.W, bath.H] = bathSize();
+    $('bath').classList.add('hidden');
+    $('bathFull').classList.remove('hidden');
+    $('bathResult').classList.add('hidden');
+    $('bathFull').classList.remove('done');
+    bathCanvasFit();
     const n = clamp(Math.ceil((100 - d.clean) / 12), 2, 8);
     // dirt spots in the colors of the dirt the dog actually has
     const kinds = Object.entries(d.dirt).filter(([k, v]) => v > 0.5 && D.DIRT[k]);
@@ -3371,47 +4117,72 @@
       for (const [k, v] of kinds) { x -= v; if (x <= 0) return D.DIRT[k].color; }
       return D.DIRT[kinds[0][0]].color;
     };
-    bath.spots = Array.from({ length: n }, () => ({ x: rand(60, 220), y: rand(70, 230), r: rand(16, 26), hp: 1, col: dirtCol() }));
+    const k = Math.min(bath.W, bath.H) / 280, cx = bath.W / 2, cy = bath.H * 0.55;
+    bath.spots = Array.from({ length: n }, () => ({ x: cx + rand(-80, 80) * k, y: cy + rand(-70, 80) * k, r: rand(16, 26) * k, hp: 1, col: dirtCol(), seen: true }));
     bath.foam = [];
     const B = bath3d();
     if (B) {
+      bathFrame();
       bathSetupDog(d);
       // the dirt sits on the dog itself: on its sides, back and legs
       const order = shuffle(B.parts.patches.map((_, i) => i).slice(0, 6)).concat(shuffle(B.parts.patches.map((_, i) => i).slice(6)));
-      bath.spots.forEach((sp, k) => {
-        const m = B.parts.patches[order[k % order.length]];
+      bath.spots.forEach((sp, j) => {
+        const m = B.parts.patches[order[j % order.length]];
         m.visible = true;
         m.material = mat(sp.col);
         m.userData.big = 3;
         sp.mesh = m;
         sp.r = 20;
+        sp.seen = false;
       });
-      $('bathCanvas').getContext('2d').clearRect(0, 0, 280, 280);
-      $('bath').classList.add('three');
+      B.visT = 0;
+      $('bathFull').classList.add('three');
     } else {
       bathImg.src = ART.portraitURL(d.breed, d.coat);
-      $('bath').classList.remove('three');
+      $('bathFull').classList.remove('three');
     }
-    $('bathShampoos').classList.add('hidden');
-    $('bathCanvasWrap').classList.remove('hidden');
-    $('bathStep').textContent = '1 · Scrub away the dirt';
-    $('bathHint').textContent = 'Rub over the dirty spots with your finger';
+    bathSay('Scrub away the dirt', B ? 'Rub the dirty spots. Tap Turn to see the other side.' : 'Rub over the dirty spots with your finger');
     drawBath();
+  }
+  function bathSay(step, hint) {
+    $('bfStep').textContent = step;
+    $('bfHint').textContent = hint;
+    const n = { scrub: 1, rinse: 2, dry: 3 }[bath.step];
+    document.querySelectorAll('#bfDots i').forEach((el, i) => el.classList.toggle('on', n > i));
+  }
+  // soft rings where something is left to do, so nothing hides from you
+  function drawBathMarks() {
+    const c = $('bathCanvas'), x = c.getContext('2d');
+    x.clearRect(0, 0, bath.W, bath.H);
+    if (!(B3 && B3.parts) || bath.step === 'done') return;
+    const t = performance.now() / 1000, k = bathK();
+    const items = bathItems();
+    const few = items.length <= 6;
+    for (const it of items) {
+      if (!it.seen || it.x < -100) continue;
+      if (bath.step !== 'scrub' && !few && !it.forced) continue;
+      const r = (bath.step === 'scrub' ? 26 : 16) * k * (1 + 0.08 * Math.sin(t * 4 + it.x));
+      x.strokeStyle = bath.step === 'scrub' ? 'rgba(255,255,255,0.75)' : 'rgba(80,170,255,0.7)';
+      x.lineWidth = 2.5;
+      x.setLineDash([6, 6]);
+      x.beginPath(); x.arc(it.x, it.y, r, 0, TAU); x.stroke();
+    }
+    x.setLineDash([]);
   }
   function drawBath() {
     $('bathFill').style.width = Math.round(bath.meter * 100) + '%';
     if (B3 && B3.parts) return;          // the 3D dog is drawn every frame
     const c = $('bathCanvas'), x = c.getContext('2d');
-    x.clearRect(0, 0, 280, 280);
-    x.fillStyle = '#d7efff';
-    x.fillRect(0, 0, 280, 280);
+    const W = bath.W, H = bath.H, k = Math.min(W, H) / 280;
+    x.clearRect(0, 0, W, H);
     x.imageSmoothingEnabled = false;
-    if (bathImg.complete) x.drawImage(bathImg, 12, 12, 256, 256);
-    for (const s of bath.spots) {
-      if (s.hp <= 0) continue;
-      x.globalAlpha = 0.25 + 0.7 * s.hp;
-      x.fillStyle = s.col;
-      x.beginPath(); x.arc(s.x, s.y, s.r, 0, TAU); x.fill();
+    const s = 256 * k;
+    if (bathImg.complete && bathImg.naturalWidth) x.drawImage(bathImg, W / 2 - s / 2, H * 0.55 - s / 2, s, s);
+    for (const sp of bath.spots) {
+      if (sp.hp <= 0) continue;
+      x.globalAlpha = 0.25 + 0.7 * sp.hp;
+      x.fillStyle = sp.col;
+      x.beginPath(); x.arc(sp.x, sp.y, sp.r, 0, TAU); x.fill();
     }
     x.globalAlpha = 1;
     for (const f of bath.foam) {
@@ -3424,47 +4195,56 @@
     if (!bath || bath.step === 'pick' || bath.step === 'done') return;
     const eff = dirtEfficiency(bath.dog, bath.shampoo);
     const B = B3 && B3.parts ? B3 : null;
+    const k = bathK();
+    const reach = (it) => it.seen !== false || !B;
     if (B) { B.rub = 0.35; B.ptr = [x, y]; }
     if (bath.step === 'scrub') {
       if (Math.random() < 0.6 && bath.foam.length < 90) {
         if (B) {
-          const at = bathHit(x + rand(-6, 6), y + rand(-6, 6));
-          if (at) { const m = bathBlob(at, '#ffffff', rand(0.05, 0.09)); bath.foam.push({ x, y, r: 10, mesh: m }); if (Math.random() < 0.3) sfx('bubble'); }
-        } else bath.foam.push({ x: x + rand(-8, 8), y: y + rand(-8, 8), r: rand(6, 12) });
+          const at = bathHit(x + rand(-6, 6) * k, y + rand(-6, 6) * k);
+          if (at) { const m = bathBlob(at, '#ffffff', rand(0.05, 0.09)); bath.foam.push({ x, y, r: 10 * k, mesh: m, seen: true }); if (Math.random() < 0.3) sfx('bubble'); }
+        } else bath.foam.push({ x: x + rand(-8, 8) * k, y: y + rand(-8, 8) * k, r: rand(6, 12) * k });
       }
       if (B && Math.random() < 0.25) sfx('scrub');
-      for (const s of bath.spots) if (s.hp > 0 && Math.hypot(s.x - x, s.y - y) < s.r + 18) s.hp -= dist * 0.006 * (0.5 + eff);
+      for (const s of bath.spots) if (s.hp > 0 && reach(s) && Math.hypot(s.x - x, s.y - y) < (s.r + 18) * k) s.hp -= (dist / k) * 0.006 * (0.5 + eff);
       const left = bath.spots.reduce((a, s) => a + Math.max(0, s.hp), 0);
       bath.meter = 1 - left / bath.spots.length;
-      if (left <= 0.001) { bath.step = 'rinse'; bath.meter = 0; $('bathStep').textContent = '2 · Rinse off the foam'; $('bathHint').textContent = 'Rub to wash the bubbles away'; }
+      if (left <= 0.001) { bath.step = 'rinse'; bath.meter = 0; if (B) B.idleTurns = 0; bathSay('Rinse off the foam', 'Rub to wash the bubbles away'); }
     } else if (bath.step === 'rinse') {
-      bath.foam = bath.foam.filter(dropFoam((f) => Math.hypot(f.x - x, f.y - y) > 26));
+      bath.foam = bath.foam.filter(dropFoam((f) => !reach(f) || Math.hypot(f.x - x, f.y - y) > 26 * k));
       if (B) {
         const at = bathHit(x, y);
-        if (at) for (let k = 0; k < 2; k++) B.fx.push({ m: box(B.sc, 0.035, 0.07, 0.035, M_DROP, at.x + rand(-0.05, 0.05), at.y + 0.25, at.z + rand(-0.05, 0.05)), v: new V3(0, -0.5, 0), life: 0.45 });
+        if (at) for (let j = 0; j < 2; j++) B.fx.push({ m: box(B.sc, 0.035, 0.07, 0.035, M_DROP, at.x + rand(-0.05, 0.05), at.y + 0.25, at.z + rand(-0.05, 0.05)), v: new V3(0, -0.5, 0), life: 0.45 });
         if (Math.random() < 0.08) sfx('splash');
-      } else if (Math.random() < 0.3) spawnEmoji('💦', bath.dog.headWorld(0.2), { size: 0.3, life: 0.6 });
-      bath.meter = clamp(bath.meter + dist / 1600, 0, 1);
+      }
+      bath.meter = clamp(bath.meter + dist / k / 1600, 0, 1);
       if (!bath.foam.length && bath.meter > 0.4) {
         bath.step = 'dry';
         bath.meter = 0;
         if (B) {
-          // a big shake, then drops to towel off
+          // a big shake, then drops to towel off: only where you can see them
           B.shake = 1.1;
+          B.idleTurns = 0;
           sfx('shake');
           bath.foam = [];
-          for (let k = 0; k < 400 && bath.foam.length < 34; k++) {
-            const px = rand(50, 230), py = rand(50, 230), at = bathHit(px, py);
-            if (at) bath.foam.push({ x: px, y: py, r: 4, mesh: bathBlob(at, '#8fd3ff', 0.045, 0.85) });
+          const occ = bathOccluders();
+          const c = new V3(); B.parts.root.getWorldPosition(c); c.y += 0.45;
+          const [cx, cy] = (() => { const p = c.clone().project(B.cam); return [(p.x * 0.5 + 0.5) * bath.W, (-p.y * 0.5 + 0.5) * bath.H]; })();
+          for (let j = 0; j < 500 && bath.foam.length < 30; j++) {
+            const px = cx + rand(-0.85, 0.85) * B.ppu, py = cy + rand(-0.6, 0.55) * B.ppu, at = bathHit(px, py);
+            if (!at) continue;
+            const m = bathBlob(at, '#8fd3ff', 0.05, 0.85);
+            m.updateMatrixWorld(true);
+            if (!bathSeen(m, occ)) { m.parent.remove(m); continue; }
+            bath.foam.push({ x: px, y: py, r: 4, mesh: m, seen: true });
           }
-          if (!bath.foam.length) bath.foam = Array.from({ length: 20 }, () => ({ x: rand(60, 220), y: rand(60, 220), r: 4 }));
-        } else bath.foam = Array.from({ length: 40 }, () => ({ x: rand(30, 250), y: rand(40, 260), r: rand(3, 6) }));
+          if (!bath.foam.length) bath.foam = Array.from({ length: 16 }, () => ({ x: cx + rand(-60, 60) * k, y: cy + rand(-40, 40) * k, r: 4 * k, seen: true }));
+        } else bath.foam = Array.from({ length: 40 }, () => ({ x: bath.W / 2 + rand(-110, 110) * k, y: bath.H * 0.55 + rand(-100, 120) * k, r: rand(3, 6) * k }));
         bath.dropTotal = bath.foam.length;
-        $('bathStep').textContent = '3 · Towel dry';
-        $('bathHint').textContent = 'Rub to dry off all the drops';
+        bathSay('Towel dry', 'Rub to dry off all the drops');
       }
     } else if (bath.step === 'dry') {
-      bath.foam = bath.foam.filter(dropFoam((f) => Math.hypot(f.x - x, f.y - y) > 24));
+      bath.foam = bath.foam.filter(dropFoam((f) => !reach(f) || Math.hypot(f.x - x, f.y - y) > 24 * k));
       bath.meter = 1 - bath.foam.length / (bath.dropTotal || 40);
       if (!bath.foam.length) { if (B) { B.hop = 1; sfx('bark'); } finishBath(); }
     }
@@ -3486,9 +4266,14 @@
     d.updateDirtLook();
     progress('bath');
     bath.step = 'done';
-    $('bathStep').textContent = d.clean >= 100 ? `✨ ${d.name} is sparkling clean!` : `${d.name} is ${Math.round(d.clean)}% clean`;
-    $('bathHint').textContent = e < 0.95 ? 'A shampoo that matches the dirt cleans completely.' : (d.flag('splashes') ? 'Water Lovers adore bath time! 💦' : 'All done!');
-    $('bathDone').classList.remove('hidden');
+    bath.meter = 1;
+    drawBath();
+    $('bathResTitle').textContent = d.clean >= 100 ? `${d.name} is sparkling clean!` : `${d.name} is ${Math.round(d.clean)}% clean`;
+    $('bathResText').textContent = e < 0.95 ? 'A shampoo that matches the dirt cleans completely.' : (d.flag('splashes') ? 'Water Lovers adore bath time!' : 'All done!');
+    bathSay('Done', '');
+    $('bathResult').classList.remove('hidden');
+    $('bathFull').classList.add('done');
+    try { if (B3 && B3.parts) for (let j = 0; j < 14; j++) B3.fx.push({ m: box(B3.sc, 0.05, 0.05, 0.05, '#fff6b0', rand(-0.5, 0.5), rand(0.8, 1.2), rand(-0.3, 0.3)), v: new V3(rand(-1, 1), rand(1, 2.2), rand(-1, 1)), life: 1 }); } catch (_) { /* fine */ }
     save();
   }
   function closeBath() {
@@ -3500,14 +4285,15 @@
     if (bath.step === 'done') { spawnEmoji('✨', d.headWorld(0.4), { size: 0.5 }); if (d.flag('splashes')) d.setState('happy', 1.5); }
     bath = null;
     $('bath').classList.add('hidden');
+    $('bathFull').classList.add('hidden');
   }
   (function bathInput() {
     const c = $('bathCanvas');
     let last = null;
-    const pt = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * (280 / r.width), (e.clientY - r.top) * (280 / r.height)]; };
-    c.addEventListener('pointerdown', (e) => { e.preventDefault(); last = pt(e); try { c.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ } });
+    const pt = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * (bath.W / r.width), (e.clientY - r.top) * (bath.H / r.height)]; };
+    c.addEventListener('pointerdown', (e) => { if (!bath) return; e.preventDefault(); last = pt(e); try { c.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ } });
     c.addEventListener('pointermove', (e) => {
-      if (!last) return;
+      if (!last || !bath) return;
       const p = pt(e);
       bathRub(p[0], p[1], Math.hypot(p[0] - last[0], p[1] - last[1]));
       last = p;
@@ -3517,13 +4303,16 @@
     c.addEventListener('pointercancel', up);
   })();
   $('bathClose').addEventListener('click', closeBath);
+  $('bathQuit').addEventListener('click', closeBath);
   $('bathDone').addEventListener('click', closeBath);
+  $('bathTurn').addEventListener('click', () => { if (B3 && B3.parts) { if (B3.parts) B3.idleTurns = 0; bathTurn(false); } });
 
   // =====================================================================
   // Cooking (stove mini game) and treats
   // =====================================================================
   let cook = null;
   function openKitchen() {
+    if (!needRank('kitchen')) return;
     renderKitchen();
     $('kitchen').classList.remove('hidden');
   }
@@ -3662,6 +4451,7 @@
   // =====================================================================
   let wardDog = null;
   function openWardrobe(d) {
+    if (!needRank('boutique')) return;
     wardDog = d;
     renderWardrobe();
     $('wardrobe').classList.remove('hidden');
@@ -3753,6 +4543,7 @@
   }
   const giftThumb = (g) => (g.kind === 'item' ? thumbOf.item(g.key) : g.kind === 'toy' ? thumbOf.toy(g.key) : g.kind === 'ingredient' ? thumbOf.ing(g.key) : g.kind === 'shampoo' ? thumbOf.shampoo(g.key) : thumbOf.meal(g.key));
   function openGiftBox(f) {
+    if (!needRank('gifts')) return;
     giftFurn = f;
     const L = $('giftList');
     L.innerHTML = '';
@@ -3985,18 +4776,24 @@
   // =====================================================================
   // Scenes: home <-> walks
   // =====================================================================
+  let shortWalk = false;
   let walkInfo = null;     // what the walk was like when it started (for records)
   function recordWalk(wasAt) {
     const st = state.stats;
     st.walks = (st.walks || 0) + 1;
     if (curWeather().precip === 'rain' && !(S.env && S.env.noWeather)) st.rainWalks = (st.rainWalks || 0) + 1;
+    const first = !state.locWalks[wasAt];
     state.locWalks[wasAt] = (state.locWalks[wasAt] || 0) + 1;
+    if (first) gainXP(D.XP_MISC.firstVisit);
     st.longestWalk = Math.max(st.longestWalk || 0, Math.round(walkTotal));
     st.bestWalkCoins = Math.max(st.bestWalkCoins || 0, walkEarn);
     if (walkInfo && walkInfo.night) st.nightWalks = (st.nightWalks || 0) + 1;
     if (walkInfo && walkInfo.storm) st.stormWalks = (st.stormWalks || 0) + 1;
+    // a proper walk counts toward your rank and the place; a quick in-and-out doesn't
+    shortWalk = walkTotal < 20;
     progress('walk');
     progress('walk:' + wasAt);
+    shortWalk = false;
   }
   function goWalk(id = 'park') {
     if (!dogs.length) return;
@@ -4054,7 +4851,7 @@
     eventOnArrive();
     const first = intro && tip('visit:' + loc, { title: LOC().name, text: intro, th: TH('loc', loc) });
     if (!first) toast(intro || (parkLoot ? 'Walk time! Something is glinting in the grass… ✨' : W.muddy ? `Walk time! It's ${W.name.toLowerCase()} — expect muddy paws 🐾` : 'Walk time! Let your dog sniff the ✨ spots'));
-    if (loc === 'park') tip('minimap', { title: 'The mini-map', text: 'The little map in the top right shows sniff spots, shops and the way home. Tap it to make it bigger.', icon: 'map' });
+    if (loc === 'park' && unlockedFeat('minimap')) tip('minimap', { title: 'The mini-map', text: 'The little map in the top right shows sniff spots, shops and the way home. Tap it to make it bigger.', icon: 'map' });
   }
 
   function goHome() {
@@ -4126,7 +4923,7 @@
     const list = Object.entries(D.FINDS).filter(([, F]) => F.loc === where && F.weight > 0 && findOk(F) && (!F.glade || kind === 'glade') && (!F.where || F.where === kind));
     if (!list.length) return null;
     // secret finds are rare: a fraction of their weight, the fairy ring stone even more so
-    const w = (F) => F.weight * (F.glade ? 4 : 1) * (F.when ? 1.5 : 1) * (F.secret ? 0.22 : 1) * (F === D.FINDS.fairystone ? 0.5 : 1);
+    const w = (F) => F.weight * (F.glade ? 4 : 1) * (F.when ? 1.5 : 1) * (F.secret ? 0.22 * (starsOf(where) >= 4 ? 2 : 1) : 1) * (F === D.FINDS.fairystone ? 0.5 : 1);
     let r = Math.random() * list.reduce((s, [, F]) => s + w(F), 0);
     for (const [k, F] of list) { r -= w(F); if (r <= 0) return k; }
     return list[0][0];
@@ -4146,6 +4943,8 @@
       if (at) confetti(at, 4);
     }
     if (at) spawnEmoji(F.icon, at, { size: 0.55, life: 1.6, vy: 0.7 });
+    gainXP(had ? D.XP_MISC.dupFind : D.XP_MISC.newFind);
+    addMastery(D.LOCATIONS[F.loc] ? F.loc : loc, had ? 2 : 15);
     progress('find');
     save();
   }
@@ -4174,7 +4973,10 @@
     }
     const L = LOC().loot;
     const great = d.mood() === 'great';
-    const opts = [['coins', L.coins], ['find', L.find * (great ? 1.6 : 1) * evMult('finds')], ['ingredient', L.ingredient], ['toy', L.toy * evMult('toys')]];
+    addSpec(d, 'sniffer', 1);
+    addSpec(d, 'forager', 1);
+    const fm = specMult(d, 'forager');
+    const opts = [['coins', L.coins], ['find', L.find * (great ? 1.6 : 1) * evMult('finds') * specMult(d, 'sniffer')], ['ingredient', L.ingredient * fm], ['toy', L.toy * evMult('toys') * fm]];
     let r = Math.random() * opts.reduce((s, o) => s + o[1], 0), what = 'coins';
     for (const [k, w] of opts) { r -= w; if (r <= 0) { what = k; break; } }
     if (what === 'find') { const f = rollFind(loc, kind); if (f) { grantFind(f, pos); return; } what = 'coins'; }
@@ -4472,7 +5274,7 @@
       if (!quirk.plazaTired) { quirk.plazaTired = true; setTimeout(() => toast('The crowd has seen enough tricks for today 👏'), 900); }
       return;
     }
-    const n = Math.min(cap - quirk.plazaCoins, D.PLAZA_COINS[lvl] || 1);
+    const n = Math.min(cap - quirk.plazaCoins, Math.round((D.PLAZA_COINS[lvl] || 1) * showMult(d)));
     quirk.plazaCoins += n;
     const first = !quirk.plazaToast;
     quirk.plazaToast = true;
@@ -4760,8 +5562,8 @@
     if (flatDist(pp, q.rocket.pos) < 2.6) {
       if (!quirk.rocketToast && !locUnlocked('moon')) {
         quirk.rocketToast = true;
-        const m = Math.min(state.finds.moonstone || 0, D.LOCATIONS.moon.unlock.n);
-        toast(m >= D.LOCATIONS.moon.unlock.n ? '🚀 You have enough moonstones — tap 🚀 Rocket to fuel it!' : `🚀 The rocket needs ${D.LOCATIONS.moon.unlock.n} 🌕 moonstones from the Crystal Caves (${m}/${D.LOCATIONS.moon.unlock.n})`);
+        const m = Math.min(state.finds.moonstone || 0, moonFuel());
+        toast(m >= moonFuel() ? '🚀 You have enough moonstones — tap 🚀 Rocket to fuel it!' : `🚀 The rocket needs ${moonFuel()} 🌕 moonstones from the Crystal Caves (${m}/${moonFuel()})`);
       }
       return 'rocket';
     }
@@ -4803,9 +5605,12 @@
     progress('sled');
     toast('🛷 Wheee! The dogs want to go again');
   }
+  const moonFuel = () => (reqsOf('moon').find((U) => U.kind === 'rocket') || { n: 6 }).n;
+  // what a place still needs, in words
+  const unmet = (id) => reqsOf(id).filter((U) => U.kind !== 'rocket' && U.kind !== 'portal' && (() => { const [a, b] = reqProgress(U); return a < b; })()).map((U) => reqText(U)).join(' · ');
   function useRocket() {
     if (place !== 'park' || loc !== 'snowy') return;
-    const need = D.LOCATIONS.moon.unlock.n, have = state.finds.moonstone || 0;
+    const need = moonFuel(), have = state.finds.moonstone || 0;
     if (!state.rocket) {
       if (have < need) { toast(`🚀 Not enough fuel: bring ${need} 🌕 moonstones from the Crystal Caves (${have}/${need})`); return; }
       state.rocket = true;
@@ -4813,6 +5618,8 @@
       confetti(S.q.rocket.pos.clone().add(new V3(0, 2, 0)), 8);
       save();
     }
+    checkLocUnlocks();
+    if (!locUnlocked('moon')) { toast(`The rocket is fueled. Before liftoff: ${unmet('moon')}`); return; }
     toast('🚀 3… 2… 1… liftoff!');
     setTimeout(() => { if (place === 'park' && loc === 'snowy') travel('moon'); }, 1600);
   }
@@ -4823,6 +5630,8 @@
       checkLocUnlocks();
       save();
     }
+    checkLocUnlocks();
+    if (!locUnlocked('fairy')) { toast(`The portal shimmers, but it won't let you through yet: ${unmet('fairy')}`); return; }
     confetti(S.q.portal.pos.clone().add(new V3(0, 1.5, 0)), 8);
     toast('✨ Whoosh — through the portal!');
     setTimeout(() => { if (place === 'park' && loc === 'forest') travel('fairy'); }, 1200);
@@ -4873,7 +5682,7 @@
     if (want !== id) { setTimeout(() => toast(`This booth wants ${ALL_TRICKS[want].icon} ${ALL_TRICKS[want].name}!`), 900); return; }
     const cap = LOC().ticketCap || 40;
     if (quirk.tickets >= cap) { setTimeout(() => toast('The booths are out of tickets for tonight 🎟️'), 900); return; }
-    const n = Math.min(cap - quirk.tickets, 2 + lvl) * (eventOn('tickets') ? 2 : 1);
+    const n = Math.min(cap - quirk.tickets, Math.round((2 + lvl) * showMult(d))) * (eventOn('tickets') ? 2 : 1);
     quirk.tickets += n;
     state.tickets += n;
     state.stats.ticketsWon = (state.stats.ticketsWon || 0) + n;
@@ -5058,6 +5867,8 @@
       case 'loc': return [locUnlocked(U.loc) ? 1 : 0, 1];
       case 'portal': return [state.portal ? 1 : 0, 1];
       case 'rocket': return [Math.min(state.finds.moonstone || 0, U.n), U.n];
+      case 'rank': return [Math.min(rank(), U.n), U.n];
+      case 'stars': return [Math.min(starsOf(U.loc), U.n), U.n];
       default: return [0, 1];
     }
   }
@@ -5075,6 +5886,8 @@
       case 'loc': return `Unlock ${L(U.loc)}`;
       case 'portal': return `A hidden portal somewhere in ${L('forest')}…`;
       case 'rocket': return `Fuel the rocket in ${L('snowy')} with ${U.n} moonstones from ${L('caves')}`;
+      case 'rank': return `Reach Trainer rank ${U.n}`;
+      case 'stars': return `Earn ${U.n}★ mastery in ${L(U.loc)}`;
       default: return '';
     }
   }
@@ -5133,7 +5946,7 @@
     const out = [];
     for (const U of reqsOf(id)) {
       switch (U.kind) {
-        case 'locWalks': case 'loc': case 'finds': out.push(U.loc); break;
+        case 'locWalks': case 'loc': case 'finds': case 'stars': out.push(U.loc); break;
         case 'glades': case 'portal': out.push('forest'); break;
         case 'treasure': out.push('beach'); break;
         case 'summits': out.push('alpine'); break;
@@ -5161,6 +5974,7 @@
         const note = closed ? `Closed now · opens at ${P.hours[0]}:00` : locNote(id);
         card.innerHTML = `<div class="lcIc">${TH('loc', id)}</div><div class="txt"><b></b><small class="desc"></small><small class="note"></small></div>`;
         card.querySelector('b').textContent = P.name;
+        card.querySelector('b').insertAdjacentHTML('beforeend', ` ${starsHTML(starsOf(id))}`);
         card.querySelector('.desc').textContent = P.desc;
         card.querySelector('.note').textContent = note;
         if (!closed) {
@@ -5199,6 +6013,12 @@
     const places = Object.keys(D.LOCATIONS).filter(locUnlocked);
     if (need.startsWith('loc:') && !locUnlocked(need.slice(4))) return null;
     if ((need === 'stove' || need === 'bathtub' || need === 'toybox') && !hasItem(need)) return null;
+    if (need === 'offleash' && !unlockedFeat('offleash')) return null;
+    if (need === 'trick' && !unlockedFeat('tricks')) return null;
+    if (need === 'stove' && !unlockedFeat('kitchen')) return null;
+    if (need === 'bathtub' && !unlockedFeat('bath')) return null;
+    if (need === 'treats' && !unlockedFeat('kitchen')) return null;
+    if (C.ev === 'trick' && !unlockedFeat('tricks')) return null;
     if (need === 'offleash' && !dogs.some((d) => d.trickLvl('come') >= CONFIG.OFFLEASH_COME_LEVEL)) return null;
     if (need === 'treats' && !hasItem('stove') && places.length < 2) return null;
     let n = Array.isArray(C.n) ? C.n[0] + Math.floor(rr() * (C.n[1] - C.n[0] + 1)) : C.n;
@@ -5218,7 +6038,8 @@
     return { id: C.id, text: text.replace('{n}', n), ev, n, got: 0, reward: C.reward, done: false };
   }
   function ensureDaily() {
-    if (visit || !dogs.length) return;
+    checkAllowance();
+    if (visit || !dogs.length || !unlockedFeat('daily')) { renderDailyBadge(); return; }
     const key = clockNow.dateKey;
     if (state.daily && state.daily.date === key) return;
     const rr = ART.mulberry32(hashStr(key + '|' + state.uid));
@@ -5232,7 +6053,12 @@
     save();
   }
   function progress(ev, amt = 1) {
-    if (visit || !state.daily) return;
+    if (visit) return;
+    if (!shortWalk) {
+      if (D.XP[ev]) earn(ev, amt);
+      else if (ev.startsWith('walk:')) addMastery(ev.slice(5), 10);
+    }
+    if (!state.daily || !unlockedFeat('daily')) return;
     let changed = false;
     for (const c of state.daily.items) {
       if (c.done || c.ev !== ev) continue;
@@ -5242,6 +6068,7 @@
         c.done = true;
         state.coins += c.reward;
         state.stats.challengesDone = (state.stats.challengesDone || 0) + 1;
+        gainXP(D.XP_MISC.challenge);
         setTimeout(() => toast(`📋 Challenge done: ${c.text} · +🪙 ${c.reward}`), 700);
       }
     }
@@ -5249,6 +6076,7 @@
     if (!state.daily.bonus && state.daily.items.every((c) => c.done)) {
       state.daily.bonus = true;
       state.coins += D.CHALLENGE_BONUS.coins;
+      gainXP(D.XP_MISC.allChallenges);
       const rare = Math.random() < D.CHALLENGE_BONUS.rareChance;
       setTimeout(() => {
         toast(`🎉 All of today's challenges done! Bonus 🪙 ${D.CHALLENGE_BONUS.coins}`);
@@ -5260,7 +6088,7 @@
     if (!$('daily').classList.contains('hidden')) renderDaily();
   }
   function renderDailyBadge() {
-    const left = state.daily ? state.daily.items.filter((c) => !c.done).length : 0;
+    const left = state.daily && unlockedFeat('daily') ? state.daily.items.filter((c) => !c.done).length : 0;
     const b = $('dailyBadge');
     b.textContent = left;
     b.classList.toggle('hidden', !left);
@@ -5440,7 +6268,7 @@
   // the joystick stays out of the way: faint from the start, nearly gone after a moment of steady walking
   let joyAng = null, joyFadeT = null;
   const joyWake = () => { joyBase.classList.remove('fade'); clearTimeout(joyFadeT); joyFadeT = setTimeout(() => joyBase.classList.add('fade'), 1100); };
-  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview'];
+  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull'];
   // sheets: a soft sound when they open and close; tips step aside while one is open
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
@@ -5624,6 +6452,7 @@
   const rotNames = ['Facing you', 'Facing right', 'Facing back', 'Facing left'];
 
   function enterDecorate() {
+    refreshGates();
     mode = 'decorate';
     camFocus = null;
     if (!selectedInv || !(state.inventory[selectedInv] > 0)) selectedInv = firstInv();
@@ -5721,7 +6550,9 @@
   // Home expansion
   // =====================================================================
   function enterBuildMode() {
+    if (!needRank('rooms')) return;
     if (state.build) { toast('Already building — wait for it to finish 🏗️'); return; }
+    if (state.chunks.length >= roomCap()) { toast(`Your ${D.HOUSE_TIERS[houseTier()].name.toLowerCase()} has room for ${roomCap()} rooms. Upgrade your home for more.`); return; }
     mode = 'build';
     camFocus = null;
     buildCands = findCandidates();
@@ -5767,6 +6598,7 @@
     buildRoom();
     rebuildSite();
     if (place === 'home') confetti(new V3(b.cx * CHUNK + CHUNK / 2, 1.5, b.cz * CHUNK + CHUNK / 2));
+    gainXP(D.XP_MISC.room);
     toast(b.kind === 'garden' ? '🌷 Your new garden is ready! Garden items are in the 🛒 Shop.' : '🎉 Your new room is finished! Room for one more dog.');
     updateHud();
     save();
@@ -5829,11 +6661,21 @@
     // one card: picture, name, a short line, and the price button
     // today's sale (one home shop section) or market day (vendors on walks)
     const deal = !V ? eventOn('sale') : !tix ? eventOn('market') : null;
+    // a place you've mastered (3 stars) gets you 10% off at its vendors
+    const known = V && !tix && starsOf(V.loc) >= 3;
     const card = (th, title, sub, price, onBuy, opts = {}) => {
       let was = null;
-      if (deal && price != null && !opts.owned && !opts.label && (V || cur.id === deal.cat)) { was = price; price = Math.max(1, Math.round(price * (1 - deal.off))); }
+      const gate = opts.feat || cur.feat;
+      if (gate && !unlockedFeat(gate) && !opts.owned) { opts = Object.assign({}, opts, { disabled: true, label: `Rank ${featRank(gate)}` }); }
+      if (price != null && !opts.owned && !opts.label) {
+        let f = 1;
+        if (deal && (V || cur.id === deal.cat)) f *= 1 - deal.off;
+        if (known) f *= 0.9;
+        if (f < 1) { was = price; price = Math.max(1, Math.round(price * f)); }
+      }
       cur.cards.push({ th, title, sub, price, was, onBuy, ...opts });
     };
+    const lockSec = (f) => { cur.feat = f; if (!unlockedFeat(f)) cur.lock = featRank(f); };
     const done = () => { updateHud(); save(); renderShop(); };
     const pay = (price) => { if (tix) state.tickets -= price; else state.coins -= price; };
 
@@ -5843,22 +6685,22 @@
         if (kind === 'meal') {
           const R = D.RECIPES[key], have = state.meals.filter((m) => m.id === key).length;
           const price = tix ? R.tickets : R.price;
-          card(thumbOf.meal(key), R.name, `${R.desc}${have ? ` · you have ${have}` : ''}`, price, (pr) => { pay(pr); state.meals.push({ id: key, q: 2 }); toast(`${R.name} — give it from a dog's bubble → Treat`); done(); });
+          card(thumbOf.meal(key), R.name, `${R.desc}${have ? ` · you have ${have}` : ''}`, price, (pr) => { pay(pr); state.meals.push({ id: key, q: 2 }); toast(`${R.name} — give it from a dog's bubble → Treat`); done(); }, { feat: 'kitchen' });
         } else if (kind === 'shampoo') {
           const Sh = D.SHAMPOOS[key], price = tix ? Sh.tickets : Sh.price;
-          card(thumbOf.shampoo(key), Sh.name, shampooBlurb(key), price, (pr) => { pay(pr); state.shampoos[key] = (state.shampoos[key] || 0) + 1; done(); });
+          card(thumbOf.shampoo(key), Sh.name, shampooBlurb(key), price, (pr) => { pay(pr); state.shampoos[key] = (state.shampoos[key] || 0) + 1; done(); }, { feat: 'bath' });
         } else if (kind === 'acc') {
           const A = D.ACCESSORIES[key], owned = state.accessories.includes(key), price = tix ? A.tickets : A.price;
-          card(thumbOf.acc(key), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, price, (pr) => { pay(pr); state.accessories.push(key); toast(`${A.name} ${tix ? 'won' : 'bought'}! Open a dog bubble → Style`); done(); }, { owned });
+          card(thumbOf.acc(key), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, price, (pr) => { pay(pr); state.accessories.push(key); toast(`${A.name} ${tix ? 'won' : 'bought'}! Open a dog bubble → Style`); done(); }, { owned, feat: 'boutique' });
         } else if (kind === 'toy') {
           const t = D.TOYS[key], owned = state.toys.includes(key), price = tix ? t.tickets : t.price;
           card(thumbOf.toy(key), t.name, owned ? 'In your bag' : toyBlurb(t), price, (pr) => { pay(pr); state.toys.push(key); state.toy = key; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned });
         } else if (kind === 'ingredient') {
           const I = D.INGREDIENTS[key];
-          card(thumbOf.ing(key), I.name, `You have ${state.pantry[key] || 0} · cook at a Stove`, p0, (pr) => { pay(pr); state.pantry[key] = (state.pantry[key] || 0) + 1; done(); });
+          card(thumbOf.ing(key), I.name, `You have ${state.pantry[key] || 0} · cook at a Stove`, p0, (pr) => { pay(pr); state.pantry[key] = (state.pantry[key] || 0) + 1; done(); }, { feat: 'kitchen' });
         } else if (kind === 'outfit') {
           const O = D.OUTFITS[key], owned = state.outfits.includes(key), price = tix ? O.tickets : O.price;
-          card(wearThumb(key), O.name, owned ? 'In your closet' : `For you · ${SLOT_NAMES[O.slot]}`, price, (pr) => { pay(pr); getOutfit(key, false); done(); }, { owned });
+          card(wearThumb(key), O.name, owned ? 'In your closet' : `For you · ${SLOT_NAMES[O.slot]}`, price, (pr) => { pay(pr); getOutfit(key, false); done(); }, { owned, feat: 'clothes' });
         } else if (kind === 'find') {
           const F = D.FINDS[key], owned = !!state.finds[key];
           card(thumbOf.find(key), F.name, 'A prize for your book', p0, (pr) => { pay(pr); grantFind(key, null); done(); }, { owned });
@@ -5869,10 +6711,11 @@
       const n = state.chunks.length;
       if (state.build) card(TH('loc', 'room'), 'Add a room', `Building… ready in ${fmtTime(state.build.readyAt - Date.now())}`, null, null, { label: 'Busy' });
       else if (n >= CONFIG.MAX_CHUNKS) card(TH('loc', 'room'), 'Add a room', 'Your home is as big as it gets', null, null, { label: 'Max' });
-      else card(TH('loc', 'room'), 'Add a room', `You have ${n} · +1 dog · ${CONFIG.BUILD_MINUTES} min to build`, expandPrice(n), () => { closeShop(); enterBuildMode(); }, { keep: true });
+      else if (n >= roomCap() && unlockedFeat('rooms')) card(TH('loc', 'room'), 'Add a room', `Your ${D.HOUSE_TIERS[houseTier()].name.toLowerCase()} has room for ${roomCap()}. Upgrade your home for more.`, 0, () => { closeShop(); openHouse(); }, { keep: true, label: 'See home' });
+      else card(TH('loc', 'room'), 'Add a room', `You have ${n} · +1 dog · ${CONFIG.BUILD_MINUTES} min to build`, expandPrice(n), () => { closeShop(); enterBuildMode(); }, { keep: true, feat: 'rooms' });
       const cap = capacity(), full = dogs.length >= cap;
       const pup = todayLitter().pups.find((x) => !x.taken) || todayLitter().pups[0];
-      card(TH('dog', `${pup.breed}|${pup.coat}`), 'Adopt a puppy', full ? `Home is full (${dogs.length}/${cap}). Add a room first` : `${dogs.length}/${cap} dogs · a new litter every day`, adoptPrice(), () => { closeShop(); openLitter(); }, { keep: true, disabled: full, label: full ? null : 'See litter' });
+      card(TH('dog', `${pup.breed}|${pup.coat}`), 'Adopt a puppy', full ? `Home is full (${dogs.length}/${cap}). Add a room first` : `${dogs.length}/${cap} dogs · a new litter every day`, adoptPrice(), () => { closeShop(); openLitter(); }, { keep: true, disabled: full, label: full ? null : 'See litter', feat: dogs.length ? 'adopt' : null });
 
       section('toys', 'Toys');
       for (const [k, t] of Object.entries(D.TOYS)) {
@@ -5881,6 +6724,7 @@
         card(thumbOf.toy(k), t.name, owned ? 'In your bag' : toyBlurb(t), t.price, (pr) => { pay(pr); state.toys.push(k); state.toy = k; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned });
       }
       section('styles', 'Walls & floors');
+      lockSec('styles');
       for (const kind of ['wall', 'floor']) {
         const defs = kind === 'wall' ? D.WALLS : D.FLOORS;
         for (const [id, st] of Object.entries(defs)) {
@@ -5890,18 +6734,21 @@
         }
       }
       section('boutique', 'Boutique');
+      lockSec('boutique');
       for (const [id, A] of Object.entries(D.ACCESSORIES)) {
         if (A.unlock || A.vendor) continue;
         const owned = state.accessories.includes(id);
         card(thumbOf.acc(id), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, A.price, (pr) => { pay(pr); state.accessories.push(id); toast(`${A.name} bought! Open a dog bubble → Style`); done(); }, { owned });
       }
       section('bath', 'Shampoo');
+      lockSec('bath');
       for (const [id, Sh] of Object.entries(D.SHAMPOOS)) {
         if (Sh.vendor) continue;
         card(thumbOf.shampoo(id), Sh.name, shampooBlurb(id), Sh.price, (pr) => { pay(pr); state.shampoos[id] = (state.shampoos[id] || 0) + 1; done(); });
       }
       cur.note = 'More shampoos are sold by vendors on walks.';
       section('style', 'Your style');
+      lockSec('clothes');
       cur.note = 'Wear new clothes in Menu → You. More are sold by vendors on walks, and some can only be earned.';
       for (const [id, O] of Object.entries(D.OUTFITS)) {
         if (!O.price || O.vendor || O.unlock || O.tickets) continue;
@@ -5909,19 +6756,24 @@
         card(wearThumb(id), O.name, owned ? 'In your closet' : SLOT_NAMES[O.slot], O.price, (pr) => { pay(pr); getOutfit(id, false); done(); }, { owned });
       }
       section('pantry', 'Pantry');
+      lockSec('kitchen');
       for (const [id, I] of Object.entries(D.INGREDIENTS)) {
         if (I.price == null) continue;
         card(thumbOf.ing(id), I.name, `You have ${state.pantry[id] || 0} · cook at a Stove`, I.price, (pr) => { pay(pr); state.pantry[id] = (state.pantry[id] || 0) + 1; done(); });
       }
       for (const [cat, title] of D.CATS) {
         section(cat, plain(title));
-        const locked = cat === 'garden' && !gardensUnlocked();
+        if (cat === 'luxury') lockSec('luxury');
+        if (cat === 'garden' && !unlockedFeat('gardens')) lockSec('gardens');
+        const locked = cat === 'garden' && unlockedFeat('gardens') && !gardensUnlocked();
         if (locked) cur.note = `Unlocks with gardens: a home with ${D.GARDEN_UNLOCK_SECTIONS} rooms.`;
         for (const [t, it] of Object.entries(D.ITEMS)) {
           if (it.cat !== cat || it.price == null) continue;
           const owned = (state.inventory[t] || 0) + state.furniture.filter((f) => f.type === t).length;
           const kind = locked ? 'Needs gardens' : it.use === 'bath' ? 'Tap it for bath time' : it.use === 'cook' ? 'Tap it to cook' : it.use === 'gift' ? 'Pack gifts for visitors' : it.auto ? 'Refills itself' : it.role === 'bed' ? (it.regen ? 'Dogs rest extra fast' : 'Dogs nap on it') : it.role === 'food' ? 'Fill it with Bowls' : it.role === 'water' ? 'Fill it with Bowls' : it.use ? 'Tap it to use' : it.lounge ? 'Couch Potatoes love it' : it.garden ? 'For gardens' : it.solid ? 'Decoration' : 'Dogs can walk on it';
-          card(thumbOf.item(t), it.name, owned ? `You have ${owned} · ${kind}` : kind, it.price, (pr) => { pay(pr); state.inventory[t] = (state.inventory[t] || 0) + 1; selectedInv = t; toast(`${it.name} added. Place it in Decorate`); done(); }, { disabled: locked, label: locked ? 'Locked' : null, count: owned });
+          const use = it.use;
+          const feat = use === 'bath' ? 'bath' : use === 'cook' ? 'kitchen' : use === 'gift' ? 'gifts' : null;
+          card(thumbOf.item(t), it.name, owned ? `You have ${owned} · ${kind}` : kind, it.price, (pr) => { pay(pr); state.inventory[t] = (state.inventory[t] || 0) + 1; selectedInv = t; toast(`${it.name} added. Place it in Decorate`); done(); }, { disabled: locked, label: locked ? 'Locked' : null, count: owned, feat });
         }
       }
     }
@@ -5932,14 +6784,17 @@
     if (tabbed && !secs.some((x) => x.id === shopTab)) shopTab = 'all';
     nav.classList.toggle('hidden', !tabbed);
     if (tabbed) {
-      const tabs = [['all', 'All'], ...secs.map((x) => [x.id, x.label])];
-      if (nav.dataset.built !== tabs.map((t) => t[0]).join()) {
-        nav.dataset.built = tabs.map((t) => t[0]).join();
-        nav.innerHTML = tabs.map(([id, label]) => `<button class="seg" data-tab="${id}">${esc(label)}</button>`).join('');
+      const tabs = [['all', 'All'], ...secs.map((x) => [x.id, x.label, x.lock])];
+      const key = tabs.map((t) => t[0] + (t[2] ? '!' : '')).join();
+      if (nav.dataset.built !== key) {
+        nav.dataset.built = key;
+        nav.innerHTML = tabs.map(([id, label, lk]) => `<button class="seg${lk ? ' rlocked' : ''}" data-tab="${id}">${lk ? IC('lock') : ''}${esc(label)}</button>`).join('');
       }
       nav.querySelectorAll('.seg').forEach((b) => b.classList.toggle('sel', b.dataset.tab === shopTab));
     }
-    const show = !tabbed || shopTab === 'all' ? secs : secs.filter((x) => x.id === shopTab);
+    for (const x of secs) if (x.lock) { x.note = `Opens at Trainer rank ${x.lock}.`; if (shopTab === 'all') x.cards = x.cards.slice(0, 3); }
+    const ordered = secs.filter((x) => !x.lock).concat(secs.filter((x) => x.lock).sort((a, b) => a.lock - b.lock));
+    const show = !tabbed || shopTab === 'all' ? ordered : secs.filter((x) => x.id === shopTab);
     const money = tix ? state.tickets : state.coins;
     L.innerHTML = '';
     if (V && V.greet) { const g = document.createElement('p'); g.className = 'sub greet'; g.textContent = plain(V.greet); L.appendChild(g); }
@@ -6120,6 +6975,7 @@
     return state.litter;
   }
   function openLitter() {
+    if (dogs.length && !needRank('adopt')) return;
     litterPick = -1;
     renderLitter();
     $('litter').classList.remove('hidden');
@@ -6160,6 +7016,7 @@
     $('pupName').blur();
     const d = addDog(newDogData(name, P.breed, P.coat, P.trait), true);
     selected = d;
+    gainXP(D.XP_MISC.adopt);
     $('litter').classList.add('hidden');
     d.pet();
     toast(`Welcome home, ${name}! 🐾`);
@@ -6247,6 +7104,7 @@
       a.click();
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     } else if (b.id === 'visitBtn') {
+      if (!needRank('gifts')) return;
       $('visitCode').value = visitLink();
       $('visitBox').classList.remove('hidden');
       const n = state.furniture.filter((f) => f.gift).length;
@@ -6390,6 +7248,10 @@
   });
   // the menu: stats on top, a grid of places to go below
   function openHub() {
+    refreshGates();
+    $('tileHouseSub').textContent = D.HOUSE_TIERS[houseTier()].name;
+    const asks = Object.keys(D.STORIES).filter((o) => storyOf(o) && storyChapter(o) && storyReady(o)).length;
+    $('tilePeopleSub').textContent = asks ? `${asks} waiting for you` : 'Their stories';
     const home = place === 'home' && !visit;
     $('tileDecorate').classList.toggle('hidden', !home);
     $('hubTitle').textContent = place === 'park' ? LOC().name : 'Menu';
@@ -6397,7 +7259,7 @@
     let all = 0, got = 0;
     for (const [id] of BOOK_PAGES) { const pg = bookPage(id); all += pg.total; got += pg.done; }
     $('tileAlbumSub').textContent = `${got} of ${all} collected`;
-    const left = state.daily ? state.daily.items.filter((c) => !c.done).length : 0;
+    const left = state.daily && unlockedFeat('daily') ? state.daily.items.filter((c) => !c.done).length : 0;
     $('tileDailySub').textContent = !state.daily ? "Today's goals" : left ? `${left} left today` : 'All done today';
     computeComfort();
     renderComfortChip();
@@ -6427,7 +7289,7 @@
     if (act === 'ball' && ballHeld) { ballHeld = false; return; }
     if (act === 'ball') tutEvent('throw');
     if (act === 'menu') openHub();
-    else if (act === 'photo') enterPhoto();
+    else if (act === 'photo') { if (needRank('photo')) enterPhoto(); }
     else if (act === 'me') openCreator('edit');
     else if (act === 'event') { const def = eventDef(); if (def) news({ title: `Today: ${def.title}`, text: eventText(), th: TH('pic', def.icon) }); }
     else if (act === 'bowls') fillAll();
@@ -6435,7 +7297,10 @@
     else if (act === 'water') fillBowls('water');
     else if (act === 'ball') throwBall();
     else if (act === 'walk') openMap();
-    else if (act === 'daily') openDaily();
+    else if (act === 'daily') { if (needRank('daily')) openDaily(); }
+    else if (act === 'ranks') openRanks();
+    else if (act === 'people') openPeople();
+    else if (act === 'house') openHouse();
     else if (act === 'album') openAlbum();
     else if (act === 'ctx') ctxAction();
     else if (act === 'locinfo') locChipInfo();
@@ -6450,7 +7315,7 @@
     else if (act === 'comfort') openComfort();
     else if (act === 'leaveVisit') leaveVisit();
     else if (act === 'leash') leashButton();
-    else if (act === 'tab') { decoTab = b.dataset.tab; renderInv(); }
+    else if (act === 'tab') { if (b.dataset.tab === 'style' && !needRank('styles')) return; decoTab = b.dataset.tab; renderInv(); }
     else if (act === 'clock') {
       const W = curWeather();
       openWeather();
@@ -6569,6 +7434,70 @@
       notes.add('v9');
       return s;
     },
+    9(s) { // v9 -> v10: trainer rank and place mastery. Old players keep everything they already use.
+      const st = s.stats || {}, finds = s.finds || {}, dogsD = Array.isArray(s.dogs) ? s.dogs : [];
+      const unlocked = Array.isArray(s.unlocked) ? s.unlocked.filter((id) => D.LOCATIONS[id]) : [];
+      const lvl = (d, id) => trickLevelOf((d.tricks || {})[id] || 0);
+      const obed = Math.max(0, ...dogsD.map((d) => Object.keys(ALL_TRICKS).reduce((a, id) => a + lvl(d, id), 0)));
+      const nFinds = Object.keys(finds).filter((k) => D.FINDS[k] && finds[k] > 0).length;
+      const chunks = Array.isArray(s.chunks) ? s.chunks.length : 1;
+      const glades = Array.isArray(s.glades) ? s.glades.length : 0;
+      let xp = (st.walks || 0) * 30 + nFinds * 25 + (st.challengesDone || 0) * 40 + obed * 8 + unlocked.length * 150 +
+        dogsD.length * 50 + Math.max(0, chunks - 1) * 60 + glades * 25 + (s.treasures || 0) * 20 + (s.summits || 0) * 30;
+      // whatever you already use stays usable: your rank is at least high enough for it
+      const items = (Array.isArray(s.furniture) ? s.furniture.map((f) => f && f.type) : []).concat(Object.keys(s.inventory || {}).filter((k) => s.inventory[k] > 0));
+      const has = (t) => items.includes(t);
+      let min = 1;
+      const need = (f) => { min = Math.max(min, D.RANK_UNLOCKS[f].rank); };
+      if (dogsD.some((d) => Object.keys(d.tricks || {}).length)) need('tricks');
+      if (s.daily) need('daily');
+      if ((s.accessories || []).length) need('boutique');
+      if (has('bathtub')) need('bath');
+      if (has('stove') || (s.meals || []).length) need('kitchen');
+      if (dogsD.length > 1) need('adopt');
+      if (dogsD.some((d) => lvl(d, 'come') >= CONFIG.OFFLEASH_COME_LEVEL)) need('offleash');
+      if (chunks > 1 || s.build) need('rooms');
+      if (has('giftbox')) need('gifts');
+      if (s.gardens && Object.keys(s.gardens).length) need('gardens');
+      if (items.some((t) => D.ITEMS[t] && D.ITEMS[t].cat === 'luxury')) need('luxury');
+      for (const id of unlocked) for (const U of reqsOf(id)) if (U.kind === 'rank') min = Math.max(min, U.n);
+      xp = Math.max(xp, xpAtRank(min));
+      s.xp = Math.round(xp);
+      s.rankSeen = rankInfo(s.xp).rank;
+      // mastery from how much you've done in each place
+      const m = {};
+      for (const id of Object.keys(D.LOCATIONS)) {
+        let p = ((s.locWalks || {})[id] || 0) * 14 + Object.keys(finds).filter((k) => D.FINDS[k] && D.FINDS[k].loc === id && finds[k] > 0).length * 15;
+        if (id === 'forest') p += glades * 20;
+        if (id === 'beach') p += (s.treasures || 0) * 10;
+        if (id === 'alpine') p += (s.summits || 0) * 25;
+        if (p > 0) m[id] = Math.min(D.MASTERY_STARS[5], p);
+      }
+      s.mastery = m;
+      s.xpDay = null;
+      notes.add('v10');
+      return s;
+    },
+    10(s) { // v10 -> v11: bond hearts, specialties, exam badges. Hearts you already earned count, without a pile of cards.
+      if (Array.isArray(s.dogs)) for (const d of s.dogs) {
+        if (!d || typeof d !== 'object') continue;
+        d.bondSeen = heartsOfBond(d.bond || 0);
+        d.badges = [];
+        d.spec = null;
+        d.specPts = 0;
+        d.examDay = -1;
+      }
+      notes.add('v11');
+      return s;
+    },
+    11(s) { // v11 -> v12: home tiers and neighbor stories. A home that's already big keeps its rooms.
+      const n = Array.isArray(s.chunks) ? s.chunks.length : 1;
+      s.houseTier = Math.max(0, D.HOUSE_TIERS.findIndex((T) => T.rooms >= n));
+      s.stories = {};
+      s.allowanceDay = '';
+      notes.add('v12');
+      return s;
+    },
   };
   function migrate(raw) {
     let s = JSON.parse(JSON.stringify(raw));
@@ -6639,6 +7568,15 @@
     if (!st.look.outfit.bottom) st.look.outfit.bottom = 'jeans';
     st.lookDone = st.lookDone !== false;
     if (st.tutorial !== 'done' && st.tutorial !== 'new') st.tutorial = 'done';
+    st.houseTier = clamp(Math.round(+st.houseTier || 0), 0, D.HOUSE_TIERS.length - 1);
+    st.stories = obj(st.stories);
+    for (const k of Object.keys(st.stories)) { const v = st.stories[k]; if (!D.STORIES[k] || !v || typeof v !== 'object') delete st.stories[k]; else { v.ch = clamp(Math.round(+v.ch || 0), 0, D.STORIES[k].length); v.n = +v.n || 0; v.day = v.day == null ? -1 : +v.day; } }
+    if (typeof st.allowanceDay !== 'string') st.allowanceDay = '';
+    st.xp = Math.max(0, Math.round(+st.xp || 0));
+    st.rankSeen = clamp(Math.round(+st.rankSeen || 1), 1, D.RANK_MAX);
+    st.mastery = obj(st.mastery);
+    for (const k of Object.keys(st.mastery)) if (!D.LOCATIONS[k] || !(+st.mastery[k] >= 0)) delete st.mastery[k]; else st.mastery[k] = +st.mastery[k];
+    if (!st.xpDay || typeof st.xpDay !== 'object' || typeof st.xpDay.n !== 'object') st.xpDay = null;
     if (!st.event || typeof st.event !== 'object' || !st.event.id) st.event = null;
     return st;
   }
@@ -6831,16 +7769,17 @@
     if (curWeather().muddy && !home) tip('rain', { title: 'Rainy walks', text: 'Rain makes walks muddy. A raincoat from the shop keeps the worst off.', icon: 'rain' });
     if (state.daily) tip('daily', { title: 'Daily challenges', text: 'Three new challenges every day, in Menu → Challenges. Finish all three for a bonus.', icon: 'list' });
     if (comfort.paws >= 2) tip('comfort', { title: 'Home comfort', text: 'More furniture, combos and decorated rooms make your home cozier, and cozy homes keep dogs happy.', icon: 'comfort' });
-    if (dogs.some((d) => d.trickLvl('come') >= CONFIG.OFFLEASH_COME_LEVEL)) tip('offleash', { title: 'Off the leash', text: 'Your dog knows Come well enough to run free on walks. Tap Unleash, and Come to call them back.', icon: 'unleash' });
+    if (unlockedFeat('offleash') && dogs.some((d) => d.trickLvl('come') >= CONFIG.OFFLEASH_COME_LEVEL)) tip('offleash', { title: 'Off the leash', text: 'Your dog knows Come well enough to run free on walks. Tap Unleash, and Come to call them back.', icon: 'unleash' });
   }
 
   // =====================================================================
   // One little event every day
   // =====================================================================
+  function eventDone() { if (state.event && !state.event.done) { state.event.done = true; gainXP(D.XP_MISC.event); } }
   function eventDef() { return state.event ? D.EVENTS.find((e) => e.id === state.event.id) : null; }
   function eventOn(kind) {
     const E = state.event;
-    if (!E || visit || title || E.date !== clockNow.dateKey) return null;
+    if (!E || visit || title || E.date !== clockNow.dateKey || !unlockedFeat('events')) return null;
     const def = eventDef();
     return def && def.kind === kind ? Object.assign({}, def, E) : null;
   }
@@ -6848,7 +7787,7 @@
   const SALE_SECS = ['toys', 'styles', 'boutique', 'style', 'bath', 'pantry', 'dog', 'living', 'kitchen', 'decor', 'luxury'];
   const eventText = () => { const def = eventDef(); return def ? def.text.replace('{loc}', state.event.loc ? D.LOCATIONS[state.event.loc].name : 'the park') : ''; };
   function ensureEvent() {
-    if (visit || title || !dogs.length) return;
+    if (visit || title || !dogs.length || !unlockedFeat('events')) return;
     const key = clockNow.dateKey;
     if (state.event && state.event.date === key) return;
     const rr = ART.mulberry32(hashStr(key + '#ev#' + state.uid));
@@ -6879,7 +7818,7 @@
       if (toys.length) { const k = pick(toys); state.toys.push(k); setTimeout(() => news({ title: 'Inside the package', text: `A ${D.TOYS[k].name}! It's in your toy bag.`, th: thumbOf.toy(k) }), 4600); }
       else state.coins += 25;
     }
-    state.event.done = true;
+    eventDone();
   }
   // the clock panel: time of day and the forecast for the next in-game week
   function openWeather() {
@@ -6912,7 +7851,7 @@
     if (!E || E.date !== clockNow.dateKey || E.done) return;
     const def = eventDef();
     if (def.kind === 'birthday' && loc === 'park') {
-      E.done = true;
+      eventDone();
       setTimeout(() => {
         if (place !== 'park') return;
         const hat = !state.accessories.includes('partyhat');
@@ -6924,7 +7863,7 @@
       }, 1500);
     }
     if (def.kind === 'picnic') {
-      E.done = true;
+      eventDone();
       dogs.forEach((d) => { d.hunger = Math.max(d.hunger, 92); d.happy = Math.min(100, d.happy + 8); });
       setTimeout(() => news({ title: 'Picnic!', text: 'The neighbors shared their snacks. Full bellies all round.', th: TH('pic', '🧺') }), 1500);
     }
@@ -6963,7 +7902,7 @@
       parkRoot.remove(L.parts.root);
       lostDog = null;
       const def = eventDef();
-      state.event.done = true;
+      eventDone();
       addCoins(def.coins, L.pos);
       confetti(L.pos.clone().add(new V3(0, 1, 0)), 8);
       sfx('unlock');
@@ -7139,7 +8078,7 @@
   }
   function updateMinimap(dt) {
     const el = $('minimap');
-    const show = place === 'park' && !title && mode === 'normal' && !visit;
+    const show = place === 'park' && !title && mode === 'normal' && !visit && unlockedFeat('minimap');
     el.classList.toggle('hidden', !show);
     if (!show) { mmBig = false; el.classList.remove('big'); return; }
     mmIdle += dt;
@@ -7681,6 +8620,7 @@
     else if (!dogs.length) { if (!state.lookDone) openCreator('new'); else openStart(); }
     else welcome();
     noteSeen();
+    refreshGates();
     ensureDaily();
     ensureEvent();
     renderDailyBadge();
@@ -7699,7 +8639,10 @@
     else if (notes.has('v7')) toast('New: new places to discover, and a fresh new look!');
     else if (notes.has('v9')) { toast('New: make your own character, plus clothes to collect! Menu → You'); setTimeout(() => tip('youTile', { title: 'Make it you', text: 'Pick your body, hair and colors in Menu → You. Clothes are in the shop, at vendors on walks, and some are earned.', icon: 'person' }), 1500); }
     else if (notes.has('v8')) toast('New: a title screen, tips, daily events, sounds, a mini-map and photo mode!');
-    else toast(awayHours > 8 ? `Welcome back! A neighbor looked after ${dogs[0].name} while you were away` : `Welcome back! ${dogs[0].name} missed you 🐾`);
+    else if (!notes.has('v10')) toast(awayHours > 8 ? `Welcome back! A neighbor looked after ${dogs[0].name} while you were away` : `Welcome back! ${dogs[0].name} missed you 🐾`);
+    if (notes.has('v12') && !notes.has('v11')) setTimeout(() => tip('houseNew', { title: 'Neighbors and your home', text: 'New: neighbors have stories to tell (Menu → Neighbors), and your home can grow from a cozy flat to a dream estate (Menu → Home).', icon: 'home' }), 1200);
+    if (notes.has('v11') && !notes.has('v10')) setTimeout(() => tip('bondNew', { title: 'Hearts, badges and specialties', text: 'New: each dog has bond hearts, exam badges and a specialty (tap the hearts in a dog’s bubble). Neighbors have stories to tell, and your home can be upgraded too: see the Menu.', icon: 'heart' }), 1200);
+    if (notes.has('v10')) setTimeout(() => tip('rankNew', { title: `You're a ${rankTitle(rank())}`, text: 'New: Trainer rank and place stars. Everything you do earns XP, ranks open up new things, and stars in a place unlock the next one. Your dogs also have hearts, badges and specialties: tap the hearts in a dog’s bubble.', th: rankBadge(rank()) }), notes.size > 1 ? 4500 : 900);
     ensureEvent();
   }
   // Add ?debug to the game link to poke at the game from the browser console
@@ -7720,6 +8663,9 @@
       startVendor, tapVendor, ensureDaily, progress, openDaily, openAlbum, bookPage, get albumPage() { return albumPage; }, set albumPage(v) { albumPage = v; },
       noteSeen, mainDirt, addDirt, walkDirt, isSolid, quirkSolid, inPlaza, plazaPerformance, performTrick, spawnWalkers,
       setZoom(z) { zoom = z; }, snapCam() { updateCamera(0, true); }, get thumbWait() { return [...thumbWait]; }, pumpThumbs,
+      openHouse, upgradeHouse, houseTier, roomCap, openPeople, renderPeople, storyMeet, storyPlay, storyTrick, storyComplete, storyReady, checkAllowance, get walkersList() { return walkers; },
+      openDogSheet, renderDogSheet, startExam, examTry, examEnd, badgeRows, addSpec, heartsOfBond, get sheetDog() { return sheetDog; },
+      rank, rankInfo, xpAtRank, gainXP, earn, addMastery, starsOf, unlockedFeat, needRank, refreshGates, openRanks, renderShop, fillAll, recordWalk, get notes() { return [...notes]; },
       doEcho, startSled, useRocket, usePortal, rideWheel, carnivalTrick, turnStatue, catchFloater, craterDig, travel, canVisitNow, ctxAction, get ctxKind() { return ctxKind; },
     };
   }
