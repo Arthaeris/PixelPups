@@ -1,5 +1,5 @@
 'use strict';
-/* Voxel Paws — game content & balance.
+/* PixelPups — game content & balance.
    This is the file to edit when you want to tune prices, timers, drop rates or add content. */
 window.VP_DATA = (function () {
   // ===================================================================
