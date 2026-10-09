@@ -954,8 +954,8 @@ window.VP_DATA = (function () {
     'Legend VII', 'Legend VIII', 'Legend IX', 'Legend X', 'Paw of Fame'];
   // feature -> the rank it opens at
   const RANK_UNLOCKS = {
-    tricks:   { rank: 2, name: 'Trick Mode', text: 'Teach your dogs tricks with gestures' },
-    minimap:  { rank: 2, name: 'Mini-map', text: 'A little map on walks' },
+    tricks:   { rank: 2, name: 'Trick Mode', say: 'Trick Mode', text: 'Teach your dogs tricks with gestures' },
+    minimap:  { rank: 2, name: 'Mini-map', say: 'the mini-map', text: 'A little map on walks' },
     daily:    { rank: 3, name: 'Daily challenges', text: 'Three goals every day, with coin rewards' },
     styles:   { rank: 3, name: 'Walls & floors', text: 'New wallpaper and floors in the shop' },
     boutique: { rank: 3, name: 'Dog outfits', text: 'The boutique and dressing up your dogs' },
