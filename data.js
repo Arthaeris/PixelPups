@@ -8,7 +8,7 @@ window.VP_DATA = (function () {
   const CONFIG = {
     SAVE_KEY: 'voxelpaws-save-v1',     // keep this name so old saves are found
     BACKUP_KEY: 'voxelpaws-backup',
-    SAVE_VERSION: 7,
+    SAVE_VERSION: 8,
     AUTO_REFILL_MINUTES: 20,           // luxury feeder / fountain refill this long after being emptied
     OFFLEASH_COME_LEVEL: 2,            // Come must reach this level before a dog can go off-leash
     TIME_ZONE: 'Europe/Berlin',        // all clocks, weather and daily resets use German time
@@ -807,6 +807,31 @@ window.VP_DATA = (function () {
     { id: 'sleds',    name: 'Snow speedster',  icon: '🛷', text: 'Go sledding 10 times', stat: 'sleds', n: 10 },
   ];
 
+  // ===================================================================
+  // Phase 6: one little event every day (German time). Picked from the ones that fit
+  // your progress. kind decides what the game does; the rest is flavor.
+  // ===================================================================
+  const EVENTS = [
+    { id: 'bakery',   kind: 'gift',  icon: '🥐', title: 'Bakery surprise',   text: 'The bakery left a bag of honey biscuits at your door.', gift: ['meal', 'biscuits', 2] },
+    { id: 'samples',  kind: 'gift',  icon: '🧴', title: 'Free samples',      text: 'Two bottles of shampoo arrived in the mail. Bath time?', gift: ['shampoo', 'meadow', 2] },
+    { id: 'package',  kind: 'gift',  icon: '📦', title: 'Mystery package',   text: 'A package with your name on it is waiting by the door.', gift: ['mystery'] },
+    { id: 'veggies',  kind: 'gift',  icon: '🥕', title: 'Garden basket',     text: 'A neighbor dropped off a basket from their garden.', gift: ['ingredients', 3] },
+    { id: 'sale',     kind: 'sale',  icon: '🏷️', title: 'Shop sale',         text: 'Everything in one shop section is 25% off today.', off: 0.25 },
+    { id: 'market',   kind: 'market',icon: '🧺', title: 'Market day',        text: 'Vendors on walks sell everything 25% cheaper today.', off: 0.25, needs: 'oldtown' },
+    { id: 'birthday', kind: 'birthday', icon: '🎂', title: 'Birthday in the park', text: 'A neighbor is celebrating in the park. Drop by for cake and a gift!', coins: 20 },
+    { id: 'dogshow',  kind: 'show',  icon: '🏅', title: 'Dog show',          text: 'Every trick your dog shows on a walk earns 🪙 4 today (up to 5 times).', coins: 4, max: 5 },
+    { id: 'rainbow',  kind: 'finds', icon: '🌈', title: 'Lucky rainbow',     text: 'Sniff spots turn up collectibles twice as often today.', mult: 2 },
+    { id: 'kites',    kind: 'toys',  icon: '🪁', title: 'Kite festival',     text: 'Lost toys are everywhere on walks today.', mult: 3 },
+    { id: 'meteors',  kind: 'meteors', icon: '☄️', title: 'Meteor shower',   text: 'Tonight, rare treasures are much easier to find on walks.', mult: 4 },
+    { id: 'golden',   kind: 'golden', icon: '✨', title: 'Golden sniff',     text: 'On each walk one sniff spot shines gold. It hides 🪙 25.', coins: 25 },
+    { id: 'lostdog',  kind: 'lostdog', icon: '🐕', title: 'A lost dog',      text: 'A neighbor\'s dog ran off. Find it on a walk in {loc} and bring it home!', coins: 30 },
+    { id: 'tickets',  kind: 'tickets', icon: '🎟️', title: 'Double ticket night', text: 'Carnival booths pay double tickets tonight.', needs: 'carnival' },
+    { id: 'zoomies',  kind: 'joy',   icon: '🌀', title: 'Sunny spirits',     text: 'Dogs get happy twice as fast on walks today.', mult: 2 },
+    { id: 'spa',      kind: 'spa',   icon: '🛁', title: 'Spa day',           text: 'Every bath gets your dog perfectly clean today, whatever the shampoo.' },
+    { id: 'treasure', kind: 'treasure', icon: '🏴‍☠️', title: 'Treasure tide', text: 'Buried treasure on the beach holds twice the coins today.', needs: 'beach' },
+    { id: 'picnic',   kind: 'picnic', icon: '🧺', title: 'Picnic day',       text: 'Neighbors share snacks: your dogs\' first walk today fills their bellies.' },
+  ];
+
   return {
     CONFIG, NEEDS, STATS, TRAITS, BREEDS, LEGACY_COATS, ITEMS, CATS, TOYS, WALLS, FLOORS, DEFAULT_ROOM, WEATHER, WEATHER_ODDS, DAYLIGHT, DOG_NAMES,
     TRICKS, SECRET_TRICKS, TRICK_XP, TRICK_LEVELS, TRICK_SUCCESS, TRICK_SNAP, TRICK_FOCUS, COMPAT, FRIEND_LEVEL, NEIGHBORS, GIFTS, GIFT_CHANCE, GIFT_FRIEND_BONUS, RECALL,
@@ -815,5 +840,6 @@ window.VP_DATA = (function () {
     DIRT, LOCATIONS, FUTURE_LOCATIONS, VENDORS, FINDS, FIND_DUPLICATE_COINS, TREASURE, SUMMIT_COINS, PLAZA_COINS, CROSSWALK,
     CHALLENGES, CHALLENGE_BONUS, RECORDS,
     ECHO, CAPSULE, HELMET_CHANCE, LOW_GRAVITY, PUZZLE, SLED_COINS,
+    EVENTS,
   };
 })();
