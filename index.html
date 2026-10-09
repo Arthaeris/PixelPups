@@ -146,9 +146,38 @@
           <button class="tile" data-act="bag"><i data-i="bag"></i><b>Toy bag</b><small id="tileBagSub">Pick what to throw</small></button>
           <button class="tile" data-act="album"><i data-i="book"></i><b>Collectibles</b><small id="tileAlbumSub">Your sticker book</small></button>
           <button class="tile" data-act="daily"><i data-i="list"></i><b>Challenges</b><small id="tileDailySub">Today's goals</small><i class="badge hidden" id="dailyBadge">3</i></button>
+          <button class="tile" data-act="me"><i data-i="person"></i><b>You</b><small>Your look and clothes</small></button>
           <button class="tile" data-act="photo"><i data-i="camera"></i><b>Photo</b><small>Snap a picture of your pack</small></button>
           <button class="tile" data-act="settings"><i data-i="gear"></i><b>Settings</b><small>Sound, backups, sharing</small></button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="weather" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Weather</h2><button class="x" data-act="closeWeather" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <div id="wxNow"></div>
+        <div class="section"><i data-i="cloud"></i>This week</div>
+        <div class="wxHead"><span></span><small>Day</small><small>Night</small></div>
+        <div id="wxList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="creator" class="modal hidden">
+    <div class="sheet tall">
+      <div class="sheetHead">
+        <h2 id="crTitle">You</h2>
+        <button class="x" id="crClose" data-act="closeCreator" aria-label="Close"><i data-i="x"></i></button>
+        <div id="crTabs" class="headRow segs"><button class="seg sel" data-tab="look">Look</button><button class="seg" data-tab="clothes">Clothes</button></div>
+      </div>
+      <div class="sheetBody">
+        <div class="crPreview"><img id="crImg" alt="Your character"></div>
+        <div id="crLook"></div>
+        <div id="crClothes" class="hidden"></div>
+        <button id="crNext" class="primary hidden">Next: choose your puppy</button>
       </div>
     </div>
   </div>
