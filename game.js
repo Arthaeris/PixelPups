@@ -1,5 +1,5 @@
 'use strict';
-/* Voxel Paws — game logic and UI. Needs three.js, data.js and art.js (loaded in index.html). */
+/* PixelPups — game logic and UI. Needs three.js, data.js and art.js (loaded in index.html). */
 (function () {
   const D = window.VP_DATA;
   const ART = window.VP_ART;
@@ -7243,7 +7243,7 @@
     try { backup = JSON.parse(localStorage.getItem(CONFIG.BACKUP_KEY)); } catch (_) { /* none */ }
     $('restoreBtn').disabled = !backup;
     $('restoreInfo').textContent = backup && backup.at ? `Backup from ${new Date(backup.at).toLocaleString()}` : 'No backup yet — one is made automatically before every import or new game.';
-    $('verInfo').textContent = `Voxel Paws · save format v${CONFIG.SAVE_VERSION} · ${dogs.length} dog${dogs.length === 1 ? '' : 's'} · 🪙 ${state.coins}`;
+    $('verInfo').textContent = `PixelPups · save format v${CONFIG.SAVE_VERSION} · ${dogs.length} dog${dogs.length === 1 ? '' : 's'} · 🪙 ${state.coins}`;
     $('optSfx').checked = prefs.sfx;
     $('optMusic').checked = prefs.music;
     $('replayTut').disabled = !dogs.length;
@@ -7269,8 +7269,8 @@
   }
   function importText(text) {
     let obj;
-    try { obj = decodeSave(text); } catch (_) { toast("That code doesn't look like a Voxel Paws save"); return; }
-    if (!obj || typeof obj !== 'object' || !Array.isArray(obj.dogs)) { toast("That code doesn't look like a Voxel Paws save"); return; }
+    try { obj = decodeSave(text); } catch (_) { toast("That code doesn't look like a PixelPups save"); return; }
+    if (!obj || typeof obj !== 'object' || !Array.isArray(obj.dogs)) { toast("That code doesn't look like a PixelPups save"); return; }
     const n = obj.dogs.length;
     confirmBox('Import this save?', `It has ${n} dog${n === 1 ? '' : 's'} and 🪙 ${obj.coins || 0}. Your current game is backed up first and can be restored from Settings.`, 'Import and restart', true, () => replaceSave(obj));
   }
@@ -7295,7 +7295,7 @@
       const blob = new Blob([JSON.stringify(currentSaveObject(), null, 1)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `voxel-paws-save-${clockNow.dateKey}.json`;
+      a.download = `pixelpups-save-${clockNow.dateKey}.json`;
       document.body.appendChild(a);
       a.click();
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
@@ -7310,7 +7310,7 @@
       try { await navigator.clipboard.writeText(ta.value); toast('Visit link copied 📋'); }
       catch (_) { ta.focus(); ta.select(); try { document.execCommand('copy'); toast('Visit link copied 📋'); } catch (__) { toast('Select the link and copy it manually'); } }
     } else if (b.id === 'shareVisitBtn') {
-      if (navigator.share) { try { await navigator.share({ title: 'Visit my Voxel Paws home', url: $('visitCode').value }); } catch (_) { /* cancelled */ } }
+      if (navigator.share) { try { await navigator.share({ title: 'Visit my PixelPups home', url: $('visitCode').value }); } catch (_) { /* cancelled */ } }
       else toast('Sharing is not available here — copy the link instead');
     } else if (b.id === 'openVisitBtn') {
       const txt = $('openVisitCode').value.trim();
@@ -8416,7 +8416,7 @@
     x.textAlign = 'right';
     x.fillStyle = 'rgba(255,255,255,0.85)';
     x.shadowColor = 'rgba(0,0,0,0.25)'; x.shadowBlur = 6 * u;
-    x.fillText('Voxel Paws', c.width - 14 * u, c.height - 14 * u);
+    x.fillText('PixelPups', c.width - 14 * u, c.height - 14 * u);
     photoURL = c.toDataURL('image/jpeg', 0.92);
     sfx('shutter');
     const f = $('photoFlash');
@@ -8434,9 +8434,9 @@
   $('photoShare').addEventListener('click', async () => {
     try {
       const blob = await (await fetch(photoURL)).blob();
-      const file = new File([blob], 'voxel-paws.jpg', { type: 'image/jpeg' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: 'Voxel Paws' });
-      else await navigator.share({ title: 'Voxel Paws', url: location.href });
+      const file = new File([blob], 'pixelpups.jpg', { type: 'image/jpeg' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: 'PixelPups' });
+      else await navigator.share({ title: 'PixelPups', url: location.href });
     } catch (_) { /* cancelled */ }
   });
 
