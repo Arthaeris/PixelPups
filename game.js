@@ -351,6 +351,9 @@
       houseTier: 0,                    // 0 = cozy flat … 4 = dream estate
       stories: {},                     // neighbor -> { ch: chapters done, n: progress, day: game day of the last one }
       allowanceDay: '',
+      critters: {},                    // critter guide: id -> times spotted
+      setsDone: [],                    // collection sets finished
+      seasonsDone: [],                 // months whose set is finished
     };
   }
   let state = defaultState();
@@ -2595,7 +2598,7 @@
     }
     if (g.kind === 'souvenir') {
       // a find from any place, even one you haven't been to yet
-      const opts = Object.keys(D.FINDS).filter((k) => !D.FINDS[k].secret && D.FINDS[k].weight > 0);
+      const opts = Object.keys(D.FINDS).filter((k) => !D.FINDS[k].secret && D.FINDS[k].weight > 0 && D.LOCATIONS[D.FINDS[k].loc]);
       const k = pick(opts), F = D.FINDS[k], P = D.LOCATIONS[F.loc];
       toast(`🎁 ${who} brought you a souvenir from ${P.name}…`);
       setTimeout(() => grantFind(k, at), 900);
@@ -3361,6 +3364,132 @@
     }).join('') + (known.length < total ? `<p class="sub">${total - known.length} more neighbor${total - known.length > 1 ? 's have' : ' has'} a story to share.</p>` : '');
   }
   $('people').addEventListener('click', (e) => { if (e.target.id === 'people' || e.target.closest('[data-act="closePeople"]')) $('people').classList.add('hidden'); });
+
+  // =====================================================================
+  // Rotating content: weekly specials, monthly sets, collection sets and the critter guide
+  // =====================================================================
+  // weeks start on Monday (German time), so specials change overnight from Sunday to Monday
+  function weekKey() {
+    const [y, m, d] = clockNow.dateKey.split('-').map(Number);
+    return Math.floor((Date.UTC(y, m - 1, d) / 86400000 + 3) / 7);
+  }
+  function weekRand(salt) { return ART.mulberry32(hashStr(`${weekKey()}|${salt}|${state.uid}`)); }
+  function pickN(list, n, rr) {
+    const a = list.slice(), out = [];
+    while (out.length < n && a.length) out.push(a.splice(Math.floor(rr() * a.length), 1)[0]);
+    return out;
+  }
+  // a vendor's specials: two things from shops in other places, and now and then a rare piece
+  function vendorSpecials(vid) {
+    const V = D.VENDORS[vid];
+    if (!V || V.currency === 'tickets') return [];
+    const own = new Set(V.stock.map(([k, key]) => k + ':' + key));
+    const pool = [];
+    for (const [id, W] of Object.entries(D.VENDORS)) {
+      if (id === vid || W.currency === 'tickets') continue;
+      for (const [k, key, p0] of W.stock) if (['acc', 'outfit', 'toy', 'shampoo', 'meal'].includes(k) && !own.has(k + ':' + key) && !pool.some((x) => x[0] === k && x[1] === key)) pool.push([k, key, p0, id]);
+    }
+    const rr = weekRand(vid);
+    const out = pickN(pool, 2, rr);
+    if (rr() < 0.3) {
+      const rares = Object.keys(D.ITEMS).filter((k) => D.ITEMS[k].rare);
+      out.push(['item', rares[Math.floor(rr() * rares.length)], 650]);
+    }
+    return out;
+  }
+  // the home shop's three deals of the week
+  function homeSpecials() {
+    const pool = [];
+    for (const [k, t] of Object.entries(D.TOYS)) if (t.price && !t.vendor && k !== 'tennis') pool.push(['toy', k]);
+    for (const [k, it] of Object.entries(D.ITEMS)) if (it.price != null && !it.garden && it.cat !== 'luxury') pool.push(['item', k]);
+    for (const [k, A] of Object.entries(D.ACCESSORIES)) if (A.price && !A.unlock && !A.vendor) pool.push(['acc', k]);
+    return pickN(pool, 3, weekRand('home'));
+  }
+
+  // ----- monthly sets -----
+  function rollSeason() {
+    const S = D.SEASONS[clockNow.month];
+    if (!S) return null;
+    const ids = S.finds.map((f) => f[0]);
+    const missing = ids.filter((k) => !state.finds[k]);
+    return pick(missing.length && Math.random() < 0.7 ? missing : ids);
+  }
+  function checkSeasons() {
+    state.seasonsDone = state.seasonsDone || [];
+    for (const [m, S] of Object.entries(D.SEASONS)) {
+      const key = `${m}`;
+      if (state.seasonsDone.includes(key) || !S.finds.every(([k]) => state.finds[k])) continue;
+      state.seasonsDone.push(key);
+      giveReward(S.reward);
+      sfx('unlock');
+      news({ title: `${S.name} set complete!`, text: `You found all four ${D.MONTHS[m]} things. You got ${rewardText(S.reward)}.`, th: TH('pic', S.finds[0][2]) });
+    }
+  }
+  // ----- collection sets -----
+  function checkSets() {
+    state.setsDone = state.setsDone || [];
+    for (const S of D.SETS) {
+      if (state.setsDone.includes(S.id) || !S.finds.every((k) => state.finds[k])) continue;
+      state.setsDone.push(S.id);
+      giveReward(S.reward);
+      sfx('unlock');
+      news({ title: `Set complete: ${S.name}`, text: `You got ${rewardText(S.reward)}.`, th: TH('pic', D.FINDS[S.finds[0]].icon) });
+    }
+  }
+  function giveReward(R) {
+    if (R.coins) state.coins += R.coins;
+    if (R.xp) gainXP(R.xp);
+    for (const id of [R.wall, R.floor]) if (id && !state.styles.includes(id)) state.styles.push(id);
+    if (R.item) { state.inventory[R.item] = (state.inventory[R.item] || 0) + 1; if (D.ITEMS[R.item].rare) seeRare(R.item); }
+    updateHud();
+  }
+  // ----- critters -----
+  function critterOk(C) {
+    const W = localWeather(), night = isNight();
+    switch (C.when) {
+      case 'night': return night;
+      case 'day': return !night;
+      case 'rain': return W.precip === 'rain';
+      case 'snow': return W.precip === 'snow';
+      case 'sun': return weatherId === 'sun' && !night;
+      default: return true;
+    }
+  }
+  function spotCritter(id, pos) {
+    const C = D.CRITTERS[id];
+    if (!C || !unlockedFeat('critters') || visit) return;
+    state.critters = state.critters || {};
+    const first = !state.critters[id];
+    state.critters[id] = (state.critters[id] || 0) + 1;
+    if (first) {
+      gainXP(25);
+      sfx('find');
+      news({ title: 'New for your critter guide', text: C.name, th: TH('pic', C.icon) });
+      setTimeout(() => tip('critters', { title: 'Critter guide', text: 'Your dogs sniff out little animals now and then. Some only come out at night, in the rain or in the snow. See Menu → Collectibles.', icon: 'search' }), 2500);
+      if (Object.keys(D.CRITTERS).every((k) => state.critters[k]) && !state.crittersDone) {
+        state.crittersDone = true;
+        giveReward(D.CRITTER_REWARD);
+        setTimeout(() => news({ title: 'Critter guide complete!', text: `Every last one. You got ${rewardText(D.CRITTER_REWARD)}.`, th: TH('pic', '🐾') }), 1500);
+      }
+    } else toast(`${plain(C.name)} again`);
+    if (pos) try { spawnEmoji(C.icon, pos.clone().add(new V3(rand(-0.6, 0.6), 0.9, rand(-0.6, 0.6))), { size: 0.6, life: 1.8, vy: 0.4 }); } catch (_) { /* fine */ }
+    save();
+  }
+  // a sniff sometimes turns up a critter instead of loot
+  function sniffCritter(d) {
+    if (!unlockedFeat('critters') || Math.random() > D.CRITTER_CHANCE) return false;
+    const here = Object.keys(D.CRITTERS).filter((k) => D.CRITTERS[k].loc === loc && !D.CRITTERS[k].ev && critterOk(D.CRITTERS[k]));
+    if (!here.length) return false;
+    const fresh = here.filter((k) => !(state.critters || {})[k]);
+    spotCritter(pick(fresh.length && Math.random() < 0.75 ? fresh : here), d.root.position);
+    return true;
+  }
+  const CRITTER_EV = Object.fromEntries(Object.entries(D.CRITTERS).filter(([, C]) => C.ev).map(([k, C]) => [C.ev, k]));
+  function critterWhere(C) {
+    const where = locUnlocked(C.loc) ? D.LOCATIONS[C.loc].name : 'Somewhere new';
+    const when = { night: 'at night', day: 'by day', rain: 'in the rain', snow: 'in the snow', sun: 'on sunny days' }[C.when];
+    return when ? `${where}, ${when}` : where;
+  }
 
   // gestures
   const tmEl = $('trickMode'), ringEl = $('tmRing');
@@ -4946,6 +5075,7 @@
     gainXP(had ? D.XP_MISC.dupFind : D.XP_MISC.newFind);
     addMastery(D.LOCATIONS[F.loc] ? F.loc : loc, had ? 2 : 15);
     progress('find');
+    if (!had) { checkSets(); checkSeasons(); }
     save();
   }
   function walkLoot(d, spot) {
@@ -4953,6 +5083,7 @@
     const kind = spot && spot.kind;
     if (spot && spot.golden) { spot.golden = false; if (spot.sparkle) spot.sparkle.scale.setScalar(0.5); addCoins(eventOn('golden').coins, pos); confetti(pos.clone().add(new V3(0, 1, 0)), 6); toast(`${d.name} sniffed out the golden spot! 🪙 ${eventOn('golden').coins}`); sfx('find'); return; }
     if (Math.random() < D.RARE_FIND * (kind === 'glade' ? 4 : 1) * (d.mood() === 'great' ? 1.5 : 1) * (eventOn('meteors') && isNight() ? eventOn('meteors').mult : 1)) { findRare(pos); return; }
+    if (!kind && sniffCritter(d)) return;
     if (kind === 'pool' && Math.random() < 0.7) { grantFind(pick(['starfish', 'crabclaw']), pos); return; }
     if (kind === 'crystal') {
       const c = S.q.crystals.find((x) => x.spot === spot);
@@ -4979,7 +5110,7 @@
     const opts = [['coins', L.coins], ['find', L.find * (great ? 1.6 : 1) * evMult('finds') * specMult(d, 'sniffer')], ['ingredient', L.ingredient * fm], ['toy', L.toy * evMult('toys') * fm]];
     let r = Math.random() * opts.reduce((s, o) => s + o[1], 0), what = 'coins';
     for (const [k, w] of opts) { r -= w; if (r <= 0) { what = k; break; } }
-    if (what === 'find') { const f = rollFind(loc, kind); if (f) { grantFind(f, pos); return; } what = 'coins'; }
+    if (what === 'find') { const f = (D.SEASONS[clockNow.month] && Math.random() < 0.22 && rollSeason()) || rollFind(loc, kind); if (f) { grantFind(f, pos); return; } what = 'coins'; }
     if (what === 'ingredient') { findIngredient(pos, LOC().ingredients); return; }
     if (what === 'toy') { grantToy(rollToy(), pos); return; }
     addCoins(Math.round(2 * d.mod('sniffCoins')), pos);
@@ -6054,6 +6185,7 @@
   }
   function progress(ev, amt = 1) {
     if (visit) return;
+    if (CRITTER_EV[ev] && place === 'park') spotCritter(CRITTER_EV[ev], null);
     if (!shortWalk) {
       if (D.XP[ev]) earn(ev, amt);
       else if (ev.startsWith('walk:')) addMastery(ev.slice(5), 10);
@@ -6127,6 +6259,7 @@
   // =====================================================================
   const BOOK_PAGES = [['toys', ['toy', 'tennis'], 'Toys'], ['park', null, 'Park'], ['oldtown', null, 'Old Town'], ['forest', null, 'Forest'], ['beach', null, 'Beach'],
     ['alpine', null, 'Alpine'], ['caves', null, 'Caves'], ['snowy', null, 'Snowy'], ['carnival', null, 'Carnival'], ['fairy', null, 'Fairy'], ['moon', null, 'Moon'],
+    ['season', ['pic', '🍂'], 'Seasons'], ['sets', ['pic', '🧩'], 'Sets'], ['critters', ['pic', '🐾'], 'Critters'],
     ['rare', ['item', 'goldstatue'], 'Rare'], ['tricks', ['pic', '🎓'], 'Tricks'], ['breeds', ['dog', 'retriever|golden'], 'Breeds'], ['records', ['pic', '🏆'], 'Records']];
   const WHEN_TEXT = { night: 'Only at night', rain: 'Only in the rain', snow: 'Only when it snows', sun: 'Only on sunny days', day: 'Only by day', december: 'Only in December' };
   function recordValue(stat) {
@@ -6151,6 +6284,13 @@
         if (F.loc !== id) continue;
         E.push({ thk: ['pic', F.icon], name: F.name, got: !!state.finds[k], secret: !!F.secret, sub: state.finds[k] > 1 ? `×${state.finds[k]}` : F.where === 'pool' ? 'In tide pools' : F.where === 'treasure' ? (F.loc === 'moon' ? 'In a space capsule' : 'In buried treasure') : F.where === 'crystal' ? 'In glowing crystals' : F.where === 'prize' ? 'Prize booth' : F.where === 'puzzle' ? 'A puzzle reward' : F.glade ? 'In a hidden glade' : WHEN_TEXT[F.when] || '' });
       }
+    } else if (id === 'season') {
+      const cm = clockNow.month, months = Object.keys(D.SEASONS).map(Number).sort((a, b) => ((a - cm + 12) % 12) - ((b - cm + 12) % 12));
+      for (const m of months) for (const [k, name, icon] of D.SEASONS[m].finds) E.push({ thk: ['pic', icon], name, got: !!state.finds[k], secret: false, sub: state.finds[k] ? D.MONTHS[m] : m === cm ? 'This month, while sniffing' : `Turns up in ${D.MONTHS[m]}` });
+    } else if (id === 'sets') {
+      for (const S of D.SETS) E.push({ set: S, name: S.name, got: (state.setsDone || []).includes(S.id), secret: false });
+    } else if (id === 'critters') {
+      for (const [k, C] of Object.entries(D.CRITTERS)) E.push({ thk: ['pic', C.icon], name: C.name, got: !!(state.critters || {})[k], secret: false, sub: (state.critters || {})[k] ? critterWhere(C) : locUnlocked(C.loc) ? critterWhere(C) : 'Somewhere you haven’t been' });
     } else if (id === 'rare') {
       for (const [k, it] of Object.entries(D.ITEMS)) if (it.rare) E.push({ thk: ['item', k], name: it.name, got: state.seen.rares.includes(k), secret: false, sub: 'Found or gifted' });
     } else if (id === 'tricks') {
@@ -6163,6 +6303,7 @@
     return { entries: E, done: E.filter((e) => e.got).length, total: E.length };
   }
   let albumPage = 'toys';
+  const bookPages = () => BOOK_PAGES.filter(([id]) => id !== 'critters' || unlockedFeat('critters'));
   function openAlbum() {
     renderAlbum();
     $('album').classList.remove('hidden');
@@ -6171,7 +6312,7 @@
     const tabs = $('albumTabs');
     tabs.innerHTML = '';
     let all = 0, got = 0;
-    for (const [id, icon, name] of BOOK_PAGES) {
+    for (const [id, icon, name] of bookPages()) {
       const p = bookPage(id);
       all += p.total;
       got += p.done;
@@ -6190,8 +6331,23 @@
     const owned = reward && state.accessories.includes(reward[0]);
     head.innerHTML = reward ? `<span class="rwd">${thumbOf.acc(reward[0])}</span><span>${owned ? `Page reward unlocked: ${esc(reward[1].name)}` : `Complete this page for the ${esc(reward[1].name)} (${page.done}/${page.total})`}</span>` : '';
     if (D.LOCATIONS[albumPage] && !locUnlocked(albumPage)) head.insertAdjacentText('beforeend', ' · A place you haven’t found yet. Neighbors sometimes bring souvenirs.');
+    const S = D.SEASONS[clockNow.month];
+    if (albumPage === 'season' && S) { const n = S.finds.filter(([k]) => state.finds[k]).length; head.innerHTML = `<span class="rwd">${TH('pic', S.finds[0][2])}</span><span>${(state.seasonsDone || []).includes(String(clockNow.month)) ? `${esc(S.name)} set complete!` : `This month: ${esc(S.name)} (${n}/4). Find all four for ${esc(rewardText(S.reward))}.`} Each month brings four new things.</span>`; }
+    if (albumPage === 'sets') head.innerHTML = `<span>Things from all over that belong together. Finish a set for a prize.</span>`;
+    if (albumPage === 'critters') head.innerHTML = `<span class="rwd">${TH('pic', '🐾')}</span><span>${state.crittersDone ? 'Every critter spotted!' : `Your dogs sniff out little animals now and then. Spot them all for ${esc(rewardText(D.CRITTER_REWARD))}.`}</span>`;
     const G = $('albumGrid');
     G.innerHTML = '';
+    G.classList.toggle('setList', albumPage === 'sets');
+    if (albumPage === 'sets') {
+      for (const S2 of D.SETS) {
+        const have = S2.finds.filter((k) => state.finds[k]).length, done = (state.setsDone || []).includes(S2.id);
+        const row = document.createElement('div');
+        row.className = 'row setRow' + (done ? ' done' : '');
+        row.innerHTML = `<div class="txt"><b>${esc(S2.name)} <span class="cnt">${have}/${S2.finds.length}</span></b><div class="setPics">${S2.finds.map((k) => `<span class="sp${state.finds[k] ? '' : ' miss'}" title="${state.finds[k] ? esc(D.FINDS[k].name) : '?'}">${state.finds[k] ? TH('pic', D.FINDS[k].icon) : IC('question')}</span>`).join('')}</div><small>${done ? 'Complete' : `Prize: ${esc(rewardText(S2.reward))}`}</small></div>`;
+        G.appendChild(row);
+      }
+      return;
+    }
     for (const e of page.entries) {
       const c = document.createElement('div');
       c.className = 'toyCard' + (e.got ? '' : e.secret ? ' secret' : ' sil');
@@ -6671,6 +6827,7 @@
         let f = 1;
         if (deal && (V || cur.id === deal.cat)) f *= 1 - deal.off;
         if (known) f *= 0.9;
+        if (opts.off) f *= 1 - opts.off;
         if (f < 1) { was = price; price = Math.max(1, Math.round(price * f)); }
       }
       cur.cards.push({ th, title, sub, price, was, onBuy, ...opts });
@@ -6680,6 +6837,32 @@
     const pay = (price) => { if (tix) state.tickets -= price; else state.coins -= price; };
 
     if (V) {
+      const sp = vendorSpecials(shopVendor);
+      if (sp.length) {
+        section('week', 'This week only');
+        cur.note = 'New specials every Monday: things from shops in other places, and sometimes something rare.';
+        for (const [kind, key, p0] of sp) {
+          if (kind === 'item') {
+            const it = D.ITEMS[key], have = (state.inventory[key] || 0) + state.furniture.filter((f) => f.type === key).length;
+            card(thumbOf.item(key), it.name, have ? `You have ${have} · rare` : 'Rare · hardly ever for sale', p0, (pr) => { pay(pr); state.inventory[key] = (state.inventory[key] || 0) + 1; seeRare(key); toast(`${it.name} added. Place it in Decorate`); done(); });
+          } else if (kind === 'acc') {
+            const A = D.ACCESSORIES[key], owned = state.accessories.includes(key);
+            card(thumbOf.acc(key), A.name, owned ? 'In your wardrobe' : `For the ${A.slot} · usually ${D.VENDORS[sp.find((x) => x[1] === key)[3]].name}`, Math.round(A.price * 1.3), (pr) => { pay(pr); state.accessories.push(key); toast(`${A.name} bought! Open a dog bubble → Style`); done(); }, { owned, feat: 'boutique' });
+          } else if (kind === 'outfit') {
+            const O = D.OUTFITS[key], owned = state.outfits.includes(key);
+            card(wearThumb(key), O.name, owned ? 'In your closet' : `For you · ${SLOT_NAMES[O.slot]}`, Math.round(O.price * 1.3), (pr) => { pay(pr); getOutfit(key, false); done(); }, { owned, feat: 'clothes' });
+          } else if (kind === 'toy') {
+            const t = D.TOYS[key], owned = state.toys.includes(key);
+            card(thumbOf.toy(key), t.name, owned ? 'In your bag' : toyBlurb(t), Math.round(t.price * 1.3), (pr) => { pay(pr); state.toys.push(key); state.toy = key; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned });
+          } else if (kind === 'shampoo') {
+            const Sh = D.SHAMPOOS[key];
+            card(thumbOf.shampoo(key), Sh.name, shampooBlurb(key), Math.round(Sh.price * 1.3), (pr) => { pay(pr); state.shampoos[key] = (state.shampoos[key] || 0) + 1; done(); }, { feat: 'bath' });
+          } else if (kind === 'meal') {
+            const Rc = D.RECIPES[key];
+            card(thumbOf.meal(key), Rc.name, Rc.desc, Math.round(Rc.price * 1.3), (pr) => { pay(pr); state.meals.push({ id: key, q: 2 }); toast(`${Rc.name} — give it from a dog's bubble → Treat`); done(); }, { feat: 'kitchen' });
+          }
+        }
+      }
       section('stock', V.name);
       for (const [kind, key, p0] of V.stock) {
         if (kind === 'meal') {
@@ -6717,6 +6900,17 @@
       const pup = todayLitter().pups.find((x) => !x.taken) || todayLitter().pups[0];
       card(TH('dog', `${pup.breed}|${pup.coat}`), 'Adopt a puppy', full ? `Home is full (${dogs.length}/${cap}). Add a room first` : `${dogs.length}/${cap} dogs · a new litter every day`, adoptPrice(), () => { closeShop(); openLitter(); }, { keep: true, disabled: full, label: full ? null : 'See litter', feat: dogs.length ? 'adopt' : null });
 
+      section('week', 'Deals of the week');
+      cur.note = '25% off, new every Monday.';
+      for (const [kind, key] of homeSpecials()) {
+        if (kind === 'toy') { const t = D.TOYS[key], owned = state.toys.includes(key); card(thumbOf.toy(key), t.name, owned ? 'In your bag' : toyBlurb(t), t.price, (pr) => { pay(pr); state.toys.push(key); state.toy = key; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned, off: 0.25 }); }
+        else if (kind === 'acc') { const A = D.ACCESSORIES[key], owned = state.accessories.includes(key); card(thumbOf.acc(key), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}`, A.price, (pr) => { pay(pr); state.accessories.push(key); toast(`${A.name} bought! Open a dog bubble → Style`); done(); }, { owned, off: 0.25, feat: 'boutique' }); }
+        else {
+          const it = D.ITEMS[key], use = it.use;
+          const feat = use === 'bath' ? 'bath' : use === 'cook' ? 'kitchen' : use === 'gift' ? 'gifts' : null;
+          card(thumbOf.item(key), it.name, 'For your home', it.price, (pr) => { pay(pr); state.inventory[key] = (state.inventory[key] || 0) + 1; selectedInv = key; toast(`${it.name} added. Place it in Decorate`); done(); }, { off: 0.25, feat });
+        }
+      }
       section('toys', 'Toys');
       for (const [k, t] of Object.entries(D.TOYS)) {
         if (t.price == null || k === 'tennis' || t.vendor) continue;
@@ -7257,7 +7451,7 @@
     $('hubTitle').textContent = place === 'park' ? LOC().name : 'Menu';
     $('tileBagSub').textContent = `${state.toys.length} toys · throwing the ${(D.TOYS[state.toy] || D.TOYS.tennis).name.toLowerCase()}`;
     let all = 0, got = 0;
-    for (const [id] of BOOK_PAGES) { const pg = bookPage(id); all += pg.total; got += pg.done; }
+    for (const [id] of bookPages()) { const pg = bookPage(id); all += pg.total; got += pg.done; }
     $('tileAlbumSub').textContent = `${got} of ${all} collected`;
     const left = state.daily && unlockedFeat('daily') ? state.daily.items.filter((c) => !c.done).length : 0;
     $('tileDailySub').textContent = !state.daily ? "Today's goals" : left ? `${left} left today` : 'All done today';
@@ -7498,6 +7692,24 @@
       notes.add('v12');
       return s;
     },
+    12(s) { // v12 -> v13: critter guide, monthly sets, collection sets. Sets you already finished pay out right away.
+      s.critters = {};
+      s.seasonsDone = [];
+      s.setsDone = [];
+      const finds = s.finds || {}, names = [];
+      for (const S of D.SETS) {
+        if (!S.finds.every((k) => finds[k])) continue;
+        s.setsDone.push(S.id);
+        names.push(S.name);
+        const R = S.reward;
+        s.coins = (s.coins || 0) + (R.coins || 0);
+        s.xp = (s.xp || 0) + (R.xp || 0);
+        if (R.item) { s.inventory = s.inventory || {}; s.inventory[R.item] = (s.inventory[R.item] || 0) + 1; }
+      }
+      s.setsWelcome = names;
+      notes.add('v13');
+      return s;
+    },
   };
   function migrate(raw) {
     let s = JSON.parse(JSON.stringify(raw));
@@ -7568,6 +7780,11 @@
     if (!st.look.outfit.bottom) st.look.outfit.bottom = 'jeans';
     st.lookDone = st.lookDone !== false;
     if (st.tutorial !== 'done' && st.tutorial !== 'new') st.tutorial = 'done';
+    st.critters = obj(st.critters);
+    for (const k of Object.keys(st.critters)) if (!D.CRITTERS[k]) delete st.critters[k];
+    st.setsDone = Array.isArray(st.setsDone) ? st.setsDone.filter((id) => D.SETS.some((S) => S.id === id)) : [];
+    st.seasonsDone = Array.isArray(st.seasonsDone) ? st.seasonsDone.filter((m) => D.SEASONS[m]).map(String) : [];
+    st.crittersDone = !!st.crittersDone;
     st.houseTier = clamp(Math.round(+st.houseTier || 0), 0, D.HOUSE_TIERS.length - 1);
     st.stories = obj(st.stories);
     for (const k of Object.keys(st.stories)) { const v = st.stories[k]; if (!D.STORIES[k] || !v || typeof v !== 'object') delete st.stories[k]; else { v.ch = clamp(Math.round(+v.ch || 0), 0, D.STORIES[k].length); v.n = +v.n || 0; v.day = v.day == null ? -1 : +v.day; } }
@@ -8640,7 +8857,11 @@
     else if (notes.has('v9')) { toast('New: make your own character, plus clothes to collect! Menu → You'); setTimeout(() => tip('youTile', { title: 'Make it you', text: 'Pick your body, hair and colors in Menu → You. Clothes are in the shop, at vendors on walks, and some are earned.', icon: 'person' }), 1500); }
     else if (notes.has('v8')) toast('New: a title screen, tips, daily events, sounds, a mini-map and photo mode!');
     else if (!notes.has('v10')) toast(awayHours > 8 ? `Welcome back! A neighbor looked after ${dogs[0].name} while you were away` : `Welcome back! ${dogs[0].name} missed you 🐾`);
-    if (notes.has('v12') && !notes.has('v11')) setTimeout(() => tip('houseNew', { title: 'Neighbors and your home', text: 'New: neighbors have stories to tell (Menu → Neighbors), and your home can grow from a cozy flat to a dream estate (Menu → Home).', icon: 'home' }), 1200);
+    const sw = state.setsWelcome;
+    if (sw && sw.length) setTimeout(() => news({ title: 'Collection sets!', text: `You had already finished: ${sw.join(', ')}. Your prizes are in.`, th: TH('pic', '🧩') }), 2500);
+    delete state.setsWelcome;
+    if (notes.has('v13') && !notes.has('v12')) setTimeout(() => tip('seasonNew', { title: 'Something new every week and month', text: 'New: vendors have specials every week, each month hides four new things to find, collection sets give prizes, and there’s a critter guide. See Menu → Collectibles.', icon: 'book' }), 1200);
+    if (notes.has('v12') && !notes.has('v11')) setTimeout(() => tip('houseNew', { title: 'Neighbors and your home', text: 'New: neighbors have stories to tell (Menu → Neighbors), your home can grow into a dream estate (Menu → Home), vendors have weekly specials, and your book has sets, monthly finds and a critter guide.', icon: 'home' }), 1200);
     if (notes.has('v11') && !notes.has('v10')) setTimeout(() => tip('bondNew', { title: 'Hearts, badges and specialties', text: 'New: each dog has bond hearts, exam badges and a specialty (tap the hearts in a dog’s bubble). Neighbors have stories to tell, and your home can be upgraded too: see the Menu.', icon: 'heart' }), 1200);
     if (notes.has('v10')) setTimeout(() => tip('rankNew', { title: `You're a ${rankTitle(rank())}`, text: 'New: Trainer rank and place stars. Everything you do earns XP, ranks open up new things, and stars in a place unlock the next one. Your dogs also have hearts, badges and specialties: tap the hearts in a dog’s bubble.', th: rankBadge(rank()) }), notes.size > 1 ? 4500 : 900);
     ensureEvent();
@@ -8663,6 +8884,7 @@
       startVendor, tapVendor, ensureDaily, progress, openDaily, openAlbum, bookPage, get albumPage() { return albumPage; }, set albumPage(v) { albumPage = v; },
       noteSeen, mainDirt, addDirt, walkDirt, isSolid, quirkSolid, inPlaza, plazaPerformance, performTrick, spawnWalkers,
       setZoom(z) { zoom = z; }, snapCam() { updateCamera(0, true); }, get thumbWait() { return [...thumbWait]; }, pumpThumbs,
+      weekKey, vendorSpecials, homeSpecials, rollSeason, checkSets, checkSeasons, spotCritter, sniffCritter, critterOk,
       openHouse, upgradeHouse, houseTier, roomCap, openPeople, renderPeople, storyMeet, storyPlay, storyTrick, storyComplete, storyReady, checkAllowance, get walkersList() { return walkers; },
       openDogSheet, renderDogSheet, startExam, examTry, examEnd, badgeRows, addSpec, heartsOfBond, get sheetDog() { return sheetDog; },
       rank, rankInfo, xpAtRank, gainXP, earn, addMastery, starsOf, unlockedFeat, needRank, refreshGates, openRanks, renderShop, fillAll, recordWalk, get notes() { return [...notes]; },
