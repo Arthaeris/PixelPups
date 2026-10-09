@@ -339,6 +339,9 @@
       rocket: false,                   // rocket fueled for the moon
       puzzles: 0,                      // fairy statue puzzles solved
       tips: [],                        // first-time tips already shown
+      look: JSON.parse(JSON.stringify(D.DEFAULT_LOOK)),   // your character
+      outfits: ['tee', 'jeans'],       // clothes you own
+      lookDone: false,                 // new players make their character first
       tutorial: 'new',                 // the guided start: 'new' until done or skipped
       event: null,                     // today's little event
     };
@@ -369,7 +372,8 @@
   const encCooldown = new Map();
 
   // =====================================================================
-  // Time & weather (always German time)
+  // Time & weather. One in-game day lasts one real hour (German time):
+  // :00 midnight, :15 sunrise, :30 midday, :45 sunset. Weather changes every half day.
   // =====================================================================
   const berlinFmt = (() => {
     try {
@@ -377,6 +381,7 @@
     } catch (_) { return null; }
   })();
   let timeOverride = null, weatherOverride = null;
+  const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   function berlinNow() {
     let p = {};
     if (berlinFmt) {
@@ -385,19 +390,38 @@
       const d = new Date(), pad = (n) => String(n).padStart(2, '0');
       p = { year: d.getFullYear(), month: pad(d.getMonth() + 1), day: pad(d.getDate()), hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds() };
     }
-    let hour = (+p.hour % 24) + +p.minute / 60 + +p.second / 3600;
+    const realHour = (+p.hour % 24) + +p.minute / 60 + +p.second / 3600;
+    // every real hour is one game day, counted from a fixed start
+    const gameDay = Math.floor(Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24) / 3600000);
+    let hour = ((+p.minute + +p.second / 60) / 60) * 24;
     if (timeOverride !== null) hour = timeOverride;
     const hh = Math.floor(hour), mm = Math.floor((hour - hh) * 60);
-    return { dateKey: `${p.year}-${p.month}-${p.day}`, month: +p.month, hour, hm: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` };
+    return { dateKey: `${p.year}-${p.month}-${p.day}`, month: +p.month, hour, realHour, gameDay, weekday: WEEKDAYS[((gameDay % 7) + 7) % 7], hm: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` };
+  }
+  const seasonOf = (m) => (m === 12 || m <= 2 ? 'winter' : m <= 5 ? 'spring' : m <= 8 ? 'summer' : 'autumn');
+  // weather for one half day: slot = gameDay * 2 (+1 for the night half, from 18:00)
+  function slotOf(now) { const h = now.hour; return now.gameDay * 2 + (h >= 18 ? 1 : 0) - (h < 6 ? 1 : 0); }
+  function weatherAt(slot, month, depth = 0) {
+    const r = ART.mulberry32(hashStr('wx#' + slot));
+    // weather tends to hang around a little
+    if (depth < 3 && r() < 0.35) return weatherAt(slot - 1, month, depth + 1);
+    const odds = D.WEATHER_ODDS[seasonOf(month)];
+    let x = r() * Object.values(odds).reduce((a, b) => a + b, 0);
+    for (const [k, v] of Object.entries(odds)) { x -= v; if (x <= 0) return k; }
+    return 'sun';
   }
   function weatherFor(now) {
     if (weatherOverride && D.WEATHER[weatherOverride]) return weatherOverride;
-    const m = now.month;
-    const season = m === 12 || m <= 2 ? 'winter' : m <= 5 ? 'spring' : m <= 8 ? 'summer' : 'autumn';
-    const odds = D.WEATHER_ODDS[season];
-    let x = ART.mulberry32(hashStr(now.dateKey + '#' + Math.floor(now.hour / 3)))() * Object.values(odds).reduce((a, b) => a + b, 0);
-    for (const [k, v] of Object.entries(odds)) { x -= v; if (x <= 0) return k; }
-    return 'sun';
+    return weatherAt(slotOf(now), now.month);
+  }
+  // the next in-game week: [{ name, day, night }]
+  function forecast() {
+    const now = clockNow, out = [];
+    for (let k = 0; k < 7; k++) {
+      const gd = now.gameDay + k;
+      out.push({ name: k === 0 ? 'Today' : k === 1 ? 'Tomorrow' : WEEKDAYS[((gd % 7) + 7) % 7], day: weatherAt(gd * 2, now.month), night: weatherAt(gd * 2 + 1, now.month) });
+    }
+    return out;
   }
   let clockNow = berlinNow();
   let weatherId = weatherFor(clockNow);
@@ -690,8 +714,9 @@
   // toys that can turn up here: the place's own find-only toys plus ordinary shop toys
   function rollToy(where = loc) {
     const list = Object.entries(D.TOYS).filter(([, t]) => t.weight && (t.loc ? t.loc.includes(where) : !t.vendor));
-    let r = Math.random() * list.reduce((s, [, t]) => s + t.weight, 0);
-    for (const [k, t] of list) { r -= t.weight; if (r <= 0) return k; }
+    const tw = (t) => t.weight * (t.secret ? 0.4 : 1);
+    let r = Math.random() * list.reduce((s, [, t]) => s + tw(t), 0);
+    for (const [k, t] of list) { r -= tw(t); if (r <= 0) return k; }
     return list.length ? list[0][0] : 'tennis';
   }
   function clearParkLoot() {
@@ -2577,7 +2602,7 @@
     tm.taps = [];
     setTimeout(() => { if (tm) $('tmSeq').textContent = ''; $('tmSeq').dataset.seq = ''; }, 500);
     if (d.state !== 'attend') return;
-    const night = clockNow.hour >= 21 || clockNow.hour < 5;
+    const night = isNight();
     let id = null;
     for (const [k, T] of Object.entries(ALL_TRICKS)) {
       if (T.seq !== seq) continue;
@@ -3697,6 +3722,11 @@
     UNLOCK_CHECKS['page_' + id] = () => { const p = bookPage(id); return p.done === p.total; };
   }
   function checkUnlocks() {
+    for (const [id, O] of Object.entries(D.OUTFITS)) {
+      if (!O.unlock || state.outfits.includes(id)) continue;
+      const fn = UNLOCK_CHECKS[O.unlock];
+      if (fn && fn()) getOutfit(id, true);
+    }
     for (const [id, A] of Object.entries(D.ACCESSORIES)) {
       if (!A.unlock || state.accessories.includes(id)) continue;
       const fn = UNLOCK_CHECKS[A.unlock];
@@ -4080,7 +4110,7 @@
   // Finds for the 📒 book, and loot from sniff spots and digging
   // =====================================================================
   function findOk(F) {
-    const W = localWeather(), night = nightLevel > 0.5;
+    const W = localWeather(), night = isNight();
     switch (F.when) {
       case 'december': return clockNow.month === 12;
       case 'night': return night;
@@ -4095,7 +4125,8 @@
   function rollFind(where, kind) {
     const list = Object.entries(D.FINDS).filter(([, F]) => F.loc === where && F.weight > 0 && findOk(F) && (!F.glade || kind === 'glade') && (!F.where || F.where === kind));
     if (!list.length) return null;
-    const w = (F) => F.weight * (F.glade ? 4 : 1) * (F.when ? 1.5 : 1);
+    // secret finds are rare: a fraction of their weight, the fairy ring stone even more so
+    const w = (F) => F.weight * (F.glade ? 4 : 1) * (F.when ? 1.5 : 1) * (F.secret ? 0.22 : 1) * (F === D.FINDS.fairystone ? 0.5 : 1);
     let r = Math.random() * list.reduce((s, [, F]) => s + w(F), 0);
     for (const [k, F] of list) { r -= w(F); if (r <= 0) return k; }
     return list[0][0];
@@ -4185,14 +4216,16 @@
   // =====================================================================
   let quirk = {};
   let tideOverride = null;
-  const isNight = () => nightLevel > 0.5;
+  // sunset to sunrise is night: night finds, night encounters
+  const isNight = () => clockNow.hour >= 18 || clockNow.hour < 6;
   const isWinter = () => clockNow.month === 12 || clockNow.month <= 2;
   // 0 = high tide, 1 = low tide. A real 12.42-hour tide clock, the same for everyone.
   function tideLevel() {
     if (tideOverride !== null) return tideOverride;
-    return (1 - Math.cos((Date.now() / 3600000 / 12.42) * TAU)) / 2;
+    return (1 - Math.cos(((Date.now() / 3600000) * 24 / 12.42) * TAU)) / 2;
   }
-  const tideFalling = () => Math.sin((Date.now() / 3600000 / 12.42) * TAU) > 0;
+  // tides follow the game clock: about two high tides every game day
+  const tideFalling = () => Math.sin(((Date.now() / 3600000) * 24 / 12.42) * TAU) > 0;
   const windBoost = () => (place === 'park' && loc === 'alpine' && quirk.gust > 0 ? 1.35 : 1);
   function inPlaza(p) {
     const P = S.q && S.q.plaza;
@@ -5010,12 +5043,14 @@
   // =====================================================================
   // Map: where to walk today
   // =====================================================================
-  function locProgress(id) {
-    const U = D.LOCATIONS[id].unlock;
-    if (!U) return null;
+  // a place can need several things at once: unlock.all = [ ... ]
+  const reqsOf = (id) => { const U = D.LOCATIONS[id].unlock; return !U ? [] : U.all || [U]; };
+  function reqProgress(U) {
     switch (U.kind) {
       case 'obedience': return [Math.max(0, ...dogs.map((d) => d.obedience())), U.n];
+      case 'walks': return [state.stats.walks || 0, U.n];
       case 'locWalks': return [state.locWalks[U.loc] || 0, U.n];
+      case 'finds': return [Object.keys(D.FINDS).filter((k) => D.FINDS[k].loc === U.loc && state.finds[k]).length, U.n];
       case 'glades': return [state.glades.length, U.n];
       case 'treasure': return [state.treasures || 0, U.n];
       case 'acc': return [state.accessories.includes(U.id) ? 1 : 0, 1];
@@ -5023,14 +5058,39 @@
       case 'loc': return [locUnlocked(U.loc) ? 1 : 0, 1];
       case 'portal': return [state.portal ? 1 : 0, 1];
       case 'rocket': return [Math.min(state.finds.moonstone || 0, U.n), U.n];
-      default: return null;
+      default: return [0, 1];
     }
   }
+  function reqText(U) {
+    const L = (k) => D.LOCATIONS[k].name;
+    switch (U.kind) {
+      case 'obedience': return `A dog reaches Obedience ${U.n}`;
+      case 'walks': return `Go on ${U.n} walks`;
+      case 'locWalks': return `Walk in ${L(U.loc)} ${U.n} times`;
+      case 'finds': return `Find ${U.n} collectibles in ${L(U.loc)}`;
+      case 'glades': return `Find all ${U.n} hidden glades in ${L('forest')}`;
+      case 'treasure': return `Dig up ${U.n} buried treasure${U.n > 1 ? 's' : ''} on ${L('beach')}`;
+      case 'acc': { const A = D.ACCESSORIES[U.id], V = A.vendor && D.VENDORS[A.vendor]; return `Own a ${A.name}${V ? ` (${V.name}, ${L(V.loc)})` : ''}`; }
+      case 'summits': return `Reach the summit in ${L('alpine')}${U.n > 1 ? ` ${U.n} times` : ''}`;
+      case 'loc': return `Unlock ${L(U.loc)}`;
+      case 'portal': return `A hidden portal somewhere in ${L('forest')}…`;
+      case 'rocket': return `Fuel the rocket in ${L('snowy')} with ${U.n} moonstones from ${L('caves')}`;
+      default: return '';
+    }
+  }
+  // overall progress (for old code that wants one number pair)
+  function locProgress(id) {
+    const R = reqsOf(id);
+    if (!R.length) return null;
+    if (R.length === 1) return reqProgress(R[0]);
+    let have = 0;
+    for (const U of R) { const [a, b] = reqProgress(U); have += Math.min(1, a / b); }
+    return [Math.round(have * 100) / 100, R.length];
+  }
   function locReady(id) {
-    const U = D.LOCATIONS[id].unlock;
-    if (U && U.kind === 'rocket') return !!state.rocket;
-    const p = locProgress(id);
-    return !!p && p[0] >= p[1];
+    const R = reqsOf(id);
+    if (!R.length) return false;
+    return R.every((U) => (U.kind === 'rocket' ? !!state.rocket : (() => { const [a, b] = reqProgress(U); return a >= b; })()));
   }
   function checkLocUnlocks() {
     const fresh = [];
@@ -5070,17 +5130,19 @@
   }
   // places a locked place depends on: until you have been there, its hint stays hidden
   function locNeeds(id) {
-    const U = D.LOCATIONS[id].unlock;
-    if (!U) return [];
-    switch (U.kind) {
-      case 'locWalks': case 'loc': return [U.loc];
-      case 'glades': case 'portal': return ['forest'];
-      case 'treasure': return ['beach'];
-      case 'summits': return ['alpine'];
-      case 'acc': { const A = D.ACCESSORIES[U.id]; return A && A.vendor ? [D.VENDORS[A.vendor].loc] : []; }
-      case 'rocket': return ['snowy', 'caves'];
-      default: return [];
+    const out = [];
+    for (const U of reqsOf(id)) {
+      switch (U.kind) {
+        case 'locWalks': case 'loc': case 'finds': out.push(U.loc); break;
+        case 'glades': case 'portal': out.push('forest'); break;
+        case 'treasure': out.push('beach'); break;
+        case 'summits': out.push('alpine'); break;
+        case 'acc': { const A = D.ACCESSORIES[U.id]; if (A && A.vendor) out.push(D.VENDORS[A.vendor].loc); break; }
+        case 'rocket': out.push('snowy', 'caves'); break;
+        default: break;
+      }
     }
+    return out;
   }
   // locked, but everything it needs is already open: the very next things to unlock
   const locNext = (id) => !locUnlocked(id) && locNeeds(id).every(locUnlocked);
@@ -5096,7 +5158,7 @@
       card.dataset.loc = id;
       if (open) {
         const closed = !canVisitNow(id);
-        const note = closed ? `Closed now · opens at ${P.hours[0]}:00 (German time)` : locNote(id);
+        const note = closed ? `Closed now · opens at ${P.hours[0]}:00` : locNote(id);
         card.innerHTML = `<div class="lcIc">${TH('loc', id)}</div><div class="txt"><b></b><small class="desc"></small><small class="note"></small></div>`;
         card.querySelector('b').textContent = P.name;
         card.querySelector('.desc').textContent = P.desc;
@@ -5109,11 +5171,13 @@
           card.appendChild(go);
         } else card.classList.add('closed');
       } else {
-        // not named yet: only how to get there
-        const p = P.unlock.kind === 'portal' ? null : locProgress(id);
-        const frac = p ? Math.min(1, p[0] / p[1]) : 0;
-        card.innerHTML = `<div class="lcIc">${TH('locx', id)}<span class="lockMark">${IC('lock')}</span></div><div class="txt"><b>Undiscovered place</b><small class="note"></small>${p && p[1] > 1 ? `<div class="track"><div class="fill" style="width:${Math.round(frac * 100)}%"></div></div><small class="prog">${Math.min(p[0], p[1])} of ${p[1]}</small>` : ''}</div>`;
-        card.querySelector('.note').textContent = plain(P.hint);
+        // not named yet: only how to get there, one line per thing it needs
+        const rows = reqsOf(id).map((U) => {
+          const [have, need] = reqProgress(U), done = have >= need;
+          const bar = U.kind !== 'portal' && need > 1 ? `<div class="track"><div class="fill" style="width:${Math.round(Math.min(1, have / need) * 100)}%"></div></div><small class="prog">${Math.min(have, need)} of ${need}</small>` : '';
+          return `<div class="req${done ? ' done' : ''}">${IC(done ? 'check' : 'dot')}<div><small class="note">${esc(reqText(U))}</small>${bar}</div></div>`;
+        }).join('');
+        card.innerHTML = `<div class="lcIc">${TH('locx', id)}<span class="lockMark">${IC('lock')}</span></div><div class="txt"><b>Undiscovered place</b>${rows}</div>`;
       }
       L.appendChild(card);
     }
@@ -5210,8 +5274,8 @@
   function renderDaily() {
     const L = $('dailyList');
     L.innerHTML = '';
-    const h = Math.max(0, 24 - clockNow.hour);
-    $('dailySub').textContent = `New challenges in ${Math.floor(h)}h ${Math.floor((h % 1) * 60)}m (midnight, German time). Finish all three for a bonus!`;
+    const h = Math.max(0, 24 - clockNow.realHour);
+    $('dailySub').textContent = `New challenges in ${Math.floor(h)}h ${Math.floor((h % 1) * 60)}m. Finish all three for a bonus!`;
     if (!state.daily || !state.daily.items.length) { L.innerHTML = '<p class="sub">Adopt a dog to get daily challenges.</p>'; return; }
     for (const c of state.daily.items) {
       const r = document.createElement('div');
@@ -5376,7 +5440,7 @@
   // the joystick stays out of the way: faint from the start, nearly gone after a moment of steady walking
   let joyAng = null, joyFadeT = null;
   const joyWake = () => { joyBase.classList.remove('fade'); clearTimeout(joyFadeT); joyFadeT = setTimeout(() => joyBase.classList.add('fade'), 1100); };
-  const MODALS = ['hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview'];
+  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview'];
   // sheets: a soft sound when they open and close; tips step aside while one is open
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
@@ -5792,6 +5856,9 @@
         } else if (kind === 'ingredient') {
           const I = D.INGREDIENTS[key];
           card(thumbOf.ing(key), I.name, `You have ${state.pantry[key] || 0} · cook at a Stove`, p0, (pr) => { pay(pr); state.pantry[key] = (state.pantry[key] || 0) + 1; done(); });
+        } else if (kind === 'outfit') {
+          const O = D.OUTFITS[key], owned = state.outfits.includes(key), price = tix ? O.tickets : O.price;
+          card(wearThumb(key), O.name, owned ? 'In your closet' : `For you · ${SLOT_NAMES[O.slot]}`, price, (pr) => { pay(pr); getOutfit(key, false); done(); }, { owned });
         } else if (kind === 'find') {
           const F = D.FINDS[key], owned = !!state.finds[key];
           card(thumbOf.find(key), F.name, 'A prize for your book', p0, (pr) => { pay(pr); grantFind(key, null); done(); }, { owned });
@@ -5834,6 +5901,13 @@
         card(thumbOf.shampoo(id), Sh.name, shampooBlurb(id), Sh.price, (pr) => { pay(pr); state.shampoos[id] = (state.shampoos[id] || 0) + 1; done(); });
       }
       cur.note = 'More shampoos are sold by vendors on walks.';
+      section('style', 'Your style');
+      cur.note = 'Wear new clothes in Menu → You. More are sold by vendors on walks, and some can only be earned.';
+      for (const [id, O] of Object.entries(D.OUTFITS)) {
+        if (!O.price || O.vendor || O.unlock || O.tickets) continue;
+        const owned = state.outfits.includes(id);
+        card(wearThumb(id), O.name, owned ? 'In your closet' : SLOT_NAMES[O.slot], O.price, (pr) => { pay(pr); getOutfit(id, false); done(); }, { owned });
+      }
       section('pantry', 'Pantry');
       for (const [id, I] of Object.entries(D.INGREDIENTS)) {
         if (I.price == null) continue;
@@ -6271,6 +6345,7 @@
     setIcon($('clockIc'), night ? 'moon' : WX_ICON[weatherId] || 'sun');
     $('clockTime').textContent = clockNow.hm;
     $('clockWx').textContent = night ? 'Clear night' : W.name;
+    if (!$('weather').classList.contains('hidden') && Math.floor(clockNow.hour * 4) !== updateHud.wxq) { updateHud.wxq = Math.floor(clockNow.hour * 4); openWeather(); }
     updatePack();
   }
 
@@ -6336,7 +6411,7 @@
     if (e.target.id === 'hub' || e.target.closest('[data-act="closeHub"]')) { closeHub(); return; }
     const b = e.target.closest('[data-act]');
     if (!b) return;
-    if (b.dataset.act !== 'clock') closeHub();
+    closeHub();
     doAct(b.dataset.act, b);
   });
   // food and water at once (bowls are free to fill)
@@ -6353,6 +6428,7 @@
     if (act === 'ball') tutEvent('throw');
     if (act === 'menu') openHub();
     else if (act === 'photo') enterPhoto();
+    else if (act === 'me') openCreator('edit');
     else if (act === 'event') { const def = eventDef(); if (def) news({ title: `Today: ${def.title}`, text: eventText(), th: TH('pic', def.icon) }); }
     else if (act === 'bowls') fillAll();
     else if (act === 'feed') fillBowls('food');
@@ -6377,7 +6453,7 @@
     else if (act === 'tab') { decoTab = b.dataset.tab; renderInv(); }
     else if (act === 'clock') {
       const W = curWeather();
-      toast(`${W.name} in Germany, ${clockNow.hm}${W.muddy ? ' · walks get muddy' : ''}${W.lightning ? ' · shy dogs get scared' : ''}`);
+      openWeather();
     } else if (act === 'rotate') { placeRot = (placeRot + 1) % 4; renderInv(); toast(`Next item: ${rotNames[placeRot].toLowerCase()}`); }
   }
   $('shop').addEventListener('click', (e) => {
@@ -6486,6 +6562,13 @@
       notes.add('v8');
       return s;
     },
+    8(s) { // v8 -> v9: your own character (looks like the old default) and clothes
+      s.look = { body: 'a', hair: 0, skin: '#f1c8a0', hairColor: '#5a3a22', fav: '#5b7cfa', outfit: { top: 'tee', bottom: 'jeans' } };
+      s.outfits = ['tee', 'jeans'];
+      s.lookDone = true;
+      notes.add('v9');
+      return s;
+    },
   };
   function migrate(raw) {
     let s = JSON.parse(JSON.stringify(raw));
@@ -6547,6 +6630,14 @@
     st.rocket = !!st.rocket;
     st.puzzles = +st.puzzles || 0;
     if (!Array.isArray(st.tips)) st.tips = [];
+    st.look = cleanLook(st.look);
+    if (!Array.isArray(st.outfits)) st.outfits = [];
+    st.outfits = st.outfits.filter((k) => D.OUTFITS[k]);
+    for (const k of Object.keys(D.OUTFITS)) if (D.OUTFITS[k].starter && !st.outfits.includes(k)) st.outfits.push(k);
+    for (const slot of Object.keys(st.look.outfit)) if (!st.outfits.includes(st.look.outfit[slot])) delete st.look.outfit[slot];
+    if (!st.look.outfit.top) st.look.outfit.top = 'tee';
+    if (!st.look.outfit.bottom) st.look.outfit.bottom = 'jeans';
+    st.lookDone = st.lookDone !== false;
     if (st.tutorial !== 'done' && st.tutorial !== 'new') st.tutorial = 'done';
     if (!st.event || typeof st.event !== 'object' || !st.event.id) st.event = null;
     return st;
@@ -6736,7 +6827,7 @@
     if (home && dogs.some((d) => d.hunger < LOW) && !state.furniture.some((f) => roleOf(f) === 'food' && f.filled)) tip('bowls', { title: 'Hungry tummies', text: 'The food bowls are empty. Tap Bowls to fill food and water.', icon: 'bowl' });
     if (!home && dogs.some((d) => d.energy < 30)) tip('tired', { title: 'A tired dog', text: 'Tired dogs play less and get grumpy. Head Home: they nap on their bed.', icon: 'bolt' });
     if (dogs.some((d) => d.mood() === 'great')) tip('great', { title: 'A great mood', text: 'Happy, well-fed dogs are in a great mood: they find collectibles more often and learn tricks easier.', icon: 'heart' });
-    if (nightLevel > 0.6 && !S.env?.dark) tip('night', { title: 'Night time', text: 'The game follows German time. At night, some collectibles only come out after dark.', icon: 'moon' });
+    if (isNight() && !S.env?.dark) tip('night', { title: 'Night time', text: 'A day in the game lasts one hour, so night comes around often. Some collectibles and encounters only happen after dark.', icon: 'moon' });
     if (curWeather().muddy && !home) tip('rain', { title: 'Rainy walks', text: 'Rain makes walks muddy. A raincoat from the shop keeps the worst off.', icon: 'rain' });
     if (state.daily) tip('daily', { title: 'Daily challenges', text: 'Three new challenges every day, in Menu → Challenges. Finish all three for a bonus.', icon: 'list' });
     if (comfort.paws >= 2) tip('comfort', { title: 'Home comfort', text: 'More furniture, combos and decorated rooms make your home cozier, and cozy homes keep dogs happy.', icon: 'comfort' });
@@ -6754,7 +6845,7 @@
     return def && def.kind === kind ? Object.assign({}, def, E) : null;
   }
   const evMult = (kind) => { const e = eventOn(kind); return e ? e.mult || 1 : 1; };
-  const SALE_SECS = ['toys', 'styles', 'boutique', 'bath', 'pantry', 'dog', 'living', 'kitchen', 'decor', 'luxury'];
+  const SALE_SECS = ['toys', 'styles', 'boutique', 'style', 'bath', 'pantry', 'dog', 'living', 'kitchen', 'decor', 'luxury'];
   const eventText = () => { const def = eventDef(); return def ? def.text.replace('{loc}', state.event.loc ? D.LOCATIONS[state.event.loc].name : 'the park') : ''; };
   function ensureEvent() {
     if (visit || title || !dogs.length) return;
@@ -6775,7 +6866,7 @@
     news({ title: `Today: ${def.title}`, text: eventText() + (def.kind === 'sale' ? ` (${saleName(E.cat)})` : ''), th: TH('pic', def.icon) });
     save();
   }
-  const saleName = (cat) => ({ toys: 'Toys', styles: 'Walls & floors', boutique: 'Boutique', bath: 'Shampoo', pantry: 'Pantry' }[cat] || plain((D.CATS.find((c) => c[0] === cat) || ['', cat])[1]));
+  const saleName = (cat) => ({ toys: 'Toys', styles: 'Walls & floors', boutique: 'Boutique', style: 'Your style', bath: 'Shampoo', pantry: 'Pantry' }[cat] || plain((D.CATS.find((c) => c[0] === cat) || ['', cat])[1]));
   function giveEventGift(def) {
     const [kind, key, n] = def.gift;
     if (kind === 'meal') for (let i = 0; i < n; i++) state.meals.push({ id: key, q: 2 });
@@ -6790,6 +6881,20 @@
     }
     state.event.done = true;
   }
+  // the clock panel: time of day and the forecast for the next in-game week
+  function openWeather() {
+    const now = clockNow, W = curWeather(), night = isNight();
+    const toNext = (target) => { const left = ((target - now.hour + 24) % 24) / 24 * 60; return left < 1 ? 'now' : `in ${Math.round(left)} min`; };
+    $('wxNow').innerHTML = `<span class="wxBig">${IC(night && weatherId === 'sun' ? 'moon' : WX_ICON[weatherId] || 'sun')}</span>
+      <span class="wxTxt"><b>${now.weekday}, ${now.hm}</b><small>${night ? 'Night' : 'Day'} · ${esc(W.name)}${W.muddy ? ' · muddy walks' : ''}</small>
+      <small>${night ? `Sunrise ${toNext(6)}` : `Sunset ${toNext(18)}`} · one game day lasts an hour</small></span>`;
+    $('wxList').innerHTML = forecast().map((f) => {
+      const a = D.WEATHER[f.day], b = D.WEATHER[f.night];
+      return `<div class="wxRow"><b>${f.name}</b><span class="wxCell">${IC(WX_ICON[f.day] || 'sun')}<small>${esc(a.name)}</small></span><span class="wxCell night">${IC(f.night === 'sun' ? 'moon' : WX_ICON[f.night] || 'moon')}<small>${esc(f.night === 'sun' ? 'Clear' : b.name)}</small></span></div>`;
+    }).join('');
+    $('weather').classList.remove('hidden');
+  }
+  $('weather').addEventListener('click', (e) => { if (e.target.id === 'weather' || e.target.closest('[data-act="closeWeather"]')) $('weather').classList.add('hidden'); });
   function renderEventRow() {
     const def = eventDef(), row = $('eventRow');
     const live = def && state.event.date === clockNow.dateKey;
@@ -7291,11 +7396,132 @@
     if (then) then();
   }
   $('playBtn').addEventListener('click', () => leaveTitle(() => {
-    if (!dogs.length) { openStart(); return; }
+    if (!dogs.length) { if (!state.lookDone) openCreator('new'); else openStart(); return; }
     welcome();
   }));
   $('titleSettings').addEventListener('click', () => openSettings());
-  $('titleHelp').addEventListener('click', () => leaveTitle(() => { if (!dogs.length) openStart(); else startTutorial(); }));
+  $('titleHelp').addEventListener('click', () => leaveTitle(() => { if (!dogs.length) { if (!state.lookDone) openCreator('new'); else openStart(); } else startTutorial(); }));
+
+  // =====================================================================
+  // Your character: body, hair, colors and clothes
+  // =====================================================================
+  const SLOT_NAMES = { top: 'Top', bottom: 'Bottoms', hat: 'Hat', face: 'Face', neck: 'Neck', back: 'Back' };
+  const SLOT_ORDER = ['top', 'bottom', 'hat', 'face', 'neck', 'back'];
+  function cleanLook(l) {
+    const d = D.DEFAULT_LOOK, L = D.LOOK;
+    const o = l && typeof l === 'object' ? l : {};
+    const hex = (v, list, def) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : def);
+    return {
+      body: o.body === 'b' ? 'b' : 'a',
+      hair: clamp(o.hair | 0, 0, 3),
+      skin: hex(o.skin, L.skins, d.skin),
+      hairColor: hex(o.hairColor, L.hairColors, d.hairColor),
+      fav: hex(o.fav, L.favColors, d.fav),
+      outfit: Object.assign({}, o.outfit && typeof o.outfit === 'object' ? o.outfit : d.outfit),
+    };
+  }
+  function applyPlayerLook() {
+    const fresh = ART.buildPlayer(state.look);
+    player.root.remove(player.body);
+    player.root.add(fresh.body);
+    Object.assign(player, { body: fresh.body, legL: fresh.legL, legR: fresh.legR, armL: fresh.armL, armR: fresh.armR, hand: fresh.hand });
+  }
+  const lookKey = (look, slot) => JSON.stringify(slot ? { look, slot } : { look });
+  function wearThumb(id) {
+    const O = D.OUTFITS[id];
+    const look = JSON.parse(JSON.stringify(state.look));
+    look.outfit[O.slot] = id;
+    return TH('wear', lookKey(look, O.slot));
+  }
+  function getOutfit(id, earned) {
+    if (!D.OUTFITS[id] || state.outfits.includes(id)) return;
+    state.outfits.push(id);
+    news({ title: earned ? 'Clothes unlocked!' : 'New clothes', text: `${D.OUTFITS[id].name}. Wear it in Menu → You.`, th: wearThumb(id) });
+    save();
+  }
+  // the character sheet: "new" when starting a game (then the puppy comes next)
+  let crMode = 'edit', crTab = 'look';
+  function openCreator(mode = 'edit') {
+    crMode = mode;
+    crTab = 'look';
+    $('crTitle').textContent = mode === 'new' ? 'Make your character' : 'You';
+    $('crClose').classList.toggle('hidden', mode === 'new');
+    $('crTabs').classList.toggle('hidden', mode === 'new');
+    $('crNext').classList.toggle('hidden', mode !== 'new');
+    renderCreator();
+    $('creator').classList.remove('hidden');
+  }
+  function closeCreator() {
+    $('creator').classList.add('hidden');
+    applyPlayerLook();
+    save();
+  }
+  const swatches = (list, cur, key) => `<div class="swatches">${list.map((c) => `<button class="sw${c === cur ? ' sel' : ''}" data-k="${key}" data-v="${c}" style="--c:${c}" aria-label="${c}"></button>`).join('')}</div>`;
+  function renderCreator() {
+    const L = state.look, LK = D.LOOK;
+    const url = ART.thumbURL('me', lookKey(L));
+    if (url) $('crImg').src = url;
+    $('crTabs').querySelectorAll('.seg').forEach((b) => b.classList.toggle('sel', b.dataset.tab === crTab));
+    $('crLook').classList.toggle('hidden', crTab !== 'look');
+    $('crClothes').classList.toggle('hidden', crTab !== 'clothes');
+    if (crTab === 'look') {
+      const variant = (patch) => lookKey(Object.assign({}, L, patch));
+      $('crLook').innerHTML =
+        `<div class="section">Body</div><div class="crRow two">${LK.bodies.map(([id, name]) => `<button class="crOpt${L.body === id ? ' sel' : ''}" data-k="body" data-v="${id}">${TH('me', variant({ body: id, hair: L.body === id ? L.hair : 0 }))}<small>${name}</small></button>`).join('')}</div>` +
+        `<div class="section">Hairstyle</div><div class="crRow four">${LK.hair[L.body].map((name, i) => `<button class="crOpt${L.hair === i ? ' sel' : ''}" data-k="hair" data-v="${i}">${TH('hairpick', JSON.stringify({ look: Object.assign({}, L, { hair: i, outfit: Object.assign({}, L.outfit, { hat: undefined }) }) }))}<small>${name}</small></button>`).join('')}</div>` +
+        `<div class="section">Skin</div>${swatches(LK.skins, L.skin, 'skin')}` +
+        `<div class="section">Hair color</div>${swatches(LK.hairColors, L.hairColor, 'hairColor')}` +
+        `<div class="section">Favorite color</div><p class="sub small">Your favorite tee comes in this color.</p>${swatches(LK.favColors, L.fav, 'fav')}`;
+    } else {
+      let html = '';
+      for (const slot of SLOT_ORDER) {
+        const items = Object.entries(D.OUTFITS).filter(([, O]) => O.slot === slot);
+        html += `<div class="section">${SLOT_NAMES[slot]}</div><div class="wardGrid">`;
+        for (const [id, O] of items) {
+          const owned = state.outfits.includes(id), on = L.outfit[slot] === id;
+          const V = O.vendor && D.VENDORS[O.vendor];
+          const where = owned ? (on ? 'Wearing' : 'Tap to wear') : O.unlock ? plain(D.UNLOCKS[O.unlock]) : V ? (locUnlocked(V.loc) ? `${V.name} · ${O.tickets ? `🎟️ ${O.tickets}` : `🪙 ${O.price}`}` : 'Sold somewhere new') : `Shop · 🪙 ${O.price}`;
+          html += `<button class="toyCard${owned ? '' : ' locked'}${on ? ' eq' : ''}" data-wear="${id}">${owned || !O.unlock ? wearThumb(id) : `<span class="big q">${IC('lock')}</span>`}<b>${esc(O.name)}</b><small>${esc(where)}</small></button>`;
+        }
+        html += '</div>';
+      }
+      $('crClothes').innerHTML = html;
+    }
+  }
+  $('creator').addEventListener('click', (e) => {
+    if ((e.target.id === 'creator' && crMode !== 'new') || e.target.closest('[data-act="closeCreator"]')) { closeCreator(); return; }
+    const seg = e.target.closest('#crTabs .seg');
+    if (seg) { crTab = seg.dataset.tab; renderCreator(); return; }
+    const opt = e.target.closest('[data-k]');
+    if (opt) {
+      const k = opt.dataset.k, v = opt.dataset.v;
+      if (k === 'body') { if (state.look.body !== v) { state.look.body = v; state.look.hair = 0; } }
+      else if (k === 'hair') state.look.hair = +v;
+      else state.look[k] = v;
+      renderCreator();
+      applyPlayerLook();
+      return;
+    }
+    const w = e.target.closest('[data-wear]');
+    if (w) {
+      const id = w.dataset.wear, O = D.OUTFITS[id];
+      if (!state.outfits.includes(id)) {
+        const V = O.vendor && D.VENDORS[O.vendor];
+        toast(O.unlock ? `Unlock it: ${plain(D.UNLOCKS[O.unlock])}` : V ? (locUnlocked(V.loc) ? `Sold at the ${V.name} in ${D.LOCATIONS[V.loc].name}` : 'Sold somewhere you haven’t been yet…') : 'Buy it in Menu → Shop → Your style');
+        return;
+      }
+      if (state.look.outfit[O.slot] === id) { if (O.slot !== 'top' && O.slot !== 'bottom') delete state.look.outfit[O.slot]; }
+      else state.look.outfit[O.slot] = id;
+      renderCreator();
+      applyPlayerLook();
+      save();
+    }
+  });
+  $('crNext').addEventListener('click', () => {
+    state.lookDone = true;
+    closeCreator();
+    openStart();
+  });
 
   // =====================================================================
   // Main loop
@@ -7395,6 +7621,7 @@
   }
   function initVisit(v) {
     load();
+    applyPlayerLook();
     visit = v;
     noSave = true;
     syncChunkSet();
@@ -7431,6 +7658,7 @@
       setTimeout(() => toast("That visit link seems broken — showing your own home"), 600);
     }
     const hadSave = load();
+    applyPlayerLook();
     syncChunkSet();
     buildRoom();
     rebuildFurniture();
@@ -7450,7 +7678,7 @@
     applyEnvironment();
     const skipTitle = /[?&]notitle\b/.test(location.search);
     if (!skipTitle) startTitle();
-    else if (!dogs.length) openStart();
+    else if (!dogs.length) { if (!state.lookDone) openCreator('new'); else openStart(); }
     else welcome();
     noteSeen();
     ensureDaily();
@@ -7469,6 +7697,7 @@
     else if (notes.has('v5')) toast('New: baths, cooking, outfits, gardens, comfort & visit links! 🏡');
     else if (notes.has('v6')) toast('New: new places to walk, daily challenges & a collectibles book!');
     else if (notes.has('v7')) toast('New: new places to discover, and a fresh new look!');
+    else if (notes.has('v9')) { toast('New: make your own character, plus clothes to collect! Menu → You'); setTimeout(() => tip('youTile', { title: 'Make it you', text: 'Pick your body, hair and colors in Menu → You. Clothes are in the shop, at vendors on walks, and some are earned.', icon: 'person' }), 1500); }
     else if (notes.has('v8')) toast('New: a title screen, tips, daily events, sounds, a mini-map and photo mode!');
     else toast(awayHours > 8 ? `Welcome back! A neighbor looked after ${dogs[0].name} while you were away` : `Welcome back! ${dogs[0].name} missed you 🐾`);
     ensureEvent();
@@ -7480,7 +7709,7 @@
       dogs, player, ball, grantToy, save, migrate, walkers, ALL_TRICKS,
       get tm() { return tm; }, get mode() { return mode; },
       get title() { return !!title; }, leaveTitle, startTitle, startTutorial, get tut() { return tut; }, tip, news, ensureEvent, eventOn, get prefs() { return prefs; },
-      enterPhoto, exitPhoto, takePhoto, openToyPicker, pickToy, get lostDog() { return lostDog; }, spawnLostDog, updateMinimap, get B3() { return B3; },
+      enterPhoto, exitPhoto, takePhoto, openCreator, applyPlayerLook, forecast, openWeather, get clock() { return clockNow; }, weatherAt, reqsOf, reqProgress, locReady, openToyPicker, pickToy, get lostDog() { return lostDog; }, spawnLostDog, updateMinimap, get B3() { return B3; },
       pushToken, startEncounter, friendship, neighborGift, enterTrickMode, exitTrickMode,
       get comfort() { return comfort; }, computeComfort, openBath, bathRub, get bath() { return bath; }, openKitchen, startCooking, cookTap, get cook() { return cook; },
       openMeals, giveMeal, openWardrobe, checkUnlocks, makeVisitCode, visitLink, parseVisitCode, guests, get visit() { return visit; },
