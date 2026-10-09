@@ -783,8 +783,10 @@
     const places = Object.keys(D.LOCATIONS).filter((id) => reqsOf(id).some((U) => U.kind === 'rank' && U.n === r) && !locUnlocked(id));
     sfx('unlock');
     try { confetti(player.root.position.clone().add(new V3(0, 1.8, 0)), 10); } catch (_) { /* fine */ }
-    const what = feats.map((U) => U.name).concat(places.length ? ['a step toward a new place'] : []);
-    news({ title: `Rank ${r}: ${rankTitle(r)}`, text: what.length ? `New: ${what.join(', ')}.` : 'Keep it up!', th: rankBadge(r) });
+    const what = feats.map((U) => U.say || U.name.charAt(0).toLowerCase() + U.name.slice(1));
+    const list = what.length > 1 ? `${what.slice(0, -1).join(', ')} and ${what[what.length - 1]}` : what[0];
+    const text = what.length ? `Unlocked: ${list}.${places.length ? ' You’re a step closer to a new place, too.' : ''}` : places.length ? 'You’re a step closer to a new place.' : 'Keep it up, more opens at higher ranks.';
+    news({ title: `Rank ${r}: ${rankTitle(r)}`, text, th: rankBadge(r) });
     setTimeout(() => { refreshGates(); checkLocUnlocks(); ensureDaily(); ensureEvent(); }, 60);
   }
   const rankBadge = (r) => `<span class="rankBadge">${r}</span>`;
@@ -2611,7 +2613,7 @@
       const [kind, key, V] = pick(opts);
       if (kind === 'shampoo') { state.shampoos[key] = (state.shampoos[key] || 0) + 1; toast(`🎁 ${who} gave you ${D.SHAMPOOS[key].icon} ${D.SHAMPOOS[key].name} from the ${V.name}!`); }
       else if (kind === 'meal') { state.meals.push({ id: key, q: 2 }); toast(`🎁 ${who} brought ${D.RECIPES[key].icon} ${D.RECIPES[key].name} from the ${V.name}!`); }
-      else { state.accessories.push(key); toast(`🎁 ${who} gave you a ${D.ACCESSORIES[key].icon} ${D.ACCESSORIES[key].name} from the ${V.name}! Dress up via 👒 Style`); }
+      else { state.accessories.push(key); toast(`🎁 ${who} gave you a ${D.ACCESSORIES[key].icon} ${D.ACCESSORIES[key].name} from the ${V.name}! Try it on: dog bubble → Style`); }
       save();
       return;
     }
@@ -2651,7 +2653,7 @@
     if (!needRank('offleash')) return;
     const ok = dogs.filter((d) => d.trickLvl('come') >= CONFIG.OFFLEASH_COME_LEVEL);
     if (!ok.length) {
-      toast(`Teach 📣 Come up to level ${CONFIG.OFFLEASH_COME_LEVEL} in 🎓 Trick Mode first`);
+      toast(`Teach Come to level ${CONFIG.OFFLEASH_COME_LEVEL} in Trick Mode first`);
       return;
     }
     for (const d of ok) {
@@ -3329,7 +3331,7 @@
     const st = st0(w.info.owner);
     st.n = (st.n || 0) + 1;
     if (st.n >= C.task.n) storyComplete(w.info.owner, w);
-    else toast(`${w.info.owner}: ${st.n} of ${C.task.n}, ${w.dog.name} loves this!`);
+    else toast(`${w.dog.name} had a blast! Playdates for ${w.info.owner}: ${st.n} of ${C.task.n}`);
   }
   function storyTrick(d, id) {
     for (const w of walkers) {
@@ -3471,7 +3473,7 @@
         giveReward(D.CRITTER_REWARD);
         setTimeout(() => news({ title: 'Critter guide complete!', text: `Every last one. You got ${rewardText(D.CRITTER_REWARD)}.`, th: TH('pic', '🐾') }), 1500);
       }
-    } else toast(`${plain(C.name)} again`);
+    } else toast(`Another ${C.name.toLowerCase()} sighting`);
     if (pos) try { spawnEmoji(C.icon, pos.clone().add(new V3(rand(-0.6, 0.6), 0.9, rand(-0.6, 0.6))), { size: 0.6, life: 1.8, vy: 0.4 }); } catch (_) { /* fine */ }
     save();
   }
@@ -3710,7 +3712,7 @@
   }
   function startTowel(d) {
     if (mode !== 'normal') return;
-    if (d.clean >= CONFIG.TOWEL_MAX - 1) { toast(`${d.name} is already pretty clean — baths for the rest are coming soon 🛁`); return; }
+    if (d.clean >= CONFIG.TOWEL_MAX - 1) { toast(`${d.name} is already fairly clean. A bath gets the rest off`); return; }
     if (d.state === 'fetch' || d.state === 'return') { toast('Wait until the game of fetch is over'); return; }
     if (d.state === 'sleep') d.wake();
     d.releaseClaim();
@@ -4522,7 +4524,7 @@
       toast(bowls.length ? `${R.icon} ${'★'.repeat(stars)} Gourmet kibble served in ${bowls.length} bowl${bowls.length > 1 ? 's' : ''}!` : `${R.icon} Made gourmet kibble — but you have no food bowl!`);
     } else {
       state.meals.push({ id: cook.id, q: stars });
-      toast(`${R.icon} ${'★'.repeat(stars)} ${R.name} is ready! Give it from a dog's bubble → 🍲 Treat`);
+      toast(`${R.name} ${'★'.repeat(stars)} is ready! Give it from a dog's bubble → Treat`);
     }
     progress('cook');
     cook = null;
@@ -4569,7 +4571,7 @@
     if (E.happy) d.happy = Math.min(d.missing() ? CONFIG.MISS_CAP : 100, d.happy + E.happy * q * d.mod('mealJoy'));
     d.addBond(E.bond || 1);
     spawnEmoji('😋', d.headWorld(0.4), { size: 0.45 });
-    toast(`${d.name} loved the ${R.name}! ${d.flag('lounges') && E.energy ? '' : ''}`);
+    toast(`${d.name} loved the ${R.name}!`);
     $('meals').classList.add('hidden');
     save();
   }
@@ -4703,7 +4705,7 @@
         b.className = 'toyCard';
         b.innerHTML = `${giftThumb(o)}<b></b><small>${o.kind}${o.n > 1 ? ' ×' + o.n : ''}</small>`;
         b.querySelector('b').textContent = plain(giftLabel(o));
-        b.addEventListener('click', () => { if (takeForGift(o)) { f.gift = { id: newId(), kind: o.kind, key: o.key, q: o.q }; afterGiftChange(); toast(`🎁 Packed ${giftLabel(f.gift)} — share your home from 🐾 Menu → ⚙️ Settings`); } });
+        b.addEventListener('click', () => { if (takeForGift(o)) { f.gift = { id: newId(), kind: o.kind, key: o.key, q: o.q }; afterGiftChange(); toast(`🎁 Packed ${giftLabel(f.gift)}. Share your home from Menu → Settings`); } });
         grid.appendChild(b);
       }
       L.appendChild(grid);
@@ -5319,7 +5321,7 @@
     const want = show ? 'stay' : null;
     if (!L.green && cw && !inside && !quirk.warned && pp.x > cw.x0 - 0.8 && pp.x < cw.x1 + 0.8 && pp.z > cw.z0 - 0.8 && pp.z < cw.z1 + 0.8) {
       quirk.warned = true;
-      toast('🔴 Red light! Wait for green — tap ✋ Stay so your dog waits nicely');
+      toast('Red light! Wait for green, and tap Stay so your dog waits nicely');
     }
     if (!cw) dogs.forEach((d) => { if (d.state === 'stay') d.setState('follow'); });
     // cars stop for people when the light is green for them
@@ -5927,7 +5929,7 @@
     }
     if (!state.accessories.includes('spacehelmet') && Math.random() < D.HELMET_CHANCE) {
       state.accessories.push('spacehelmet');
-      toast('🧑‍🚀 An astronaut helmet in the moon dust! Try it on via 👒 Style');
+      toast('An astronaut helmet in the moon dust! Try it on: dog bubble → Style');
       confetti(pos.clone().add(new V3(0, 1, 0)));
       save();
       return;
@@ -6681,8 +6683,8 @@
       return;
     }
     if (!selectedInv || !(state.inventory[selectedInv] > 0)) { toast('Pick an item from the bar first'); return; }
-    if (D.ITEMS[selectedInv].garden && !isGardenTile(i, j)) { toast(`${D.ITEMS[selectedInv].name} only fits in a 🌷 garden`); return; }
-    if (state.clutter.some((c) => c.i === i && c.j === j)) { toast('Tidy that spot up first'); return; }
+    if (D.ITEMS[selectedInv].garden && !isGardenTile(i, j)) { toast(`${D.ITEMS[selectedInv].name} only fits in a garden`); return; }
+    if (state.clutter.some((c) => c.i === i && c.j === j)) { toast('Tidy up that spot first'); return; }
     if (D.ITEMS[selectedInv].solid && Math.floor(player.root.position.x) === i && Math.floor(player.root.position.z) === j) {
       toast("You're standing there!");
       return;
@@ -7867,8 +7869,9 @@
     const el = document.createElement('div');
     el.className = 'tipCard glass' + (o.news ? ' news' : '');
     el.innerHTML = `<div class="tipPic">${o.th || IC(o.icon || 'sparkle')}</div><div class="tipTxt"><b></b><span></span></div>${o.news ? '' : '<button class="tipOk">Got it</button>'}`;
-    el.querySelector('b').textContent = plain(o.title || '');
-    el.querySelector('span').textContent = plain(o.text || '');
+    el.querySelector('.tipTxt b').textContent = plain(o.title || '');
+    el.querySelector('.tipTxt span').textContent = plain(o.text || '');
+    el.querySelector('.tipTxt span').classList.toggle('hidden', !o.text);
     $('tips').dataset.raw = `${o.title || ''} ${o.text || ''}`;
     el.addEventListener('click', () => closeTip());
     $('tips').appendChild(el);
@@ -7876,7 +7879,7 @@
     hideHint();
     sfx(o.news ? 'find' : 'tip');
     clearTimeout(tipTimer);
-    tipTimer = setTimeout(closeTip, o.news ? 4200 : 14000);
+    tipTimer = setTimeout(closeTip, o.news ? clamp(3200 + 40 * ((o.title || '').length + (o.text || '').length), 4200, 8000) : 14000);
   }
   function closeTip() {
     clearTimeout(tipTimer);
