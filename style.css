@@ -1171,3 +1171,42 @@ a.soft { text-decoration: none; }
 
 .hubGrid .tile:last-child:nth-child(odd) { grid-column: span 2; min-height: 0; flex-direction: row; align-items: center; gap: 10px; }
 .hubGrid .tile:last-child:nth-child(odd) > .i { margin: 0; }
+
+/* =====================================================================
+   Phase 7: your character, the weather panel, place requirements
+   ===================================================================== */
+.crPreview { display: grid; place-items: center; margin: 2px 0 4px; }
+#crImg { width: 150px; height: 150px; object-fit: contain; filter: drop-shadow(0 10px 12px rgba(30, 20, 60, 0.25)); }
+.crRow { display: grid; gap: 8px; }
+.crRow.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.crRow.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.crOpt { border: none; border-radius: 20px; padding: 8px 4px 6px; background: var(--g-card); box-shadow: inset 0 0 0 1px var(--g-line); display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--ink); min-width: 0; }
+.crOpt .th { width: 64px; height: 64px; }
+.crRow.two .crOpt .th { width: 76px; height: 76px; }
+.crOpt small { font-size: 11.5px; font-weight: 800; }
+.crOpt.sel { background: var(--g-sel); box-shadow: inset 0 0 0 2px var(--accent); }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.sw { width: 36px; height: 36px; border-radius: 50%; border: none; padding: 0; background: var(--c); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(30, 20, 60, 0.18); }
+.sw.sel { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.95), 0 0 0 5px var(--accent); }
+#crNext { position: sticky; bottom: 0; margin-top: 16px; }
+
+#wxNow { display: flex; align-items: center; gap: 14px; padding: 4px 2px 6px; }
+.wxBig { font-size: 46px; color: var(--accent-ink); display: grid; place-items: center; width: 64px; height: 64px; border-radius: 22px; background: var(--g-card); box-shadow: inset 0 0 0 1px var(--g-line); }
+.wxTxt { display: flex; flex-direction: column; gap: 2px; text-shadow: var(--text-glow); }
+.wxTxt b { font-size: 18px; }
+.wxTxt small { font-size: 12.5px; color: var(--ink-2); }
+.wxHead, .wxRow { display: grid; grid-template-columns: 1.2fr 1fr 1fr; align-items: center; gap: 8px; }
+.wxHead { padding: 0 10px 4px; }
+.wxHead small { font-size: 11px; font-weight: 800; color: var(--ink-2); }
+.wxRow { padding: 9px 10px; border-radius: 18px; background: var(--g-card); box-shadow: inset 0 0 0 1px var(--g-line); margin-bottom: 6px; }
+.wxRow b { font-size: 14px; }
+.wxCell { display: flex; align-items: center; gap: 6px; font-size: 20px; color: var(--accent-ink); }
+.wxCell small { font-size: 11.5px; font-weight: 700; color: var(--ink-2); }
+.wxCell.night { color: #6a5bd8; }
+body.dusk .wxCell.night { color: #c9bfff; }
+
+.req { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px; }
+.req > .i { font-size: 11px; margin-top: 3px; color: var(--ink-3); flex: 0 0 auto; }
+.req > div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.req.done > .i { color: var(--mint); font-size: 14px; margin-top: 0; }
+.req.done .note { text-decoration: line-through; opacity: 0.65; }
