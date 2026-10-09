@@ -2790,6 +2790,9 @@ window.VP_ART = (function () {
     wave: '<path d="M3 9c2.2-2 4.3-2 6.5 0s4.3 2 6.5 0 4-2 5 0"/><path d="M3 15c2.2-2 4.3-2 6.5 0s4.3 2 6.5 0 4-2 5 0"/>',
     dot: '<circle cx="12" cy="12" r="5.5" fill="currentColor" stroke="none"/>',
     search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.6-4.6"/>',
+    camera: '<path d="M4 8.5h3.2l1.6-2.5h6.4l1.6 2.5H20a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.2" r="3.4"/>',
+    note: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+    expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-6.5 6.5M4 20l6.5-6.5"/>',
     dog: '<path d="M6 8.5 4 4.5l4.2 1.6A7 7 0 0 1 12 5a7 7 0 0 1 3.8 1.1L20 4.5l-2 4a7 7 0 1 1-12 0z"/><path d="M9.5 11.5h.01M14.5 11.5h.01"/><path d="M11 15h2l-1 1.2z"/>',
   };
   function icon(name, cls) {
