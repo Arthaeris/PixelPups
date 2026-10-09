@@ -1,5 +1,5 @@
 'use strict';
-/* Voxel Paws — everything visual: voxel models, portraits, scenes, sky and weather. Needs three.js + data.js. */
+/* PixelPups — everything visual: voxel models, portraits, scenes, sky and weather. Needs three.js + data.js. */
 window.VP_ART = (function () {
   const D = window.VP_DATA;
   const V3 = THREE.Vector3;
