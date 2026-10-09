@@ -8,7 +8,7 @@ window.VP_DATA = (function () {
   const CONFIG = {
     SAVE_KEY: 'voxelpaws-save-v1',     // keep this name so old saves are found
     BACKUP_KEY: 'voxelpaws-backup',
-    SAVE_VERSION: 8,
+    SAVE_VERSION: 9,
     AUTO_REFILL_MINUTES: 20,           // luxury feeder / fountain refill this long after being emptied
     OFFLEASH_COME_LEVEL: 2,            // Come must reach this level before a dog can go off-leash
     TIME_ZONE: 'Europe/Berlin',        // all clocks, weather and daily resets use German time
@@ -331,7 +331,7 @@ window.VP_DATA = (function () {
     // Phase 4: sold by vendors on walks
     beret:        { name: 'Beret',            icon: '🎨', slot: 'head', price: 45, vendor: 'boutique', model: 'beret', color: '#c62828' },
     pearls:       { name: 'Pearl collar',     icon: '🦪', slot: 'neck', price: 70, vendor: 'boutique', model: 'pearls' },
-    headlamp:     { name: 'Headlamp',         icon: '🔦', slot: 'head', price: 80, vendor: 'ranger', model: 'headlamp', color: '#2e7d32' },
+    headlamp:     { name: 'Headlamp',         icon: '🔦', slot: 'head', price: 450, vendor: 'ranger', model: 'headlamp', color: '#2e7d32' },
     sunhat:       { name: 'Sun hat',          icon: '👒', slot: 'head', price: 40, vendor: 'kiosk', model: 'sunhat', color: '#f3d27a' },
     alpinehat:    { name: 'Alpine hat',       icon: '🎩', slot: 'head', price: 55, vendor: 'hut', model: 'alpinehat', color: '#3e6b3a' },
     // Phase 4: earned in new places, with challenges and by completing pages of the 📒 book
@@ -460,10 +460,9 @@ window.VP_DATA = (function () {
     autumn: { sun: 25, clouds: 30, rain: 25, fog: 15, storm: 5 },
   };
   // [hour, sky color, ambient light, sun light]
-  const DAYLIGHT = [
-    [0, '#1b2340', 0.38, 0.08], [5, '#2b3560', 0.42, 0.12], [6.5, '#f4b98a', 0.7, 0.4],
-    [8, '#cfe6f2', 0.85, 0.55], [17, '#cfe6f2', 0.85, 0.55], [19, '#f6c27a', 0.76, 0.45],
-    [20.5, '#6b5b95', 0.52, 0.2], [22, '#1b2340', 0.38, 0.08], [24, '#1b2340', 0.38, 0.08],
+  const DAYLIGHT = [   // [hour, sky, hemi light, sun light]; sunrise at 6, sunset at 18
+    [0, '#1b2340', 0.38, 0.08], [4.8, '#24305a', 0.4, 0.1], [6, '#f4b98a', 0.68, 0.38], [7.4, '#cfe6f2', 0.85, 0.55],
+    [16.6, '#cfe6f2', 0.85, 0.55], [18, '#f6c27a', 0.74, 0.42], [19.3, '#6b5b95', 0.52, 0.2], [20.6, '#1b2340', 0.38, 0.08], [24, '#1b2340', 0.38, 0.08],
   ];
 
   const DOG_NAMES = ['Biscuit', 'Pixel', 'Mochi', 'Pepper', 'Waffles', 'Nugget', 'Luna', 'Bean', 'Ziggy', 'Noodle', 'Maple', 'Cosmo',
@@ -544,7 +543,7 @@ window.VP_DATA = (function () {
     { kind: 'luxury', weight: 1 },
     { kind: 'rare', weight: 1 },
   ];
-  const RARE_FIND = 0.006;  // chance a sniff spot or dig turns up a rare item
+  const RARE_FIND = 0.003;  // chance a sniff spot or dig turns up a rare item
   const GIFT_CHANCE = 0.15;          // chance a neighbor has a gift when you first meet them on a walk
   const GIFT_FRIEND_BONUS = 0.2;     // extra chance if your dog is friends with their dog
   const RECALL = [0, 0.4, 0.7, 0.85, 0.93, 0.99];  // chance Come works off-leash, by Come level
@@ -564,28 +563,28 @@ window.VP_DATA = (function () {
     },
     oldtown: {
       name: 'Old Town', icon: '🏘️', desc: 'Cobblestones, a café and a plaza. Wait for green at the crosswalks — and show off tricks on the plaza for coins.',
-      unlock: { kind: 'obedience', n: 8 }, hint: 'A dog reaches 🎓 Obedience 8',
+      unlock: { all: [{ kind: 'obedience', n: 12 }, { kind: 'walks', n: 8 }] }, hint: 'A dog reaches Obedience 12 and you go on 8 walks',
       dirt: { dry: 'grime', wet: 'grime', extra: 'icecream' }, walkers: [4, 6], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 55, find: 22, ingredient: 15, toy: 8 }, ingredients: ['pastry', 'egg', 'cheese', 'apple'],
       vendors: ['cafe', 'boutique'], plazaCap: 40,
     },
     forest: {
       name: 'Whispering Forest', icon: '🌲', desc: 'Winding trails, squirrels and three hidden glades off the beaten path.',
-      unlock: { kind: 'locWalks', loc: 'oldtown', n: 3 }, hint: 'Go on 3 walks in Old Town',
+      unlock: { all: [{ kind: 'locWalks', loc: 'oldtown', n: 6 }, { kind: 'finds', loc: 'oldtown', n: 4 }] }, hint: 'Go on 6 walks in Old Town and find 4 of its collectibles',
       dirt: { dry: 'burrs', wet: 'mud', extra: 'sap' }, walkers: [1, 3], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 45, find: 25, ingredient: 20, toy: 10 }, ingredients: ['mushroom', 'berries', 'honey'],
       vendors: ['ranger'], needs: { energy: 1.15 },
     },
     beach: {
       name: 'Sunny Beach', icon: '🏖️', desc: 'Dig spots, waves and crabs. At low tide (real tide times) the sea pulls back and reveals tide pools.',
-      unlock: { kind: 'glades', n: 3 }, hint: 'Find all 3 hidden glades in the Whispering Forest',
+      unlock: { all: [{ kind: 'glades', n: 3 }, { kind: 'locWalks', loc: 'forest', n: 6 }] }, hint: 'Find all 3 hidden glades in the Whispering Forest and walk there 6 times',
       dirt: { dry: 'sand', wet: 'sand', extra: 'seaweed', water: 'salt' }, walkers: [2, 4], loop: { x: 11, z0: -5, z1: 11 },
       loot: { coins: 50, find: 25, ingredient: 12, toy: 13 }, ingredients: ['fish', 'apple'],
       vendors: ['kiosk'], needs: { thirst: 1.3 },
     },
     alpine: {
       name: 'Alpine Meadow', icon: '🏔️', desc: 'Wind, wildflowers and cows with bells. Touch all four hiking checkpoints to reach the summit.',
-      unlock: { kind: 'treasure', n: 1 }, hint: 'Dig up buried treasure on Sunny Beach',
+      unlock: { all: [{ kind: 'treasure', n: 3 }, { kind: 'locWalks', loc: 'beach', n: 5 }] }, hint: 'Dig up 3 buried treasures on Sunny Beach',
       dirt: { dry: 'burrs', wet: 'mud', snow: 'snow' }, walkers: [1, 3], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 48, find: 25, ingredient: 17, toy: 10 }, ingredients: ['cheese', 'berries', 'honey'],
       vendors: ['hut'], needs: { energy: 1.25 },
@@ -593,21 +592,21 @@ window.VP_DATA = (function () {
     // ----- Phase 5 -----
     caves: {
       name: 'Crystal Caves', icon: '💎', desc: 'Dark tunnels and bats. Ask a dog to 💬 Speak: the echo makes hidden crystals glow.',
-      unlock: { kind: 'acc', id: 'headlamp' }, hint: 'Own a 🔦 Headlamp (Ranger hut, Whispering Forest)',
+      unlock: { all: [{ kind: 'acc', id: 'headlamp' }, { kind: 'locWalks', loc: 'forest', n: 10 }] }, hint: 'Own a Headlamp (Ranger hut, Whispering Forest) and walk in the forest 10 times',
       dirt: { dry: 'dust', wet: 'dust', extra: 'slime' }, walkers: [0, 1], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 50, find: 25, ingredient: 8, toy: 8 }, ingredients: ['mushroom'],
       vendors: ['miner'], needs: { energy: 1.1 }, indoor: true,
     },
     snowy: {
       name: 'Snowy Village', icon: '⛄', desc: 'Always snowy. Go sledding, play snowball fetch and fuel the rocket at the observatory. Extra festive in December!',
-      unlock: { kind: 'summits', n: 1 }, hint: 'Reach the summit on the Alpine Meadow',
+      unlock: { kind: 'summits', n: 3 }, hint: 'Reach the summit on the Alpine Meadow 3 times',
       dirt: { dry: 'frost', wet: 'slush', snow: 'frost' }, walkers: [2, 4], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 52, find: 25, ingredient: 13, toy: 10 }, ingredients: ['pumpkin', 'honey', 'apple'],
       vendors: ['igloo'], needs: { energy: 1.15 }, snowy: true,
     },
     carnival: {
       name: 'Moonlight Carnival', icon: '🎡', desc: 'Only open in the evening. Do the trick a stall asks for to win 🎟️ tickets, trade them for prizes, ride the Ferris wheel.',
-      unlock: { kind: 'loc', loc: 'oldtown' }, hint: 'Unlock Old Town first', hours: [18, 24],
+      unlock: { all: [{ kind: 'loc', loc: 'oldtown' }, { kind: 'walks', n: 20 }] }, hint: 'Go on 20 walks in total', hours: [18, 24],
       dirt: { dry: 'confetti', wet: 'mud', extra: 'cottoncandy' }, walkers: [4, 7], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 60, find: 25, ingredient: 5, toy: 10 }, ingredients: ['apple', 'honey'],
       vendors: ['prizes'], ticketCap: 40,
@@ -621,7 +620,7 @@ window.VP_DATA = (function () {
     },
     moon: {
       name: 'Moon Base', icon: '🚀', desc: 'Low gravity: toys fly high and far. Dig in craters — one hides a space capsule.',
-      unlock: { kind: 'rocket', n: 3 }, hint: 'Fuel the rocket at the Snowy Village observatory with 3 🌕 moonstones from the caves',
+      unlock: { kind: 'rocket', n: 6 }, hint: 'Fuel the rocket at the Snowy Village observatory with 6 moonstones from the caves',
       dirt: { dry: 'moondust', wet: 'moondust' }, walkers: [0, 1], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 50, find: 30, ingredient: 0, toy: 12 }, ingredients: [],
       vendors: ['station'], indoor: true, lowGravity: true,
@@ -632,25 +631,25 @@ window.VP_DATA = (function () {
   // Vendors on walks. stock kinds: meal (RECIPES), shampoo, acc (ACCESSORIES), toy, ingredient.
   const VENDORS = {
     cafe:     { name: 'Café Pfote',     icon: '☕', loc: 'oldtown', greet: 'Fresh treats for good dogs!',
-                stock: [['meal', 'puppuccino'], ['meal', 'pretzel'], ['ingredient', 'cheese', 6], ['ingredient', 'egg', 4]] },
+                stock: [['outfit', 'beret'], ['meal', 'puppuccino'], ['meal', 'pretzel'], ['ingredient', 'cheese', 6], ['ingredient', 'egg', 4]] },
     boutique: { name: 'Pet boutique',   icon: '🛍️', loc: 'oldtown', greet: 'The latest in dog fashion.',
-                stock: [['shampoo', 'citrus'], ['acc', 'beret'], ['acc', 'pearls'], ['acc', 'bowtie'], ['shampoo', 'lavender']] },
+                stock: [['outfit', 'necklace'], ['outfit', 'bowtie'], ['shampoo', 'citrus'], ['acc', 'beret'], ['acc', 'pearls'], ['acc', 'bowtie'], ['shampoo', 'lavender']] },
     ranger:   { name: 'Ranger hut',     icon: '🛖', loc: 'forest',  greet: 'Gear for the trail.',
-                stock: [['acc', 'headlamp'], ['acc', 'raincoat'], ['shampoo', 'pine'], ['meal', 'trailmix'], ['ingredient', 'honey', 6]] },
+                stock: [['outfit', 'flannel'], ['outfit', 'bucket'], ['acc', 'headlamp'], ['acc', 'raincoat'], ['shampoo', 'pine'], ['meal', 'trailmix'], ['ingredient', 'honey', 6]] },
     kiosk:    { name: 'Beach kiosk',    icon: '🍦', loc: 'beach',   greet: 'Sun, sand and ice cream!',
-                stock: [['toy', 'beachball'], ['toy', 'frisbee'], ['acc', 'sunhat'], ['acc', 'sunglasses'], ['shampoo', 'ocean'], ['meal', 'pupsicle']] },
+                stock: [['outfit', 'hawaiian'], ['outfit', 'boardshorts'], ['outfit', 'sunhat'], ['outfit', 'starshades'], ['outfit', 'lei'], ['toy', 'beachball'], ['toy', 'frisbee'], ['acc', 'sunhat'], ['acc', 'sunglasses'], ['shampoo', 'ocean'], ['meal', 'pupsicle']] },
     hut:      { name: 'Alpine hut',     icon: '🏠', loc: 'alpine',  greet: 'Grüß Gott! Cheese from our cows.',
-                stock: [['meal', 'cheesebite'], ['ingredient', 'cheese', 5], ['acc', 'alpinehat'], ['shampoo', 'alpine'], ['ingredient', 'pumpkin', 6]] },
+                stock: [['outfit', 'overalls'], ['outfit', 'cowboy'], ['meal', 'cheesebite'], ['ingredient', 'cheese', 5], ['acc', 'alpinehat'], ['shampoo', 'alpine'], ['ingredient', 'pumpkin', 6]] },
     miner:    { name: 'Old miner',      icon: '⛏️', loc: 'caves',   greet: 'Mind your step down here, little paws.',
-                stock: [['acc', 'minerhat'], ['shampoo', 'cave'], ['meal', 'rockbiscuit'], ['ingredient', 'mushroom', 6]] },
+                stock: [['outfit', 'minerhelmet'], ['acc', 'minerhat'], ['shampoo', 'cave'], ['meal', 'rockbiscuit'], ['ingredient', 'mushroom', 6]] },
     igloo:    { name: 'Igloo shop',     icon: '🧊', loc: 'snowy',   greet: 'Warm coats for cold noses!',
-                stock: [['acc', 'wintercoat'], ['acc', 'santahat'], ['acc', 'beanie'], ['shampoo', 'frostmelt'], ['meal', 'broth']] },
+                stock: [['outfit', 'winterjacket'], ['outfit', 'snowpants'], ['outfit', 'santa'], ['acc', 'wintercoat'], ['acc', 'santahat'], ['acc', 'beanie'], ['shampoo', 'frostmelt'], ['meal', 'broth']] },
     prizes:   { name: 'Prize booth',    icon: '🎪', loc: 'carnival', greet: 'Step right up! Prizes for tickets 🎟️', currency: 'tickets',
-                stock: [['find', 'plushbear', 12], ['find', 'plushbunny', 12], ['find', 'plushdino', 20], ['find', 'plushunicorn', 30], ['acc', 'jesterhat'], ['toy', 'plushball'], ['meal', 'cottoncandy'], ['shampoo', 'sugar']] },
+                stock: [['outfit', 'jester'], ['outfit', 'bunnyears'], ['outfit', 'heartglasses'], ['outfit', 'balloon'], ['find', 'plushbear', 12], ['find', 'plushbunny', 12], ['find', 'plushdino', 20], ['find', 'plushunicorn', 30], ['acc', 'jesterhat'], ['toy', 'plushball'], ['meal', 'cottoncandy'], ['shampoo', 'sugar']] },
     fairyshop:{ name: 'Fairy vendor',   icon: '🍄', loc: 'fairy',   greet: 'Sparkles and wonders, dear dog-friend!',
-                stock: [['acc', 'fairywings'], ['toy', 'wand'], ['shampoo', 'pixie'], ['meal', 'stardrop'], ['ingredient', 'berries', 5]] },
+                stock: [['outfit', 'leggings'], ['outfit', 'flowercrown'], ['outfit', 'fairywings'], ['acc', 'fairywings'], ['toy', 'wand'], ['shampoo', 'pixie'], ['meal', 'stardrop'], ['ingredient', 'berries', 5]] },
     station:  { name: 'Space station shop', icon: '🛰️', loc: 'moon', greet: 'Welcome, space cadet!',
-                stock: [['acc', 'spacesuit'], ['toy', 'ufo'], ['shampoo', 'cosmic'], ['meal', 'mooncheese']] },
+                stock: [['outfit', 'spacesuit'], ['outfit', 'spacehelmet'], ['outfit', 'jetpack'], ['acc', 'spacesuit'], ['toy', 'ufo'], ['shampoo', 'cosmic'], ['meal', 'mooncheese']] },
   };
 
   // Finds for the 📒 collectibles book. weight 0 = only from special places (treasure, tide pools).
@@ -697,7 +696,7 @@ window.VP_DATA = (function () {
 
     amethyst:  { name: 'Amethyst',           icon: '🔮', loc: 'caves', weight: 5, where: 'crystal' },
     quartz:    { name: 'Rose quartz',        icon: '💗', loc: 'caves', weight: 4, where: 'crystal' },
-    moonstone: { name: 'Moonstone',          icon: '🌕', loc: 'caves', weight: 3, where: 'crystal' },
+    moonstone: { name: 'Moonstone',          icon: '🌕', loc: 'caves', weight: 2, where: 'crystal' },
     fossil:    { name: 'Dino fossil',        icon: '🦕', loc: 'caves', weight: 3 },
     pickaxe:   { name: 'Tiny pickaxe',       icon: '⛏️', loc: 'caves', weight: 3 },
     geode:     { name: 'Rainbow geode',      icon: '🌈', loc: 'caves', weight: 1, secret: true },
@@ -832,6 +831,87 @@ window.VP_DATA = (function () {
     { id: 'picnic',   kind: 'picnic', icon: '🧺', title: 'Picnic day',       text: 'Neighbors share snacks: your dogs\' first walk today fills their bellies.' },
   ];
 
+  // ===================================================================
+  // Phase 7: your own character. Two body types with four hairstyles each,
+  // colors to pick, and clothes to buy, find at vendors or unlock.
+  // ===================================================================
+  const LOOK = {
+    bodies: [['a', 'Body A'], ['b', 'Body B']],
+    hair: { a: ['Crop', 'Spiky', 'Curly', 'Swoop'], b: ['Bob', 'Ponytail', 'Long', 'Buns'] },
+    skins: ['#ffe3cc', '#f6cfa8', '#eab98e', '#d39a6b', '#b97a4e', '#975c36', '#744226', '#4f2c1a'],
+    hairColors: ['#1f1a17', '#3b2a1e', '#6a4428', '#9a4a24', '#cf6d2c', '#e9c46a', '#f1e6c8', '#9c9c9c', '#f48fb1', '#5c8df6', '#5fb87a', '#9a6cf0'],
+    favColors: ['#5b7cfa', '#e5484d', '#ff8a3d', '#f5c542', '#3fbf7f', '#2bb3c0', '#8a5cf6', '#ef6fa8', '#ffffff', '#3a3a46', '#8d6e4f', '#a3d977'],
+  };
+  const DEFAULT_LOOK = { body: 'a', hair: 0, skin: '#f6cfa8', hairColor: '#6a4428', fav: '#5b7cfa', outfit: { top: 'tee', bottom: 'jeans' } };
+  // slot: hat, face, neck, top, bottom, back. color: null = your favorite color.
+  // price = home shop, vendor = sold on walks, tickets = prize booth, unlock = earned (see UNLOCKS)
+  const OUTFITS = {
+    // tops
+    tee:        { name: 'Favorite tee',      slot: 'top', model: 'tee', color: null, price: 0, starter: true },
+    stripes:    { name: 'Striped shirt',     slot: 'top', model: 'stripes', color: '#2f5fd0', color2: '#ffffff', price: 60 },
+    hoodie:     { name: 'Cozy hoodie',       slot: 'top', model: 'hoodie', color: '#8a5cf6', price: 90 },
+    sweater:    { name: 'Knit sweater',      slot: 'top', model: 'sweater', color: '#e5484d', color2: '#ffffff', price: 110 },
+    jacket:     { name: 'Denim jacket',      slot: 'top', model: 'jacket', color: '#4f78b8', color2: '#f2f2f2', price: 140 },
+    polo:       { name: 'Polo shirt',        slot: 'top', model: 'tee', color: '#3fbf7f', collar: '#ffffff', price: 70 },
+    raincoat:   { name: 'Yellow raincoat',   slot: 'top', model: 'raincoat', color: '#f5c542', price: 120 },
+    flannel:    { name: 'Flannel shirt',     slot: 'top', model: 'check', color: '#c0392b', color2: '#2c2c2c', vendor: 'ranger', price: 130 },
+    winterjacket:{ name: 'Puffer jacket',    slot: 'top', model: 'puffer', color: '#2bb3c0', vendor: 'igloo', price: 160 },
+    hawaiian:   { name: 'Hawaiian shirt',    slot: 'top', model: 'flowers', color: '#ff8a3d', color2: '#fff4c2', vendor: 'kiosk', price: 120 },
+    overalls:   { name: 'Overalls',          slot: 'top', model: 'overalls', color: '#ffffff', color2: '#3d6fb5', vendor: 'hut', price: 140 },
+    spacesuit:  { name: 'Astronaut suit',    slot: 'top', model: 'spacesuit', color: '#f2f2f2', color2: '#e5484d', vendor: 'station', price: 300 },
+    tux:        { name: 'Tuxedo',            slot: 'top', model: 'tux', color: '#24242e', unlock: 'daily10' },
+    jersey:     { name: 'Team jersey',       slot: 'top', model: 'jersey', color: '#e5484d', color2: '#ffffff', unlock: 'walks50' },
+    // bottoms
+    jeans:      { name: 'Jeans',             slot: 'bottom', model: 'pants', color: '#3a4a6b', price: 0, starter: true },
+    shorts:     { name: 'Shorts',            slot: 'bottom', model: 'shorts', color: '#c8a46a', price: 50 },
+    skirt:      { name: 'Pleated skirt',     slot: 'bottom', model: 'skirt', color: '#8a5cf6', price: 70 },
+    cargo:      { name: 'Cargo pants',       slot: 'bottom', model: 'cargo', color: '#6b7a4a', price: 80 },
+    checkpants: { name: 'Checkered pants',   slot: 'bottom', model: 'checkpants', color: '#2c2c2c', color2: '#f2f2f2', price: 100 },
+    leggings:   { name: 'Rainbow leggings',  slot: 'bottom', model: 'pants', color: '#ef6fa8', stripes: true, vendor: 'fairyshop', price: 150 },
+    boardshorts:{ name: 'Board shorts',      slot: 'bottom', model: 'shorts', color: '#2bb3c0', vendor: 'kiosk', price: 70 },
+    snowpants:  { name: 'Snow pants',        slot: 'bottom', model: 'pants', color: '#e5484d', vendor: 'igloo', price: 110 },
+    // hats
+    cap:        { name: 'Baseball cap',      slot: 'hat', model: 'cap', color: null, price: 40 },
+    beanie:     { name: 'Pom-pom beanie',    slot: 'hat', model: 'beanie', color: '#f5c542', price: 45 },
+    bucket:     { name: 'Bucket hat',        slot: 'hat', model: 'bucket', color: '#a3d977', vendor: 'ranger', price: 60 },
+    sunhat:     { name: 'Straw sun hat',     slot: 'hat', model: 'sunhat', color: '#e8cf8a', vendor: 'kiosk', price: 70 },
+    beret:      { name: "Painter's beret",   slot: 'hat', model: 'beret', color: '#c0392b', vendor: 'cafe', price: 65 },
+    cowboy:     { name: 'Cowboy hat',        slot: 'hat', model: 'cowboy', color: '#8d6e4f', vendor: 'hut', price: 120 },
+    chef:       { name: 'Chef hat',          slot: 'hat', model: 'chef', color: '#ffffff', price: 90 },
+    headphones: { name: 'Headphones',        slot: 'hat', model: 'headphones', color: '#3a3a46', color2: '#ef6fa8', price: 150 },
+    minerhelmet:{ name: 'Miner helmet',      slot: 'hat', model: 'miner', color: '#f5c542', vendor: 'miner', price: 120 },
+    santa:      { name: 'Cozy Santa hat',    slot: 'hat', model: 'santa', color: '#e5484d', vendor: 'igloo', price: 80 },
+    jester:     { name: 'Jester cap',        slot: 'hat', model: 'jester', color: '#8a5cf6', color2: '#f5c542', vendor: 'prizes', tickets: 35 },
+    bunnyears:  { name: 'Bunny ears',        slot: 'hat', model: 'bunny', color: '#ffffff', color2: '#f8bbd0', vendor: 'prizes', tickets: 25 },
+    flowercrown:{ name: 'Flower crown',      slot: 'hat', model: 'flowers', color: '#ef6fa8', vendor: 'fairyshop', price: 110 },
+    spacehelmet:{ name: 'Astronaut helmet',  slot: 'hat', model: 'helmet', color: '#f2f2f2', vendor: 'station', price: 250 },
+    crown:      { name: 'Golden crown',      slot: 'hat', model: 'crown', color: '#f5c542', unlock: 'comfort5' },
+    wizardhat:  { name: 'Wizard hat',        slot: 'hat', model: 'wizard', color: '#3b3fb6', unlock: 'alltricks' },
+    // face
+    glasses:    { name: 'Round glasses',     slot: 'face', model: 'glasses', color: '#3a2a20', price: 50 },
+    shades:     { name: 'Sunglasses',        slot: 'face', model: 'shades', color: '#1f1a17', price: 70 },
+    starshades: { name: 'Star shades',       slot: 'face', model: 'stars', color: '#f5c542', vendor: 'kiosk', price: 90 },
+    heartglasses:{ name: 'Heart glasses',    slot: 'face', model: 'hearts', color: '#ef6fa8', vendor: 'prizes', tickets: 30 },
+    monocle:    { name: 'Monocle',           slot: 'face', model: 'monocle', color: '#f5c542', unlock: 'secret1' },
+    mustache:   { name: 'Fancy mustache',    slot: 'face', model: 'mustache', color: null, price: 60 },
+    // neck
+    scarf:      { name: 'Wool scarf',        slot: 'neck', model: 'scarf', color: '#e5484d', price: 45 },
+    bandana:    { name: 'Neck bandana',      slot: 'neck', model: 'bandana', color: '#2f5fd0', price: 35 },
+    necklace:   { name: 'Pearl necklace',    slot: 'neck', model: 'pearls', color: '#fffaf0', vendor: 'boutique', price: 140 },
+    bowtie:     { name: 'Silk bow tie',      slot: 'neck', model: 'bowtie', color: '#8a5cf6', vendor: 'boutique', price: 60 },
+    lei:        { name: 'Flower lei',        slot: 'neck', model: 'lei', color: '#ef6fa8', vendor: 'kiosk', price: 55 },
+    medal:      { name: 'Summit medal',      slot: 'neck', model: 'medal', color: '#f5c542', unlock: 'summit3' },
+    // back
+    backpack:   { name: 'Backpack',          slot: 'back', model: 'backpack', color: '#ff8a3d', price: 80 },
+    guitar:     { name: 'Guitar',            slot: 'back', model: 'guitar', color: '#c8843a', price: 200 },
+    cape:       { name: 'Hero cape',         slot: 'back', model: 'cape', color: '#e5484d', unlock: 'friends3' },
+    angelwings: { name: 'Angel wings',       slot: 'back', model: 'wings', color: '#ffffff', unlock: 'page_park' },
+    fairywings: { name: 'Glimmer wings',     slot: 'back', model: 'wings', color: '#e1bee7', glow: true, vendor: 'fairyshop', price: 220 },
+    jetpack:    { name: 'Jetpack',           slot: 'back', model: 'jetpack', color: '#b0bec5', vendor: 'station', price: 350 },
+    balloon:    { name: 'Heart balloon',     slot: 'back', model: 'balloon', color: '#e5484d', vendor: 'prizes', tickets: 20 },
+    fishingrod: { name: 'Fishing rod',       slot: 'back', model: 'rod', color: '#8d6e4f', unlock: 'rainwalks5' },
+  };
+
   return {
     CONFIG, NEEDS, STATS, TRAITS, BREEDS, LEGACY_COATS, ITEMS, CATS, TOYS, WALLS, FLOORS, DEFAULT_ROOM, WEATHER, WEATHER_ODDS, DAYLIGHT, DOG_NAMES,
     TRICKS, SECRET_TRICKS, TRICK_XP, TRICK_LEVELS, TRICK_SUCCESS, TRICK_SNAP, TRICK_FOCUS, COMPAT, FRIEND_LEVEL, NEIGHBORS, GIFTS, GIFT_CHANCE, GIFT_FRIEND_BONUS, RECALL,
@@ -840,6 +920,6 @@ window.VP_DATA = (function () {
     DIRT, LOCATIONS, FUTURE_LOCATIONS, VENDORS, FINDS, FIND_DUPLICATE_COINS, TREASURE, SUMMIT_COINS, PLAZA_COINS, CROSSWALK,
     CHALLENGES, CHALLENGE_BONUS, RECORDS,
     ECHO, CAPSULE, HELMET_CHANCE, LOW_GRAVITY, PUZZLE, SLED_COINS,
-    EVENTS,
+    EVENTS, LOOK, DEFAULT_LOOK, OUTFITS,
   };
 })();
