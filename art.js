@@ -424,6 +424,45 @@ window.VP_ART = (function () {
       box(g, 0.42, 0.3, 0.42, shade, 0, 1.25, 0);
       g.userData.anim = () => { shade.emissiveIntensity = g.userData.on === false ? 0 : M.lamp.emissiveIntensity; };
     },
+    candles(g) {
+      box(g, 0.5, 0.05, 0.36, '#8d6e63', 0, 0.025, 0);
+      const flames = [];
+      for (const [x, z, h] of [[-0.14, 0.04, 0.22], [0.02, -0.06, 0.32], [0.15, 0.06, 0.16]]) {
+        box(g, 0.08, h, 0.08, '#fff3e0', x, 0.05 + h / 2, z);
+        flames.push(box(g, 0.04, 0.07, 0.04, M.fire2, x, 0.09 + h, z));
+      }
+      g.userData.anim = (t) => flames.forEach((f, k) => { f.scale.y = 0.8 + Math.sin(t * 9 + k * 2) * 0.25; });
+    },
+    lantern(g) {
+      const glass = new THREE.MeshLambertMaterial({ color: '#ffe9b0', emissive: '#ffb84d', emissiveIntensity: 0.8 });
+      box(g, 0.34, 0.05, 0.34, '#3e3a36', 0, 0.025, 0);
+      box(g, 0.26, 0.34, 0.26, glass, 0, 0.23, 0);
+      for (const [x, z] of [[-0.13, -0.13], [0.13, -0.13], [-0.13, 0.13], [0.13, 0.13]]) box(g, 0.04, 0.36, 0.04, '#3e3a36', x, 0.23, z);
+      box(g, 0.34, 0.06, 0.34, '#3e3a36', 0, 0.43, 0);
+      box(g, 0.12, 0.08, 0.12, '#3e3a36', 0, 0.5, 0);
+      box(g, 0.04, 0.1, 0.04, '#3e3a36', 0, 0.59, 0);
+      g.userData.anim = (t) => { glass.emissiveIntensity = 0.7 + Math.sin(t * 7) * 0.08 + Math.sin(t * 13) * 0.05; };
+    },
+    fairylights(g) {
+      for (const x of [-0.42, 0.42]) box(g, 0.06, 1.1, 0.06, '#6d4c41', x, 0.55, -0.3);
+      for (const x of [-0.42, 0.42]) box(g, 0.18, 0.05, 0.18, '#5d4037', x, 0.025, -0.3);
+      const bulbs = [], cols = ['#ff6f91', '#ffd54f', '#7fd3ff', '#a7e3a1', '#c9a6ff'];
+      for (let k = 0; k <= 8; k++) {
+        const u = k / 8, x = -0.42 + u * 0.84, y = 1.06 - Math.sin(u * Math.PI) * 0.22;
+        if (k < 8) box(g, 0.105, 0.012, 0.012, '#4e342e', x + 0.0525, y - 0.012, -0.3);
+        const m = new THREE.MeshBasicMaterial({ color: cols[k % cols.length] });
+        bulbs.push(box(g, 0.06, 0.07, 0.06, m, x, y - 0.06, -0.3));
+      }
+      g.userData.anim = (t) => bulbs.forEach((b, k) => { b.visible = g.userData.dark === false || Math.sin(t * 2 + k * 1.7) > -0.75; });
+    },
+    gardenlamp(g) {
+      const glass = new THREE.MeshLambertMaterial({ color: '#fff4cf', emissive: '#ffd27a', emissiveIntensity: 0.8 });
+      box(g, 0.2, 0.08, 0.2, '#37474f', 0, 0.04, 0);
+      box(g, 0.07, 0.7, 0.07, '#37474f', 0, 0.42, 0);
+      box(g, 0.22, 0.2, 0.22, glass, 0, 0.88, 0);
+      box(g, 0.28, 0.05, 0.28, '#37474f', 0, 1.0, 0);
+      box(g, 0.28, 0.04, 0.28, '#37474f', 0, 0.77, 0);
+    },
     rug(g) {
       box(g, 0.98, 0.03, 0.98, '#b84a5a', 0, 0.015, 0);
       box(g, 0.74, 0.035, 0.74, '#f0c27b', 0, 0.018, 0);
@@ -1493,7 +1532,7 @@ window.VP_ART = (function () {
         box(g, 0.2, 0.12, 0.2, '#d63c3c', 0, 0.62, 0);
         box(g, 0.44, 0.1, 0.1, '#b52e2e', 0, 0.32, 0);
       }
-      const sparkle = emojiSprite('✨', 0.5);
+      const sparkle = scentFX();
       sparkle.position.set(0, 1.15, 0);
       g.add(sparkle);
       colliders.push({ x, z, r: 0.42 });
@@ -1623,10 +1662,73 @@ window.VP_ART = (function () {
     colliders.push({ x, z, r: 0.45 });
     return water;
   }
+  // a sniff spot's scent: little glowing voxels drifting up in a slow spiral, with a twinkle on top
+  const SCENT = {
+    gold: new THREE.MeshBasicMaterial({ color: '#ffc21a', transparent: true, opacity: 0.95, depthWrite: false }),
+    pale: new THREE.MeshBasicMaterial({ color: '#fffbea', transparent: true, opacity: 0.95, depthWrite: false }),
+    mint: new THREE.MeshBasicMaterial({ color: '#ff9b3d', transparent: true, opacity: 0.9, depthWrite: false }),
+    ring: new THREE.MeshBasicMaterial({ color: '#ffd24d', transparent: true, opacity: 0.75, depthWrite: false }),
+    bubble: new THREE.MeshBasicMaterial({ color: '#c9ecff', transparent: true, opacity: 0.8, depthWrite: false }),
+    rich: new THREE.MeshBasicMaterial({ color: '#ffc21a', transparent: true, opacity: 1, depthWrite: false }),
+  };
+  function scentFX(kind) {
+    const g = new THREE.Group();
+    const bub = kind === 'pool';
+    const motes = [];
+    for (let k = 0; k < 7; k++) {
+      const s = 0.1 + (k % 3) * 0.035;
+      const m = box(g, s, s, s, bub ? SCENT.bubble : k % 3 === 1 ? SCENT.mint : k % 2 ? SCENT.pale : SCENT.gold, 0, 0, 0);
+      motes.push({ m, a: (k / 7) * Math.PI * 2, t: k / 7, s });
+    }
+    // a slow ring of little tiles on the ground marks the spot
+    const ring = new THREE.Group();
+    ring.position.y = -1.1;
+    g.add(ring);
+    if (!bub) for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; box(ring, 0.13, 0.03, 0.13, SCENT.ring, Math.cos(a) * 0.62, 0, Math.sin(a) * 0.62).rotation.y = -a; }
+    // the twinkle: a little voxel star that turns and breathes
+    const star = new THREE.Group();
+    g.add(star);
+    if (!bub) {
+      box(star, 0.44, 0.09, 0.09, SCENT.gold, 0, 0, 0);
+      box(star, 0.09, 0.44, 0.09, SCENT.gold, 0, 0, 0);
+      box(star, 0.09, 0.09, 0.44, SCENT.gold, 0, 0, 0);
+      box(star, 0.17, 0.17, 0.17, SCENT.pale, 0, 0, 0);
+    } else box(star, 0.2, 0.2, 0.2, SCENT.bubble, 0, 0, 0);
+    let time = Math.random() * 10;
+    g.userData.gold = false;
+    g.userData.tick = (dt) => {
+      time += dt;
+      const gold = g.userData.gold, sp = gold ? 1.4 : 1;
+      for (const o of motes) {
+        o.t = (o.t + dt * 0.32 * sp) % 1;
+        const r = 0.42 * (1 - o.t * 0.5), a = o.a + time * 1.3 * sp;
+        o.m.position.set(Math.cos(a) * r, -0.6 + o.t * 0.95, Math.sin(a) * r);
+        const life = Math.sin(o.t * Math.PI);
+        o.m.scale.setScalar(Math.max(0.05, life) * (gold ? 1.35 : 1));
+        o.m.rotation.set(time + o.a, time * 0.7, 0);
+      }
+      ring.rotation.y = -time * 0.5;
+      ring.scale.setScalar(1 + Math.sin(time * 2.4) * 0.06);
+      star.rotation.y = time * 1.6;
+      star.rotation.x = Math.sin(time * 0.9) * 0.4;
+      star.position.y = 0.45 + Math.sin(time * 2.2) * 0.06;
+      star.scale.setScalar((0.85 + Math.sin(time * 3.1) * 0.18) * (gold ? 1.6 : 1));
+    };
+    g.userData.tick(0);
+    return g;
+  }
+  function setScentGold(g, on) {
+    g.userData.gold = !!on;
+    g.traverse((o) => {
+      if (!o.isMesh) return;
+      if (!o.userData.base) o.userData.base = o.material;
+      if (o.userData.base !== SCENT.bubble) o.material = on ? SCENT.rich : o.userData.base;
+    });
+  }
   function addSpot(root, spots, colliders, x, z, kind, build, r = 0.42) {
     const g = pivot(root, x, 0, z);
     if (build) build(g);
-    const sparkle = emojiSprite(kind === 'pool' ? '🫧' : '✨', 0.5);
+    const sparkle = scentFX(kind);
     sparkle.position.set(0, 1.15, 0);
     g.add(sparkle);
     if (r) colliders.push({ x, z, r });
@@ -2915,6 +3017,7 @@ window.VP_ART = (function () {
     paw: '<ellipse cx="12" cy="15.5" rx="4.2" ry="3.6" fill="currentColor" stroke="none"/><ellipse cx="6.3" cy="10.8" rx="1.9" ry="2.4" fill="currentColor" stroke="none"/><ellipse cx="17.7" cy="10.8" rx="1.9" ry="2.4" fill="currentColor" stroke="none"/><ellipse cx="9.4" cy="6.6" rx="1.9" ry="2.5" fill="currentColor" stroke="none"/><ellipse cx="14.6" cy="6.6" rx="1.9" ry="2.5" fill="currentColor" stroke="none"/>',
     star: '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/>',
     sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
+    chat: '<path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H11l-4 3.5v-3.5H6.5a2 2 0 0 1-2-2z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/>',
     share: '<path d="M12 3.5V15M7.5 8 12 3.5 16.5 8"/><path d="M6 12H5v8h14v-8h-1"/>',
     copy: '<rect x="8" y="8" width="11.5" height="11.5" rx="2.5"/><path d="M5 15.5V6.5A2 2 0 0 1 7 4.5h8.5"/>',
     save: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
@@ -3271,6 +3374,6 @@ window.VP_ART = (function () {
     buildItem, buildToy, buildDog, coatOf, portraitURL, buildPlayer, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
-    icon, thumbURL, hasThumb,
+    icon, thumbURL, hasThumb, scentFX, setScentGold,
   };
 })();
