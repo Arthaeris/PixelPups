@@ -168,6 +168,9 @@ window.VP_DATA = (function () {
     clock:     { name: 'Grandfather clock', icon: '🕰️', price: 50, cat: 'decor', solid: true },
     dresser:   { name: 'Dresser',        icon: '🗄️', price: 40, cat: 'decor', solid: true },
     desk:      { name: 'Desk',           icon: '💻', price: 45, cat: 'decor', solid: true },
+    candles:   { name: 'Candles',        icon: '🕯️', price: 15, cat: 'decor', solid: true },
+    lantern:   { name: 'Lantern',        icon: '🏮', price: 30, cat: 'decor', solid: true },
+    fairylights: { name: 'String lights', icon: '✨', price: 55, cat: 'living', solid: true, comfort: 2 },
     // Phase 3: bath & gifts
     bathtub:   { name: 'Bathtub',        icon: '🛁', price: 60, cat: 'dog', solid: true, use: 'bath', comfort: 2 },
     giftbox:   { name: 'Gift box',       icon: '🎁', price: 10, cat: 'decor', solid: true, use: 'gift' },
@@ -177,6 +180,7 @@ window.VP_DATA = (function () {
     birdbath:  { name: 'Bird bath',      icon: '🐦', price: 35, cat: 'garden', solid: true, garden: true, comfort: 3 },
     gardentree:{ name: 'Apple tree',     icon: '🍎', price: 45, cat: 'garden', solid: true, garden: true, comfort: 3 },
     gardenpond:{ name: 'Garden pond',    icon: '🪷', price: 70, cat: 'garden', solid: true, garden: true, comfort: 4 },
+    gardenlamp:{ name: 'Garden lantern', icon: '🏮', price: 40, cat: 'garden', solid: true, garden: true },
     digpit:    { name: 'Sand pit',       icon: '🏖️', price: 45, cat: 'garden', solid: false, garden: true, digSpot: true },
     // Luxury: expensive, only in the shop, never found
     jukebox:   { name: 'Jukebox',        icon: '🎶', price: 300, cat: 'luxury', solid: true, use: 'music', comfort: 6, luxury: true },
@@ -192,6 +196,24 @@ window.VP_DATA = (function () {
   // What tapping a piece of furniture does
   const USES = { tv: 'tv', toybox: 'toybox', fireplace: 'fire', stove: 'cook', piano: 'piano', lamp: 'lamp', bathtub: 'bath', giftbox: 'gift', jukebox: 'music' };
   for (const [k, u] of Object.entries(USES)) ITEMS[k].use = u;
+  // Things that light up your home at night. r = how far the light reaches (tiles), y = height of the glow,
+  // on = 'toggle' when it can be switched (lamps and fires start on, TVs and music start off)
+  const GLOW = {
+    lamp:        { color: '#ffd27a', r: 2.6, y: 1.25, on: true },
+    crystallamp: { color: '#b9a6ff', r: 3.0, y: 0.5 },
+    fireplace:   { color: '#ff9a4a', r: 2.8, y: 0.35, on: true, flicker: true },
+    candles:     { color: '#ffb35c', r: 1.5, y: 0.35, flicker: true },
+    lantern:     { color: '#ffc46b', r: 2.1, y: 0.55, flicker: true },
+    fairylights: { color: '#ffd6f0', r: 2.4, y: 0.9, twinkle: true },
+    gardenlamp:  { color: '#ffe3a1', r: 2.4, y: 0.95 },
+    aquarium:    { color: '#7fd3ff', r: 1.4, y: 0.6 },
+    tv:          { color: '#9fc7ff', r: 1.7, y: 0.7, on: false },
+    jukebox:     { color: '#ff8fd0', r: 1.8, y: 0.8, on: false },
+  };
+  // Gear you carry yourself
+  const GADGETS = {
+    flashlight: { name: 'Flashlight', icon: '🔦', price: 60, desc: 'Lights the way on night walks' },
+  };
   const CATS = [['dog', '🐶 Dog stuff'], ['living', '🛋️ Living room'], ['kitchen', '🍳 Kitchen'], ['decor', '🪴 Decor'], ['garden', '🌷 Garden'], ['luxury', '💎 Luxury']];
 
   // ===================================================================
@@ -978,14 +1000,14 @@ window.VP_DATA = (function () {
   };
   // XP and place-mastery points for things you do. cap = how often it counts per game day.
   const XP = {
-    walk: { xp: 20 }, sniff: { xp: 2, m: 2, cap: 40 }, fetch: { xp: 2, m: 1, cap: 12 }, play: { xp: 3, cap: 10 }, trick: { xp: 4, m: 1, cap: 30 },
+    walk: { xp: 20 }, chat: { xp: 3, cap: 8 }, sniff: { xp: 2, m: 2, cap: 40 }, fetch: { xp: 2, m: 1, cap: 12 }, play: { xp: 3, cap: 10 }, trick: { xp: 4, m: 1, cap: 30 },
     bath: { xp: 15, cap: 6 }, cook: { xp: 12, cap: 8 }, treat: { xp: 4, cap: 10 }, tidy: { xp: 3, cap: 6 }, recall: { xp: 4, m: 1, cap: 10 },
     crosswalk: { xp: 6, m: 6, cap: 15 }, plaza: { xp: 8, m: 6, cap: 10 }, glade: { xp: 25, m: 20 }, beachdig: { xp: 4, m: 4, cap: 20 },
     crab: { xp: 3, m: 3, cap: 10 }, summit: { xp: 30, m: 25 }, crystal: { xp: 6, m: 5, cap: 20 }, echo: { xp: 3, m: 2, cap: 15 },
     sled: { xp: 6, m: 6, cap: 15 }, ferris: { xp: 5, m: 4, cap: 6 }, tickets: { xp: 1, m: 1, cap: 60 }, statue: { xp: 4, m: 3, cap: 20 },
     floattoy: { xp: 5, m: 4, cap: 20 }, crater: { xp: 4, m: 4, cap: 20 }, cow: { xp: 3, m: 3, cap: 10 }, squirrel: { xp: 3, m: 3, cap: 10 },
   };
-  const XP_MISC = { newFind: 25, dupFind: 3, challenge: 40, allChallenges: 60, firstVisit: 40, adopt: 50, room: 60, trickLevel: 10, event: 30 };
+  const XP_MISC = { chat: 3, newFind: 25, dupFind: 3, challenge: 40, allChallenges: 60, firstVisit: 40, adopt: 50, room: 60, trickLevel: 10, event: 30 };
   const MASTERY_STARS = [0, 30, 100, 220, 400, 650];   // points for 0..5 stars
   // ===================================================================
   // Training exams: five badges per dog. In the exam, the examiner asks for tricks one by one.
@@ -1146,6 +1168,137 @@ window.VP_DATA = (function () {
   const CRITTER_CHANCE = 0.08;           // chance a sniff turns up a critter instead of loot
   const CRITTER_REWARD = { coins: 500, xp: 400, wall: 'critterwall' };   // for spotting every one
 
+
+  // ===================================================================
+  // Chatting with neighbors on walks. {dog} = their dog, {mine} = one of your dogs, {place} = where you are.
+  // ===================================================================
+  const CHAT = {
+    hello: {
+      morning: ['Morning!', 'Oh, good morning!', 'Early walk too, huh?', 'Morning! Coffee hasn’t kicked in yet.'],
+      day: ['Hi there!', 'Oh, hello!', 'Hey, nice to see you!', 'Hi! Lovely day for a walk.', 'Well, hello!'],
+      evening: ['Evening!', 'Good evening!', 'Oh hey, evening stroll?', 'Evening! Last walk of the day?'],
+      night: ['Oh! You startled me.', 'Late walk, huh? Same here.', 'Evening… or is it night already?', 'Hi! {dog} needed one more round.'],
+    },
+    casual: [
+      '{dog} has been dragging me around all morning. I think I’m the one getting walked.',
+      'Is that {mine}? What a cutie. {dog} likes them, I can tell.',
+      '{dog} ate a sock yesterday. The sock is fine. I’m less sure about {dog}.',
+      'I keep telling {dog} the ducks don’t want to play. {dog} keeps not listening.',
+      'Do you ever talk to your dog like a person? Asking for a friend.',
+      'I swear {dog} knows the word “walk” even when I spell it.',
+      'We tried a new route today. {dog} insisted on the old one.',
+      '{dog} has a favorite bench. We stop there every single time.',
+      'My neighbor says I spoil {dog}. My neighbor is correct.',
+      'If you see a tennis ball under a hedge, it’s probably ours.',
+      '{dog} snores like a little tractor. It’s the best sound.',
+      'I bought {dog} a fancy bed. {dog} sleeps on the doormat.',
+      'Someone told me dogs dream about walks. {dog}’s paws twitch every night.',
+      'I think {dog} and {mine} would make good friends.',
+      'Do you know why dogs spin before lying down? Me neither. {dog} does it six times.',
+      '{dog} barked at a leaf this morning. A very suspicious leaf, to be fair.',
+      'Walking a dog is the best excuse to be outside, isn’t it?',
+      'I came out for five minutes. That was an hour ago.',
+      '{dog} has learned to open the treat drawer. We’re negotiating.',
+      'Every dog in this neighborhood knows {dog}. It’s like walking with a celebrity.',
+      'I wish I had {dog}’s energy. And {dog}’s nap schedule.',
+      'Have you tried the bakery’s dog biscuits? {dog} would sell me for one.',
+      '{mine} has such a happy face. You can tell they’re loved.',
+      'Fun fact: {dog} is scared of the vacuum but not of thunder. Go figure.',
+      'I keep finding fur in places fur shouldn’t be. Worth it.',
+      'Some days {dog} walks me home. Like, actually leads the way.',
+      'You look like you know every corner of {place} by now.',
+      '{dog} rolled in something earlier. I’m choosing not to ask what.',
+      'Best part of the day, this. No phones, just dogs.',
+      'My sister wants a dog too. I said: you have no idea what you’re in for. In the best way.',
+      'I taught {dog} to high five. Now {dog} high fives everyone. Even the mailman.',
+      'Have you noticed dogs always know when you’re sad? {dog} brings me a toy.',
+      'We’re working on “stay”. It’s going… slowly.',
+      '{dog} met a cat once. The cat won.',
+      'I named {dog} after my grandma. She’d have loved this.',
+      'I think {dog} has a crush on {mine}. Look at that tail!',
+    ],
+    weather: {
+      rain: ['Rainy walks are underrated. Muddy, but underrated.', '{dog} loves puddles. I love towels.', 'A raincoat for the dog was the best money I ever spent.', 'The rain brings out the snails. {dog} is fascinated.'],
+      snow: ['Snow! {dog} goes completely silly in it.', 'My boots are soaked, but look how happy {dog} is.', 'Careful, the snow balls up in their paws.', 'Did you know some things only turn up when it snows?'],
+      sun: ['What a day! {dog} wants to stay out forever.', 'Sunshine and a dog. What more do you need?', 'Bring water on days like this. {dog} drinks like a camel.'],
+      storm: ['Storm’s coming. {dog} hates thunder, we’re heading home.', 'Some dogs hide when it storms. A cozy spot at home helps.', 'Did you see that lightning? {dog} nearly pulled my arm off.'],
+      fog: ['Can barely see a thing in this fog.', 'Fog like this makes everything feel like a fairy tale.', 'Stay close in the fog, {dog}!'],
+      night: ['It’s so quiet at night. {dog} hears everything, though.', 'You should get a light for night walks. Makes all the difference.', 'Night walks are my favorite. Different animals come out.', 'Some rare things only turn up after dark. That’s why I’m out.'],
+    },
+    places: {
+      park: ['The fountain is {dog}’s favorite stop. Ours too.', 'I’ve walked this park a thousand times. Still find new things.', 'They say there are four-leaf clovers somewhere around here.'],
+      oldtown: ['Wait for the green light, the cars here don’t slow down much.', 'Do a trick on the plaza and a crowd gathers. They even tip!', 'The café does a puppuccino. {dog} is obsessed.'],
+      forest: ['There are hidden glades off the main paths. Look for faint side trails.', 'The squirrels here are bold. {dog} has never caught one.', 'Listen. You can hear the owls at night.'],
+      beach: ['Low tide opens up the tide pools. Little treasures in there!', 'Dig in the sand, sometimes there’s buried treasure.', '{dog} chased a crab once. The crab won, obviously.'],
+      alpine: ['Touch all four checkpoints to reach the summit. The view is worth it!', 'The cows here have bells. {dog} answers every single one.', 'Pack snacks. Mountain air makes everyone hungry.'],
+      caves: ['Say “Speak” in here and the echo lights up hidden crystals.', 'Don’t go in without a light. Seriously.', 'The moonstones down here glow faintly. Someone collects them for a rocket, I hear.'],
+      snowy: ['Have you tried the sled hill? {dog} goes down faster than I do.', 'There’s an old rocket by the observatory. Needs fuel, apparently.', 'Hot cocoa at the igloo. Trust me.'],
+      carnival: ['Do the trick on a booth’s sign and you win tickets!', 'The Ferris wheel at night is magical.', 'I spent all my tickets on a plush. No regrets.'],
+      fairy: ['Turn the stone dogs to face the orb. Something happens…', 'Everything here sparkles. Even {dog}.', 'I still don’t know how I got here. Don’t tell anyone.'],
+      moon: ['Low gravity! Throw a ball and watch it fly.', 'One crater hides a space capsule. Dig around!', 'Is it weird that {dog} has a space suit? Don’t answer that.'],
+    },
+    tips: [
+      'A shampoo that matches the dirt cleans much better. Mud buster for mud, and so on.',
+      'Dogs in a great mood find more things when they sniff. Keep them fed and happy before a walk.',
+      'Tricks get easier with practice. Even the clumsy ones become stars eventually.',
+      'If a dog is grumpy, it might ignore your tricks. Food, water or a game usually fixes it.',
+      'Teach your dog Come well enough, and it can run off the leash on walks.',
+      'Two dogs that play together often become friends. Friends make walks more fun.',
+      'Puppies get tired fast. Short walks, lots of naps.',
+      'Placing things that belong together, like a bed by the fireplace, makes a home cozier.',
+      'Bowls refill themselves if you get an auto-feeder. Pricey, but handy.',
+      'Every place has its own vendors with things you can’t buy anywhere else.',
+      'Vendors switch their specials every Monday. Worth checking!',
+      'Each month there are four little things to find while sniffing. Then they’re gone till next year.',
+      'Some finds only show up at night, in the rain or in the snow.',
+      'A good Sit is the start of so many tricks. Down, Stay, Bow…',
+      'The more you care for a dog, the closer you get. Close dogs learn faster.',
+      'Lamps and candles make a home feel safe at night. Dogs relax more in the light.',
+      'With a flashlight or a headlamp, night walks are so much easier. You spot the sniff spots from afar.',
+      'Busy dogs get bored of the same toy. Mix it up!',
+      'A towel after a muddy walk keeps the worst dirt off your floors.',
+      'Dogs that wait at a red light can earn you a little tip in Old Town.',
+      'If you find something twice, you can trade the extra one for coins.',
+      'Exams are tough, but every badge comes with a perk for that dog.',
+      'Places get friendlier the more you walk them. Their vendors even give you discounts.',
+      'Some dogs dig. A sand pit in the garden saves your floors.',
+      'Raincoats keep most of the mud off your dog on rainy walks.',
+      'Cook for your dogs and they’ll love you for it. Fresh ingredients turn up on walks.',
+      'A fire in the fireplace helps dogs rest faster nearby.',
+      'Music from a jukebox makes everyone at home a little happier.',
+      'Daily challenges change every day. Finish all three for a bonus.',
+      'Check the critter guide sometime. You’d be surprised what lives around here.',
+    ],
+    people: {
+      Lena: ['Fresh bread smells and dog paws. That’s my whole life.', 'Bruno helps at the bakery. By eating the crumbs.'],
+      Jonas: ['I’m building a ball launcher. Version seven. Kiki broke versions one to six.', 'Kiki solved a puzzle feeder in four seconds. I timed it.'],
+      Mia: ['My tomatoes are coming along! Fritz hasn’t found them yet.', 'Fritz is shy, but he likes you. I can tell.'],
+      Paul: ['I swim every morning. Nala supervises from the shore.', 'Nala once swam after a duck for ten minutes. The duck was unimpressed.'],
+      Emma: ['Coco has a spa day every Sunday. I don’t.', 'Matching outfits? Coco insists.'],
+      Felix: ['At my age, the slow walks are the best walks.', 'Rocky and I play chess. Well, I play. Rocky sits on the pieces.'],
+      Hannah: ['Lotte can find anything buried. My keys, my glasses, last week’s sandwich.', 'I’m a librarian. Lotte is the library’s unofficial greeter.'],
+      Leon: ['Balu and I run every morning. Well, Balu runs. I keep up.', 'Balu has more friends than I do. And honestly, good for him.'],
+      Sophie: ['Mimi is very particular about her beanie. Don’t ask why.', 'I paint dogs for a living. Mimi is my favorite model.'],
+      Noah: ['Pepe eats everything. Absolutely everything.', 'I deliver mail. Pepe thinks every letter is for him.'],
+      Clara: ['Sammy would live in the lake if I let him.', 'I’m training Sammy to fetch from the water. He fetches everything else instead.'],
+      Ben: ['Wolke is a genius. Also very lazy. Mostly lazy.', 'Wolke learned to turn off my alarm. I’m impressed and late.'],
+      Lea: ['Krümel means “crumb”. It suits her.', 'Krümel hides behind me when she meets new dogs. Then she wants to be friends with all of them.'],
+      Tim: ['Luna has sunglasses. She has never once needed them.', 'Luna does zoomies at exactly 7pm every day. You could set a clock by it.'],
+      Marie: ['Toffee wears her raincoat even when it’s sunny. Her choice.', 'Toffee loves the couch. And everyone she meets.'],
+      Elias: ['Bello dug up a coin in the park once. He’s been digging ever since.', 'Bello and water. Two words that mean “bath time” in my house.'],
+    },
+    gift: [
+      'Oh, here, I have too many of these. Take one!',
+      'Hold on, I found this earlier. I think you’ll like it.',
+      '{dog} wants you to have this. Don’t ask me why.',
+      'Treats for your pack! {dog} already had plenty.',
+      'I keep a few coins for the café. Here, get your dog something nice.',
+    ],
+    more: ['Oh, and one more thing…', 'Also…', 'You know what else?', 'Oh! Before I forget…', 'By the way…'],
+    bye: ['See you around!', 'Bye! Say hi to {mine} for me.', 'Off we go. Come on, {dog}!', 'Nice chatting! Have a good walk.', 'Catch you later!', '{dog} says bye too. Probably.'],
+    busy: ['Sorry, {dog} is pulling me along. Another time!', 'Gotta go, {dog} spotted a squirrel!', 'Talk later? {dog} has places to be.'],
+  };
+
   const MASTERY_PERKS = ['', 'A first star', 'Sniff spots here recover 30% faster', 'Vendors here are 10% cheaper', 'Secret finds here are twice as likely', 'Master of this place: 300 coins and 200 XP'];
 
   return {
@@ -1158,6 +1311,6 @@ window.VP_DATA = (function () {
     ECHO, CAPSULE, HELMET_CHANCE, LOW_GRAVITY, PUZZLE, SLED_COINS,
     EVENTS, LOOK, DEFAULT_LOOK, OUTFITS,
     RANK_MAX, rankNeed, RANK_TITLES, RANK_UNLOCKS, XP, XP_MISC, MASTERY_STARS, MASTERY_PERKS,
-    BADGES, BOND, SPECIALTIES, SPEC_LEVELS, SPEC_CHANGE, STORIES, HOUSE_TIERS, SEASONS, MONTHS, SETS, CRITTERS, CRITTER_CHANCE, CRITTER_REWARD,
+    GLOW, GADGETS, CHAT, BADGES, BOND, SPECIALTIES, SPEC_LEVELS, SPEC_CHANGE, STORIES, HOUSE_TIERS, SEASONS, MONTHS, SETS, CRITTERS, CRITTER_CHANCE, CRITTER_REWARD,
   };
 })();
