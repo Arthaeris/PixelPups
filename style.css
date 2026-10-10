@@ -1411,3 +1411,30 @@ body.dusk .wxCell.night { color: #c9bfff; }
 }
 .setPics .sp > * { width: 34px; height: 34px; }
 .setPics .sp.miss .i { width: auto; height: auto; font-size: 16px; color: var(--ink-3); }
+
+/* long text in menu rows wraps instead of pushing the panel sideways */
+.sheetBody { overflow-x: hidden; }
+.eventRow .evTxt, .rankRow .rkTxt { flex: 1 1 auto; min-width: 0; }
+.eventRow small, .rankRow small, .bondRow span, .bfTurn small ~ * { white-space: normal; overflow-wrap: anywhere; }
+.eventRow small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.eventRow .th, .eventRow > span:first-child { flex: 0 0 auto; }
+
+/* ---------- Chatting with neighbors ---------- */
+#talk {
+  position: fixed; left: 0; right: 0; margin: 0 auto; z-index: 30;
+  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 84px);
+  width: min(92vw, 420px); padding: 12px 14px; border-radius: 26px;
+  display: flex; gap: 12px; align-items: flex-start;
+  animation: popIn 0.22s ease-out;
+}
+#talkPic { width: 48px; height: 48px; flex: 0 0 auto; border-radius: 50%; background: rgba(255, 246, 228, 0.92); image-rendering: pixelated; }
+.talkTxt { flex: 1; min-width: 0; }
+.talkWho { display: flex; align-items: baseline; gap: 6px; }
+.talkWho b { font-size: 15px; }
+.talkWho small { font-size: 12px; color: var(--ink-2); }
+#talkLine { margin: 4px 0 10px; font-size: 14px; line-height: 1.4; color: var(--ink); }
+.talkBtns { display: flex; gap: 8px; justify-content: flex-end; }
+.talkBtns button { padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 800; border: none; }
+.talkBtns .soft { background: rgba(107, 92, 246, 0.12); color: var(--accent-ink); }
+.talkBtns .primary.small { width: auto; margin: 0; }
+body.sheetOpen #talk { display: none; }
