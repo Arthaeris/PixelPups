@@ -713,6 +713,8 @@ window.VP_DATA = (function () {
     leaf:      { name: 'Red maple leaf',     icon: '🍁', loc: 'park', weight: 3 },
     clover:    { name: 'Four-leaf clover',   icon: '🍀', loc: 'park', weight: 1, secret: true },
     glowworm:  { name: 'Glow worm',          icon: '🐛', loc: 'park', weight: 3, when: 'night', secret: true },
+    gardenkey: { name: 'Old garden key',     icon: '🗝️', loc: 'park', weight: 3, where: 'hidden:roses', secret: true },
+    catribbon: { name: 'Cat’s lost ribbon',  icon: '🎀', loc: 'park', weight: 3, where: 'hidden:underpass', secret: true },
 
     postcard:  { name: 'Postcard',           icon: '💌', loc: 'oldtown', weight: 5 },
     keychain:  { name: 'City keychain',      icon: '🔑', loc: 'oldtown', weight: 4 },
@@ -737,6 +739,8 @@ window.VP_DATA = (function () {
     pearl:     { name: 'Pearl',              icon: '🦪', loc: 'beach', weight: 1, secret: true },
     bottle:    { name: 'Message in a bottle',icon: '🍾', loc: 'beach', weight: 3, when: 'rain', secret: true },
     moonshell: { name: 'Moon shell',         icon: '🌙', loc: 'beach', weight: 3, when: 'night', secret: true },
+    anchor:    { name: 'Little anchor',      icon: '⚓', loc: 'beach', weight: 3, where: 'hidden:cove', secret: true },
+    seachart:  { name: 'Old sea chart',      icon: '🗺️', loc: 'beach', weight: 3, where: 'hidden:seacave', secret: true },
 
     edelweiss: { name: 'Edelweiss',          icon: '🌼', loc: 'alpine', weight: 3 },
     gentian:   { name: 'Blue gentian',       icon: '💙', loc: 'alpine', weight: 4 },
@@ -1007,7 +1011,7 @@ window.VP_DATA = (function () {
     sled: { xp: 6, m: 6, cap: 15 }, ferris: { xp: 5, m: 4, cap: 6 }, tickets: { xp: 1, m: 1, cap: 60 }, statue: { xp: 4, m: 3, cap: 20 },
     floattoy: { xp: 5, m: 4, cap: 20 }, crater: { xp: 4, m: 4, cap: 20 }, cow: { xp: 3, m: 3, cap: 10 }, squirrel: { xp: 3, m: 3, cap: 10 },
   };
-  const XP_MISC = { chat: 3, newFind: 25, dupFind: 3, challenge: 40, allChallenges: 60, firstVisit: 40, adopt: 50, room: 60, trickLevel: 10, event: 30 };
+  const XP_MISC = { secret: 60, chat: 3, newFind: 25, dupFind: 3, challenge: 40, allChallenges: 60, firstVisit: 40, adopt: 50, room: 60, trickLevel: 10, event: 30 };
   const MASTERY_STARS = [0, 30, 100, 220, 400, 650];   // points for 0..5 stars
   // ===================================================================
   // Training exams: five badges per dog. In the exam, the examiner asks for tricks one by one.
