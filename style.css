@@ -1438,3 +1438,9 @@ body.dusk .wxCell.night { color: #c9bfff; }
 .talkBtns .soft { background: rgba(107, 92, 246, 0.12); color: var(--accent-ink); }
 .talkBtns .primary.small { width: auto; margin: 0; }
 body.sheetOpen #talk { display: none; }
+
+/* ---------- updates & continue ---------- */
+#updNowBtn { width: auto; flex: 1; margin-top: 0; padding: 10px 14px; font-size: 14px; border-radius: 14px; }
+#updInfo.found { color: var(--accent); font-weight: 800; }
+#titleNote { margin: 0; text-align: center; font-size: 13px; }
+#titleNote.warn { color: #c22a48; font-weight: 700; }
