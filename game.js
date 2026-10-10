@@ -1088,11 +1088,35 @@
     }
     if (S.inside && !S.inside(x, z)) return true;
     if (S.solid && S.solid(x, z)) return true;
-    for (const c of parkColliders) {
-      if (c.r !== undefined) { if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return true; }
-      else if (x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1) return true;
-    }
+    const G = colliderGrid();
+    const hit = (c) => (c.r !== undefined ? (x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r : x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1);
+    const cell = G.map.get(Math.floor(x / 2) * 4096 + Math.floor(z / 2));
+    if (cell) for (const c of cell) if (hit(c)) return true;
+    for (const c of G.dyn) if (hit(c)) return true;
     return quirkSolid(x, z);
+  }
+  // colliders sorted into 2 x 2 buckets, so big shaped places stay quick (cows and the rover move, so they are checked on their own)
+  let colGrid = null;
+  function colliderGrid() {
+    if (colGrid && colGrid.S === S && colGrid.n === parkColliders.length) return colGrid;
+    const q = S.q || {}, dyn = new Set();
+    (q.cows || []).forEach((c) => dyn.add(c.col));
+    if (q.rover && q.rover.col) dyn.add(q.rover.col);
+    const map = new Map();
+    for (const c of parkColliders) {
+      if (dyn.has(c)) continue;
+      const x0 = c.r !== undefined ? c.x - c.r : c.x0, x1 = c.r !== undefined ? c.x + c.r : c.x1;
+      const z0 = c.r !== undefined ? c.z - c.r : c.z0, z1 = c.r !== undefined ? c.z + c.r : c.z1;
+      for (let i = Math.floor(Math.max(-200, x0) / 2); i <= Math.floor(Math.min(200, x1) / 2); i++) {
+        for (let j = Math.floor(Math.max(-200, z0) / 2); j <= Math.floor(Math.min(200, z1) / 2); j++) {
+          const k = i * 4096 + j;
+          if (!map.has(k)) map.set(k, []);
+          map.get(k).push(c);
+        }
+      }
+    }
+    colGrid = { S, n: parkColliders.length, map, dyn: [...dyn] };
+    return colGrid;
   }
   function bounds() {
     if (place === 'home') return { x0: homeBounds.x0 + 0.25, x1: homeBounds.x1 - 0.25, z0: homeBounds.z0 + 0.25, z1: homeBounds.z1 - 0.25 };
@@ -1138,7 +1162,7 @@
     }
     // stepping into a hidden spot for the first time
     for (const sec of S.secrets || []) {
-      if (p.y > 1.2 || !sec.rects.some((t) => inRectXZ(t, p.x, p.z))) continue;
+      if ((!sec.high && p.y > 1.2) || !sec.rects.some((t) => inRectXZ(t, p.x, p.z))) continue;
       const got = hiddenOf(loc);
       if (got.includes(sec.id)) continue;
       state.hiddenFound = state.hiddenFound || {};
@@ -1231,7 +1255,7 @@
     return true;
   }
   const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-  function findPath(from, to) {
+  function findPath(from, to, climb = CLIMB) {
     const goal = new V3(to.x, 0, to.z);
     if (lineClear(from.x, from.z, to.x, to.z)) return [goal];
     const si = Math.floor(from.x), sj = Math.floor(from.z), ti = Math.floor(to.x), tj = Math.floor(to.z);
@@ -1241,9 +1265,11 @@
     let found = false;
     // at home: tiles and furniture; on walks: the shape of the place, things in the way, and how steep it is
     const atHome = place === 'home';
-    const pass = atHome ? passable : (i, j) => !isSolid(i + 0.5, j + 0.5);
+    const memo = new Map(), memoMid = new Map();
+    const midOK = (si2, sj2) => { const k = si2 * 8192 + sj2; let v = memoMid.get(k); if (v === undefined) { v = !isSolid((si2 + 1) / 2, (sj2 + 1) / 2); memoMid.set(k, v); } return v; };
+    const pass = atHome ? passable : (i, j) => { const k = i * 4096 + j; let v = memo.get(k); if (v === undefined) { v = !isSolid(i + 0.5, j + 0.5); memo.set(k, v); } return v; };
     const tileIn = atHome ? isHomeTile : (i, j) => !S.inside || S.inside(i + 0.5, j + 0.5);
-    const climbOK = (i, j, ni, nj) => !terrainOn() || Math.abs(S.height(ni + 0.5, nj + 0.5) - S.height(i + 0.5, j + 0.5)) <= 0.65;
+    const climbOK = (i, j, ni, nj) => !terrainOn() || Math.abs(S.height(ni + 0.5, nj + 0.5) - S.height(i + 0.5, j + 0.5)) <= climb + 0.01;
     for (let h = 0; h < queue.length && h < 9000; h++) {
       const [i, j] = queue[h];
       if (i === ti && j === tj) { found = true; break; }
@@ -1253,6 +1279,8 @@
         const isGoal = ni === ti && nj === tj;
         if (isGoal ? !tileIn(ni, nj) : !pass(ni, nj)) continue;
         if (!climbOK(i, j, ni, nj)) continue;
+        // thin walls (an igloo, a tent) can sit between two cell centres
+        if (!atHome && !isGoal && !midOK(i + ni, j + nj)) continue;
         if (di && dj && (!pass(i + di, j) || !pass(i, j + dj) || !climbOK(i, j, i + di, j) || !climbOK(i, j, i, j + dj))) continue;
         prev.set(k, [i, j]);
         queue.push([ni, nj]);
@@ -1730,7 +1758,7 @@
       if (this.state === 'fetch' || this.state === 'return') resetBall();
       this.releaseClaim();
       this.dropSpot();
-      this.root.position.y = 0;
+      this.root.position.y = groundAt(this.root.position.x, this.root.position.z);
       this.onArrive = null;
       this.path = null;
       this.zoomLeft = 0;
@@ -1738,7 +1766,7 @@
     }
     wake() {
       this.releaseClaim();
-      this.root.position.y = 0;
+      this.root.position.y = groundAt(this.root.position.x, this.root.position.z);
       this.idle(0.5);
     }
 
@@ -1854,9 +1882,13 @@
       const pos = this.root.position;
       const N = this.nav || (this.nav = { t: 0, path: null, tx: 0, tz: 0 });
       N.t -= dt;
-      if (lineClear(pos.x, pos.z, tx, tz)) { N.path = null; return null; }
+      N.ct = (N.ct || 0) - dt;
+      if (N.ct <= 0 || Math.hypot(N.cx - tx, N.cz - tz) > 1 || Math.hypot(N.px - pos.x, N.pz - pos.z) > 1) {
+        N.clear = lineClear(pos.x, pos.z, tx, tz); N.ct = 0.25; N.cx = tx; N.cz = tz; N.px = pos.x; N.pz = pos.z;
+      }
+      if (N.clear) { N.path = null; return null; }
       if (!N.path || N.t <= 0 || Math.hypot(N.tx - tx, N.tz - tz) > 1.5) {
-        N.path = findPath(pos, { x: tx, z: tz });
+        N.path = findPath(pos, { x: tx, z: tz }, 0.62);
         N.t = 0.7; N.tx = tx; N.tz = tz;
       }
       while (N.path.length > 1 && Math.hypot(N.path[0].x - pos.x, N.path[0].z - pos.z) < 0.35) N.path.shift();
@@ -2385,7 +2417,7 @@
     startFetch() {
       this.releaseClaim();
       this.dropSpot();
-      this.root.position.y = 0;
+      this.root.position.y = groundAt(this.root.position.x, this.root.position.z);
       this.onArrive = null;
       this.path = null;
       this.zoomLeft = 0;
@@ -5241,6 +5273,18 @@
     progress('walk:' + wasAt);
     shortWalk = false;
   }
+  const SHAPE_TIPS = {
+    park: 'There is more to explore now: a hill with a view, a sunken pond and a meadow to the east. Not every corner is easy to find.',
+    beach: 'There is more to explore now: dunes, a boardwalk and a rocky headland with stairs up to the lighthouse. Some places only show at the right tide.',
+    oldtown: 'There is more to explore now: steps lead down to the old canal in the east. And not every door in town is what it seems.',
+    forest: 'The forest has grown: a mossy dell lies past the west glade, and a rocky terrace rises in the north-east. Listen for water.',
+    alpine: 'There’s a real mountain to climb now, north of the meadow. The view from the top is worth it.',
+    caves: 'The tunnels go further now, east and west. One of them leads down, deep under the mountain.',
+    snowy: 'The village has grown: a frozen pond lies in a hollow to the west, and a snowy ridge rises in the east.',
+    carnival: 'There’s a boardwalk in the east now, with the big top on it. And the north-west corner is quieter than it looks.',
+    fairy: 'A soft green hill has appeared in the north. Fairies love hills.',
+    moon: 'The base has grown: a huge crater to the east and a mesa to the west. Low gravity makes the climbing easy.',
+  };
   function goWalk(id = 'park') {
     if (!dogs.length) return;
     if (!locUnlocked(id)) { toast('That place is still locked 🔒'); return; }
@@ -5298,7 +5342,7 @@
     eventOnArrive();
     const first = intro && tip('visit:' + loc, { title: LOC().name, text: intro, th: TH('loc', loc) });
     if (!first) toast(intro || (parkLoot ? 'Walk time! Something is glinting in the grass… ✨' : W.muddy ? `Walk time! It's ${W.name.toLowerCase()} — expect muddy paws 🐾` : 'Walk time! Let your dog sniff the ✨ spots'));
-    if (S.secrets && !first) tip('shape:' + loc, { title: `${LOC().name} has grown`, text: loc === 'beach' ? 'There is more to explore now: dunes, a boardwalk and a rocky headland with stairs up to the lighthouse. Some places only show at the right tide.' : 'There is more to explore now: a hill with a view, a sunken pond and a meadow to the east. Not every corner is easy to find.', icon: 'map' });
+    if (S.secrets && !first && SHAPE_TIPS[loc]) tip('shape:' + loc, { title: `${LOC().name} has grown`, text: SHAPE_TIPS[loc], icon: 'map' });
     if (loc === 'park' && unlockedFeat('minimap')) tip('minimap', { title: 'The mini-map', text: 'The little map in the top right shows sniff spots, shops and the way home. Tap it to make it bigger.', icon: 'map' });
   }
 
@@ -5782,7 +5826,7 @@
         return !(a > lo && a < hi) && b > lo && b < hi;
       });
       if (!stop) stop = q.cars.some((o) => o !== c && o.dir === c.dir && (o.g.position.x - x) * c.dir > 0 && (o.g.position.x - x) * c.dir < 2.3);
-      if (!stop) c.g.position.x = nx > 26 ? -26 : nx < -26 ? 26 : nx;
+      if (!stop) c.g.position.x = nx > 36 ? -36 : nx < -36 ? 36 : nx;
     }
     // pigeons flutter off when someone comes close
     const P = q.plaza;
