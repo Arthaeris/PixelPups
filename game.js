@@ -352,6 +352,8 @@
       stories: {},                     // neighbor -> { ch: chapters done, n: progress, day: game day of the last one }
       allowanceDay: '',
       critters: {},                    // critter guide: id -> times spotted
+      gadgets: [],                     // things you carry: flashlight
+      chats: {},                       // neighbor -> { n: chats, day: game day of the last gift }
       setsDone: [],                    // collection sets finished
       seasonsDone: [],                 // months whose set is finished
     };
@@ -456,14 +458,17 @@
   const envColor = new THREE.Color();
   function applyEnvironment() {
     const W = localWeather();
-    const L = ART.daylight(clockNow.hour, curWeather());
+    // indoors, the weather outside doesn't dim or fog up your rooms; only the time of day shows
+    const L = ART.daylight(clockNow.hour, place === 'home' ? D.WEATHER.sun : curWeather());
     nightLevel = L.night;
     const E = place === 'park' && S && S.env ? S.env : null;
     world.background.copy(L.sky);
     if (E && E.sky) world.background.copy(envColor.set(E.sky)).lerp(L.sky, E.dark ? 0 : 0.15 * L.night);
     if (lightning) world.background.lerp(new THREE.Color('#ffffff'), 0.5);
-    hemiLight.intensity = (E && E.hemi != null ? E.hemi * (E.dark ? 1 : 1 - 0.4 * L.night) : L.hemi) + lightning * 0.8;
-    sunLight.intensity = (E && E.sun != null ? E.sun * (E.dark ? 1 : 1 - 0.5 * L.night) : L.sun) + lightning * 1.2;
+    // nights are properly dark, so lamps, lanterns and flashlights make a difference
+    const deep = E && E.dark ? 0 : L.night * (place === 'home' ? 0.42 : 0.38);
+    hemiLight.intensity = (E && E.hemi != null ? E.hemi * (E.dark ? 1 : 1 - 0.4 * L.night) : L.hemi) * (1 - deep) + lightning * 0.8;
+    sunLight.intensity = (E && E.sun != null ? E.sun * (E.dark ? 1 : 1 - 0.5 * L.night) : L.sun) * (1 - deep) + lightning * 1.2;
     ART.M.lamp.emissiveIntensity = 0.65 + (E && E.dark ? 1 : L.night) * 0.9;
     ART.M.window.color.copy(dayWindow).lerp(nightWindow, L.night);
     playerLight.visible = !!(E && E.dark);
@@ -475,11 +480,6 @@
         fog.far = W.fog ? 20 : (S.fog ? S.fog.far : 50);
       }
       fog.near += fogPush; fog.far += fogPush;
-      world.fog = fog;
-    } else if (W.fog) {
-      fog.color.copy(L.sky);
-      fog.near = 10 + fogPush;
-      fog.far = 32 + fogPush;
       world.fog = fog;
     } else {
       world.fog = null;
@@ -603,6 +603,162 @@
       furnMap.set(f.i + ',' + f.j, f);
       if (g.userData.content) g.userData.content.visible = !!f.filled;
     }
+    rebuildHomeLights();
+  }
+  // =====================================================================
+  // Light at night: lamps light up the floor around them, and on walks a flashlight or headlamp lights the way
+  // (soft pools of light and glows, so they're cheap and look the same on every phone)
+  // =====================================================================
+  const glowTex = (() => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const x = c.getContext('2d');
+      const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      g.addColorStop(0.7, 'rgba(255,255,255,0.16)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = g;
+      x.fillRect(0, 0, 64, 64);
+      return new THREE.CanvasTexture(c);
+    } catch (_) { return null; }
+  })();
+  const ADD = THREE.AdditiveBlending;
+  const PLANE1 = THREE.PlaneGeometry ? new THREE.PlaneGeometry(1, 1) : new THREE.BoxGeometry(1, 1, 0.001);
+  function lightPool(color) {
+    const m = new THREE.Mesh(PLANE1, new THREE.MeshBasicMaterial({ map: glowTex, color, transparent: true, opacity: 0, blending: ADD, depthWrite: false, fog: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.renderOrder = 3;
+    return m;
+  }
+  function lightHalo(color, s) {
+    const h = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color, transparent: true, opacity: 0, blending: ADD, depthWrite: false, fog: false }));
+    h.scale.set(s, s, 1);
+    h.renderOrder = 4;
+    return h;
+  }
+  // ----- at home -----
+  const homeLightGroup = new THREE.Group();
+  homeRoot.add(homeLightGroup);
+  let homeLights = [];
+  function rebuildHomeLights() {
+    homeLightGroup.clear();
+    homeLights = [];
+    for (const f of home().furniture) {
+      const L = D.GLOW[f.type];
+      if (!L) continue;
+      const pool = lightPool(L.color), halo = lightHalo(L.color, 0.6 + L.r * 0.45);
+      pool.position.set(f.i + 0.5, 0.012, f.j + 0.5);
+      pool.scale.set(L.r * 2, L.r * 2, 1);
+      halo.position.set(f.i + 0.5, L.y, f.j + 0.5);
+      homeLightGroup.add(pool, halo);
+      homeLights.push({ f, L, pool, halo, k: Math.random() * 10 });
+    }
+  }
+  const glowOn = (f, L) => (L.on === undefined ? true : (f.on ?? L.on));
+  // how much of your home is lit at night, 0..1
+  function homeLitShare() {
+    let lit = 0, all = 0;
+    const src = home().furniture.filter((f) => D.GLOW[f.type] && glowOn(f, D.GLOW[f.type]));
+    for (const [cx, cz] of home().chunks || state.chunks) {
+      for (let i = 0; i < CHUNK; i++) for (let j = 0; j < CHUNK; j++) {
+        const x = cx * CHUNK + i + 0.5, z = cz * CHUNK + j + 0.5;
+        all++;
+        if (src.some((f) => Math.hypot(f.i + 0.5 - x, f.j + 0.5 - z) <= D.GLOW[f.type].r * 0.85)) lit++;
+      }
+    }
+    return all ? lit / all : 0;
+  }
+  function litAt(x, z) {
+    return homeLights.some((h) => glowOn(h.f, h.L) && Math.hypot(h.f.i + 0.5 - x, h.f.j + 0.5 - z) <= h.L.r * 0.85);
+  }
+  // ----- on walks: street lamps, and your own light -----
+  function sceneLights() {
+    if (!S || S.lights) return;
+    S.lights = [];
+    const lamps = [];
+    S.root.updateMatrixWorld(true);
+    S.root.traverse((o) => { if (o.isMesh && o.material === ART.M.lamp) lamps.push(o); });
+    for (const m of lamps.slice(0, 40)) {
+      const p = new V3();
+      m.getWorldPosition(p);
+      const tall = p.y > 1.2;
+      const pool = lightPool('#ffd890'), halo = lightHalo('#ffd890', tall ? 1.6 : 0.8);
+      pool.position.set(p.x, 0.05, p.z);
+      pool.scale.set(tall ? 5.2 : 2.4, tall ? 5.2 : 2.4, 1);
+      halo.position.copy(p);
+      S.root.add(pool, halo);
+      S.lights.push({ pool, halo, tall });
+    }
+  }
+  const beamGroup = new THREE.Group();
+  world.add(beamGroup);
+  const playerBeam = { pool: lightPool('#fff1c9'), halo: lightHalo('#fff1c9', 0.7) };
+  beamGroup.add(playerBeam.pool, playerBeam.halo);
+  const dogBeams = [];
+  const flashlight = new THREE.Group();
+  ART.box(flashlight, 0.07, 0.07, 0.2, '#37474f', 0, -0.02, 0.06);
+  ART.box(flashlight, 0.09, 0.09, 0.04, ART.M.lamp, 0, -0.02, 0.17);
+  flashlight.visible = false;
+  const hasGadget = (id) => (state.gadgets || []).includes(id);
+  const wearsMiner = () => Object.values((state.look && state.look.outfit) || {}).some((id) => D.OUTFITS[id] && D.OUTFITS[id].model === 'miner');
+  const dogLamp = (d) => !!d.acc && (d.acc.head === 'headlamp' || d.acc.head === 'minerhat');
+  const walkDark = () => place === 'park' && (nightLevel > 0.45 || !!(S && S.env && S.env.dark));
+  function walkLit() { return hasGadget('flashlight') || wearsMiner() || dogs.some(dogLamp); }
+  function nightHidesSpots() { return walkDark() && !walkLit(); }
+  const lv = new V3();
+  function beamAt(b, root, face, dist, len, wide, s) {
+    root.getWorldPosition(lv);
+    b.pool.position.set(lv.x + Math.sin(face) * dist, 0.06, lv.z + Math.cos(face) * dist);
+    b.pool.rotation.z = face;
+    b.pool.scale.set(wide, len, 1);
+    b.pool.material.opacity = 0.55 * s;
+  }
+  function updateLights(dt) {
+    const night = nightLevel;
+    // home: every lamp, candle and fire glows a little, flickering where it should
+    homeLightGroup.visible = place === 'home' && night > 0.02;
+    if (homeLightGroup.visible) {
+      const t = animT;
+      for (const h of homeLights) {
+        const on = glowOn(h.f, h.L) ? 1 : 0;
+        const fl = h.L.flicker ? 0.85 + Math.sin(t * 8 + h.k) * 0.08 + Math.sin(t * 13.7 + h.k) * 0.06 : h.L.twinkle ? 0.9 + Math.sin(t * 2 + h.k) * 0.1 : 1;
+        h.pool.material.opacity = 0.62 * night * on * fl;
+        h.halo.material.opacity = 0.5 * night * on * fl;
+      }
+      for (const r of furnRT.values()) r.group.userData.dark = night > 0.3;
+    }
+    // walks: street lamps after dark
+    if (place === 'park' && S) {
+      sceneLights();
+      const dark = S.env && S.env.dark ? 1 : night;
+      for (const l of S.lights) { l.pool.material.opacity = 0.45 * dark; l.halo.material.opacity = 0.55 * dark; }
+    }
+    // your own light, and your dogs' headlamps
+    const dark = walkDark() ? Math.max(nightLevel, S && S.env && S.env.dark ? 1 : 0) : 0;
+    const mine = dark > 0 && (hasGadget('flashlight') || wearsMiner()) && !title;
+    beamGroup.visible = place === 'park' && dark > 0;
+    if (mine) {
+      const useHand = hasGadget('flashlight');
+      if (useHand && flashlight.parent !== player.hand) player.hand.add(flashlight);
+      flashlight.visible = useHand;
+      beamAt(playerBeam, player.root, player.root.rotation.y, 2.2, 4.6, 2.6, dark);
+      (useHand ? player.hand : player.root).getWorldPosition(lv);
+      playerBeam.halo.position.set(lv.x, useHand ? lv.y : 1.75, lv.z);
+      playerBeam.halo.material.opacity = 0.7 * dark;
+    } else { flashlight.visible = false; playerBeam.pool.material.opacity = 0; playerBeam.halo.material.opacity = 0; }
+    let k = 0;
+    for (const d of dogs) {
+      if (!dogLamp(d) || !beamGroup.visible) continue;
+      if (!dogBeams[k]) { dogBeams[k] = { pool: lightPool('#fff6d8'), halo: lightHalo('#fff6d8', 0.45) }; beamGroup.add(dogBeams[k].pool, dogBeams[k].halo); }
+      const b = dogBeams[k++];
+      beamAt(b, d.root, d.root.rotation.y, 1.5, 3.2, 1.8, dark);
+      d.head.getWorldPosition(lv);
+      b.halo.position.set(lv.x, lv.y + 0.15, lv.z);
+      b.halo.material.opacity = 0.6 * dark;
+    }
+    for (; k < dogBeams.length; k++) { dogBeams[k].pool.material.opacity = 0; dogBeams[k].halo.material.opacity = 0; }
   }
   function refreshBowl(f) {
     const r = furnRT.get(f);
@@ -879,8 +1035,9 @@
       toy.position.y = 0.16;
       toy.scale.setScalar(1.3);
       group.add(toy);
-      const sparkle = emojiSprite('✨', 0.45);
-      sparkle.position.y = 0.75;
+      const sparkle = ART.scentFX();
+      sparkle.position.y = 0.85;
+      sparkle.scale.setScalar(0.75);
       group.add(sparkle);
       parkLoot = { type, group, toy, sparkle, t: 0 };
       return;
@@ -890,7 +1047,7 @@
     if (!parkLoot) return;
     parkLoot.t += dt;
     parkLoot.toy.rotation.y += dt * 1.5;
-    parkLoot.sparkle.position.y = 0.75 + Math.sin(parkLoot.t * 3) * 0.08;
+    parkLoot.sparkle.userData.tick(dt);
     const p = player.root.position, g = parkLoot.group.position;
     if (Math.hypot(p.x - g.x, p.z - g.z) < 0.9) {
       const type = parkLoot.type, pos = g.clone();
@@ -1511,9 +1668,10 @@
         if (this.flag('lonely')) decay += dogs.length === 1 ? 0.05 : -0.04;
         if (this.state === 'hide') decay += 0.05;
         if (this.state === 'lounge') decay -= 0.05;
-        if (W.precip === 'rain' && this.flag('rainJoy')) decay -= 0.03;
+        if (W.precip === 'rain' && this.flag('rainJoy') && isGardenTile(Math.floor(pos.x), Math.floor(pos.z))) decay -= 0.03;
         decay -= D.COMFORT_BONUS * (comfort.paws - 1);
         if (houseTier() >= 2) decay -= 0.02;
+        if (nightLevel > 0.5 && litAt(pos.x, pos.z)) decay -= 0.02;
         if (musicOn()) decay -= 0.03;
         if (this.state === 'watch') decay -= 0.04 * (this.flag('lounges') ? 2 : 1);
         this.happy -= decay * dt;
@@ -2500,6 +2658,7 @@
   }
   const loopLength = () => 2 * (2 * S.loop.x + S.loop.z1 - S.loop.z0);
   function clearWalkers() {
+    if (talk) endTalk(false);
     for (const w of walkers) {
       parkRoot.remove(w.parts.root);
       parkRoot.remove(w.dog.root);
@@ -2524,6 +2683,10 @@
       const parts = ART.buildPlayer({ shirt: info.shirt, hair: info.hair });
       parkRoot.add(parts.root);
       const w = { info, parts, t: rand(0, loopLength()), dir: pick([1, -1]), speed: rand(0.9, 1.3), pause: 0, met: false, phase: 0 };
+      w.label = textSprite(info.owner, 0.3);
+      w.label.position.y = 2.15;
+      w.label.visible = false;
+      parts.root.add(w.label);
       const [x, z] = loopPoint(w.t);
       parts.root.position.set(x, 0, z);
       const dog = new NPCDog(Object.assign({ id: 'n:' + info.dog.name }, info.dog), w);
@@ -2541,6 +2704,7 @@
       let moved = 0;
       const [ax, az] = loopPoint(w.t + w.dir * w.speed * dt * 8);
       if (w.pause > 0) w.pause -= dt;
+      else if (w.talking) { /* stays put while you chat */ }
       else if (quirkSolid(ax, az) && !quirkSolid(pos.x, pos.z)) { /* neighbors wait for green too */ }
       else {
         w.t += w.dir * w.speed * dt;
@@ -2557,6 +2721,9 @@
       w.parts.armL.rotation.x = -s * 0.8;
       w.parts.armR.rotation.x = -0.45;
       if (!w.met && pos.distanceTo(pp) < 2.2) { w.met = true; if (!storyMeet(w)) neighborGift(w); }
+      w.label.visible = pos.distanceTo(pp) < 9;
+      // neighbors slow down for a moment when they pass you, so you can say hi
+      if (!w.slowed && pos.distanceTo(pp) < 2.4) { w.slowed = true; w.pause = Math.max(w.pause, 2.2); w.parts.root.rotation.y = Math.atan2(pp.x - pos.x, pp.z - pos.z); }
       w.dog.update(dt);
       w.dog.updateLeash();
     }
@@ -3789,6 +3956,7 @@
     $('comfortPaws').innerHTML = pawsHTML(comfort.paws);
     $('comfortSub').textContent = `${comfort.points} comfort points · next paw at ${D.COMFORT_PAWS[comfort.paws] ?? '—'}. Higher comfort keeps your dogs happier at home.`;
     $('comfortList').innerHTML = comfort.parts.map(([n, v]) => `<div class="row"><div class="txt"><b>${esc(n)}</b></div><b class="${v < 0 ? 'neg' : ''}">${v > 0 ? '+' : ''}${v}</b></div>`).join('') +
+      `<div class="section">Night lighting</div><p class="sub">${(() => { const p = Math.round(homeLitShare() * 100); return `${p}% of your home is lit at night. ${p >= 50 ? 'Dogs relax a little more in the lamplight.' : 'Lamps, candles, lanterns and string lights brighten it up. Dogs relax more in a lit home.'}`; })()}</p>` +
       `<div class="section">Combos found</div><p class="sub">${comfort.found.length ? comfort.found.map(esc).join(' · ') : 'None yet — try placing things that belong together near each other.'}${comfort.missing ? ` · ${comfort.missing} more to discover` : ''}</p>`;
     $('comfort').classList.remove('hidden');
   }
@@ -5014,7 +5182,7 @@
       d.addBond(2);
       d.updateDirtLook();
     });
-    sniffSpots.forEach((s) => { s.taken = null; if (s.golden) { s.golden = false; s.sparkle.scale.setScalar(0.5); } });
+    sniffSpots.forEach((s) => { s.taken = null; if (s.golden) { s.golden = false; ART.setScentGold(s.sparkle, false); } });
     parkWater.taken = null;
     recordWalk(wasAt);
     refreshUI();
@@ -5028,9 +5196,11 @@
   function updateSniffSpots(dt) {
     for (const s of sniffSpots) {
       if (s.cooldown > 0) s.cooldown -= dt;
-      s.sparkle.visible = s.cooldown <= 0 && s.active !== false;
+      // at night, without a light you only notice the spots close by
+      const near = !nightHidesSpots() || flatDist(s.pos, player.root.position) < 6.5;
+      s.sparkle.visible = s.cooldown <= 0 && s.active !== false && near;
       s.phase += dt;
-      s.sparkle.position.y = 1.15 + Math.sin(s.phase * 2.5) * 0.08;
+      if (s.sparkle.visible && s.sparkle.userData.tick) s.sparkle.userData.tick(dt);
     }
   }
 
@@ -5083,7 +5253,7 @@
   function walkLoot(d, spot) {
     const pos = d.root.position;
     const kind = spot && spot.kind;
-    if (spot && spot.golden) { spot.golden = false; if (spot.sparkle) spot.sparkle.scale.setScalar(0.5); addCoins(eventOn('golden').coins, pos); confetti(pos.clone().add(new V3(0, 1, 0)), 6); toast(`${d.name} sniffed out the golden spot! 🪙 ${eventOn('golden').coins}`); sfx('find'); return; }
+    if (spot && spot.golden) { spot.golden = false; if (spot.sparkle) ART.setScentGold(spot.sparkle, false); addCoins(eventOn('golden').coins, pos); confetti(pos.clone().add(new V3(0, 1, 0)), 6); toast(`${d.name} sniffed out the golden spot! 🪙 ${eventOn('golden').coins}`); sfx('find'); return; }
     if (Math.random() < D.RARE_FIND * (kind === 'glade' ? 4 : 1) * (d.mood() === 'great' ? 1.5 : 1) * (eventOn('meteors') && isNight() ? eventOn('meteors').mult : 1)) { findRare(pos); return; }
     if (!kind && sniffCritter(d)) return;
     if (kind === 'pool' && Math.random() < 0.7) { grantFind(pick(['starfish', 'crabclaw']), pos); return; }
@@ -5259,10 +5429,130 @@
       case 'moon': updateMoon(dt, q, pp); break;
       default: break;
     }
+    if (!want && !talk && nearestWalker(pp)) want = 'talk';
+    updateTalk();
     setCtx(mode === 'normal' && place === 'park' ? want : null);
   }
+  // =====================================================================
+  // Chatting with neighbors on walks: small talk, tips, hints, and now and then a little present
+  // (neighbor stories work exactly as before; this is the everyday chat)
+  // =====================================================================
+  let talk = null;
+  const talkSeen = new Set();
+  const lcFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+  function nearestWalker(pp, r = 2.6) {
+    let best = null, bd = r;
+    for (const w of walkers) { const d = flatDist(w.parts.root.position, pp); if (d < bd) { bd = d; best = w; } }
+    return best;
+  }
+  function chatFill(t, w) {
+    const mine = dogs.length ? pick(dogs).name : 'your dog';
+    return t.replace(/\{dog\}/g, w.dog.name).replace(/\{mine\}/g, mine).replace(/\{place\}/g, LOC().name);
+  }
+  const fresh = (list) => { const f = list.filter((x) => !talkSeen.has(x)); return pick(f.length ? f : list); };
+  // hints about things you could do next, worked out from your game
+  function hintLines() {
+    const out = [];
+    for (const id of Object.keys(D.LOCATIONS)) {
+      if (!locNext(id)) continue;
+      const open = reqsOf(id).filter((U) => U.kind !== 'portal' && U.kind !== 'rocket' && (() => { const [a, b] = reqProgress(U); return a < b; })());
+      if (open.length) out.push(`Folks say there’s somewhere new to explore, once you ${lcFirst(reqText(pick(open)))}.`);
+    }
+    if (unlockedFeat('critters')) {
+      const here = Object.entries(D.CRITTERS).filter(([k, C]) => C.loc === loc && !(state.critters || {})[k] && !C.ev);
+      if (here.length) { const [, C] = pick(here); const when = { night: 'at night', day: 'during the day', rain: 'when it rains', snow: 'when it snows', sun: 'on sunny days' }[C.when] || 'now and then'; out.push(`I spotted a ${C.name.toLowerCase()} around here ${when}. Keep your eyes open!`); }
+    }
+    const S = D.SEASONS[clockNow.month];
+    if (S) { const miss = S.finds.filter(([k]) => !state.finds[k]); if (miss.length) out.push(`This month you can sniff out a ${pick(miss)[1].toLowerCase()} anywhere, if you’re lucky.`); }
+    for (const Z of D.SETS) { const miss = Z.finds.filter((k) => !state.finds[k]); if (miss.length === 1 && !(state.setsDone || []).includes(Z.id)) out.push(`You’re just one find away from the ${Z.name.toLowerCase()} set. It’s from ${D.LOCATIONS[D.FINDS[miss[0]].loc] ? D.LOCATIONS[D.FINDS[miss[0]].loc].name : 'somewhere'}.`); }
+    const secret = Object.entries(ALL_TRICKS).filter(([k, T]) => T.secret && !state.secrets.includes(k) && T.hint);
+    if (secret.length && Math.random() < 0.5) out.push(`I once saw a dog do the most amazing trick. The owner whispered: “${pick(secret)[1].hint}”`);
+    const waiting = Object.keys(D.STORIES).filter((o) => storyOf(o) && storyChapter(o) && storyReady(o));
+    if (waiting.length) out.push(`${pick(waiting)} was asking about you, I think. Keep an eye out on your walks.`);
+    if (walkDark() && !walkLit()) out.push('A flashlight from the shop makes night walks so much easier. You’d spot every sniff spot.');
+    return out;
+  }
+  function chatLine(w, first) {
+    const W = curWeather(), night = isNight(), h = clockNow.hour;
+    const pools = [];
+    pools.push([D.CHAT.casual, 3]);
+    pools.push([D.CHAT.tips, 2]);
+    if (D.CHAT.places[loc]) pools.push([D.CHAT.places[loc], 2]);
+    if (D.CHAT.people[w.info.owner]) pools.push([D.CHAT.people[w.info.owner], first ? 3 : 1.5]);
+    const wk = night ? 'night' : W.lightning ? 'storm' : W.precip || (W.fog ? 'fog' : weatherId === 'sun' ? 'sun' : null);
+    if (wk && D.CHAT.weather[wk]) pools.push([D.CHAT.weather[wk], 1.5]);
+    const hints = hintLines();
+    if (hints.length) pools.push([hints, 2]);
+    let r = Math.random() * pools.reduce((a, p) => a + p[1], 0), list = pools[0][0];
+    for (const [l, wt] of pools) { r -= wt; if (r <= 0) { list = l; break; } }
+    const line = fresh(list);
+    talkSeen.add(line);
+    let hello = '';
+    if (first) { const t = night ? 'night' : h < 11 ? 'morning' : h < 17 ? 'day' : 'evening'; hello = pick(D.CHAT.hello[t]) + ' '; }
+    return chatFill(hello + line, w);
+  }
+  function chatGift(w) {
+    const st = state.chats[w.info.owner] = state.chats[w.info.owner] || { n: 0, day: -1 };
+    if (st.day === clockNow.gameDay || Math.random() > 0.14) return null;
+    st.day = clockNow.gameDay;
+    const r = Math.random();
+    if (r < 0.45) { const n = 5 + Math.floor(Math.random() * 11); state.coins += n; return `You got ${n} coins.`; }
+    const ings = Object.keys(D.INGREDIENTS).filter((k) => D.INGREDIENTS[k].price != null);
+    const k = pick(ings);
+    state.pantry[k] = (state.pantry[k] || 0) + (r < 0.8 ? 1 : 2);
+    return `You got ${D.INGREDIENTS[k].name.toLowerCase()} for your pantry.`;
+  }
+  function startTalk(w) {
+    if (!w || talk || mode !== 'normal') return;
+    talk = { w, n: 0 };
+    w.pause = 999;
+    w.talking = true;
+    const pp = player.root.position, wp = w.parts.root.position;
+    w.parts.root.rotation.y = Math.atan2(pp.x - wp.x, pp.z - wp.z);
+    player.face = Math.atan2(wp.x - pp.x, wp.z - pp.z);
+    player.moveTarget = null;
+    state.chats = state.chats || {};
+    const st = state.chats[w.info.owner] = state.chats[w.info.owner] || { n: 0, day: -1 };
+    st.n++;
+    progress('chat');
+    $('talkPic').src = ART.portraitURL(w.info.dog.breed, w.info.dog.coat);
+    $('talkName').textContent = w.info.owner;
+    $('talkSub').textContent = `with ${w.info.dog.name}`;
+    showTalkLine(chatLine(w, true));
+    $('talk').classList.remove('hidden');
+    sfx('tip');
+    tip('chat', { title: 'Neighbors', text: 'Stop and chat with the neighbors on your walks. They know a thing or two, and sometimes they have something for you.', icon: 'person' });
+    save();
+  }
+  function showTalkLine(t) {
+    $('talkLine').textContent = plain(t);
+    $('talkMore').classList.toggle('hidden', !talk || talk.n >= 2);
+  }
+  function talkMore() {
+    if (!talk) return;
+    const w = talk.w;
+    talk.n++;
+    const g = talk.n === 1 ? chatGift(w) : null;
+    if (g) { showTalkLine(`${chatFill(pick(D.CHAT.gift), w)} ${g}`); sfx('find'); updateHud(); save(); return; }
+    showTalkLine(`${pick(D.CHAT.more)} ${chatLine(w, false)}`);
+  }
+  function endTalk(bye) {
+    if (!talk) return;
+    const w = talk.w;
+    if (bye) toast(`${w.info.owner}: ${plain(chatFill(pick(D.CHAT.bye), w))}`);
+    w.pause = 0.8;
+    w.talking = false;
+    talk = null;
+    $('talk').classList.add('hidden');
+  }
+  $('talkMore').addEventListener('click', talkMore);
+  $('talkBye').addEventListener('click', () => endTalk(true));
+  function updateTalk() {
+    if (!talk) return;
+    if (place !== 'park' || mode !== 'normal' || flatDist(talk.w.parts.root.position, player.root.position) > 4) endTalk(false);
+  }
   // the extra button in the walk bar changes with what's nearby
-  const CTX = { stay: ['hand', 'Stay'], echo: ['echo', 'Speak'], sled: ['sled', 'Sled'], ferris: ['ferris', 'Ride'], portal: ['portal', 'Portal'], rocket: ['rocket', 'Rocket'] };
+  const CTX = { talk: ['chat', 'Talk'], stay: ['hand', 'Stay'], echo: ['echo', 'Speak'], sled: ['sled', 'Sled'], ferris: ['ferris', 'Ride'], portal: ['portal', 'Portal'], rocket: ['rocket', 'Rocket'] };
   let ctxKind = null;
   function setCtx(k) {
     if (k === ctxKind) return;
@@ -5274,6 +5564,7 @@
   }
   function ctxAction() {
     switch (ctxKind) {
+      case 'talk': startTalk(nearestWalker(player.root.position)); break;
       case 'stay': askStay(); break;
       case 'echo': doEcho(); break;
       case 'sled': startSled(); break;
@@ -6914,6 +7205,10 @@
         }
       }
       section('toys', 'Toys');
+      for (const [k, G] of Object.entries(D.GADGETS)) {
+        const owned = (state.gadgets || []).includes(k);
+        card(TH('pic', G.icon), G.name, owned ? 'You carry it on walks' : G.desc, G.price, (pr) => { pay(pr); state.gadgets = (state.gadgets || []).concat(k); toast(`${G.name} bought. It switches on by itself on night walks`); done(); }, { owned });
+      }
       for (const [k, t] of Object.entries(D.TOYS)) {
         if (t.price == null || k === 'tennis' || t.vendor) continue;
         const owned = state.toys.includes(k);
@@ -7782,6 +8077,8 @@
     if (!st.look.outfit.bottom) st.look.outfit.bottom = 'jeans';
     st.lookDone = st.lookDone !== false;
     if (st.tutorial !== 'done' && st.tutorial !== 'new') st.tutorial = 'done';
+    st.gadgets = Array.isArray(st.gadgets) ? st.gadgets.filter((k) => D.GADGETS[k]) : [];
+    st.chats = obj(st.chats);
     st.critters = obj(st.critters);
     for (const k of Object.keys(st.critters)) if (!D.CRITTERS[k]) delete st.critters[k];
     st.setsDone = Array.isArray(st.setsDone) ? st.setsDone.filter((id) => D.SETS.some((S) => S.id === id)) : [];
@@ -8091,7 +8388,7 @@
     if (def.kind === 'golden') {
       const sp = sniffSpots.filter((s) => !s.kind || s.kind === 'bush');
       const g = pick(sp.length ? sp : sniffSpots);
-      if (g) { g.golden = true; if (g.sparkle) g.sparkle.scale.setScalar(0.9); }
+      if (g) { g.golden = true; if (g.sparkle) ART.setScentGold(g.sparkle, true); }
     }
   }
   let lostDog = null;
@@ -8727,11 +9024,14 @@
     pumpThumbs();
     updateSpotlight(dt);
     updateMinimap(dt);
+    updateLights(dt);
     if (bath) updateBath3D(dt);
     if (place === 'park') updateLostDog(dt);
     let fxW = localWeather();
     if (place === 'park' && S.env && S.env.snowFall && !fxW.precip) fxW = D.WEATHER.snow;
-    lightning = weatherFX.update(dt, fxW, camLook, (x, z) => place === 'home' && isHomeTile(Math.floor(x), Math.floor(z)) && !isGardenTile(Math.floor(x), Math.floor(z)));
+    // at home it only rains or snows on the gardens: never indoors, and never in the empty space around the house
+    if (place === 'home') fxW = Object.assign({}, fxW, { lightning: false });
+    lightning = weatherFX.update(dt, fxW, camLook, (x, z) => place === 'home' && !isGardenTile(Math.floor(x), Math.floor(z)));
     applyEnvironment();
     updateDusk(Math.max(nightLevel, place === 'park' && S && S.env && S.env.dark ? 1 : 0));
 
@@ -8887,6 +9187,7 @@
       startVendor, tapVendor, ensureDaily, progress, openDaily, openAlbum, bookPage, get albumPage() { return albumPage; }, set albumPage(v) { albumPage = v; },
       noteSeen, mainDirt, addDirt, walkDirt, isSolid, quirkSolid, inPlaza, plazaPerformance, performTrick, spawnWalkers,
       setZoom(z) { zoom = z; }, snapCam() { updateCamera(0, true); }, get thumbWait() { return [...thumbWait]; }, pumpThumbs,
+      startTalk, talkMore, endTalk, nearestWalker, hintLines, chatLine, get talk() { return talk; }, homeLitShare, litAt, walkLit, nightHidesSpots, rebuildHomeLights, get homeLights() { return homeLights; }, get playerBeam() { return playerBeam; },
       weekKey, vendorSpecials, homeSpecials, rollSeason, checkSets, checkSeasons, spotCritter, sniffCritter, critterOk,
       openHouse, upgradeHouse, houseTier, roomCap, openPeople, renderPeople, storyMeet, storyPlay, storyTrick, storyComplete, storyReady, checkAllowance, get walkersList() { return walkers; },
       openDogSheet, renderDogSheet, startExam, examTry, examEnd, badgeRows, addSpec, heartsOfBond, get sheetDog() { return sheetDog; },
