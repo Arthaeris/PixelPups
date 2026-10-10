@@ -370,7 +370,7 @@ window.VP_ART = (function () {
     },
     rainbowrug(g) {
       const cols = ['#e53935', '#fb8c00', '#fdd835', '#43a047', '#1e88e5', '#8e24aa'];
-      cols.forEach((c, k) => box(g, 0.98 - k * 0.14, 0.02 + k * 0.003, 0.98 - k * 0.14, c, 0, 0.012 + k * 0.003, 0));
+      cols.forEach((c, k) => box(g, 0.98 - k * 0.14, 0.02 + k * 0.008, 0.98 - k * 0.14, c, 0, (0.02 + k * 0.008) / 2, 0));
     },
     crystallamp(g) {
       const cr = new THREE.MeshLambertMaterial({ color: '#c6b4ff', emissive: '#8a5cf6', emissiveIntensity: 0.7 });
@@ -465,8 +465,8 @@ window.VP_ART = (function () {
     },
     rug(g) {
       box(g, 0.98, 0.03, 0.98, '#b84a5a', 0, 0.015, 0);
-      box(g, 0.74, 0.035, 0.74, '#f0c27b', 0, 0.018, 0);
-      box(g, 0.42, 0.04, 0.42, '#b84a5a', 0, 0.02, 0);
+      box(g, 0.74, 0.04, 0.74, '#f0c27b', 0, 0.02, 0);
+      box(g, 0.42, 0.05, 0.42, '#b84a5a', 0, 0.025, 0);
     },
     fireplace(g) {
       const stone = '#a29d96';
@@ -1465,17 +1465,45 @@ window.VP_ART = (function () {
   };
   const inRect = (r, x, z) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1;
   const inAny = (rs, x, z) => rs.some((r) => inRect(r, x, z));
+  const hash2 = (x, z) => { const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); };
   function terrain(def) {
     const cellIn = (x, z) => {
       const cx = Math.floor(x) + 0.5, cz = Math.floor(z) + 0.5;
       return def.walk.some((p) => inPoly(p, cx, cz)) && !inAny(def.blocks || [], cx, cz);
     };
     const areaHas = (a, x, z) => (a.rect ? inRect(a.rect, x, z) : a.rects ? inAny(a.rects, x, z) : inPoly(a.poly, x, z));
-    function height(x, z) {
+    // a hill: an irregular outline that rises in low voxel terraces from its edge, so you can walk up anywhere.
+    // Edges listed in "steep" are rock faces instead: the ground stays high right up to them.
+    const segDist = (px, pz, ax, az, bx, bz) => {
+      const dx = bx - ax, dz = bz - az, L = dx * dx + dz * dz;
+      const t = L ? clamp(((px - ax) * dx + (pz - az) * dz) / L, 0, 1) : 0;
+      return Math.hypot(px - ax - dx * t, pz - az - dz * t);
+    };
+    const hillCache = new Map();
+    function hillH(a, x, z) {
+      const cx = Math.floor(x) + 0.5, cz = Math.floor(z) + 0.5, key = a.id + ':' + cx + ',' + cz;
+      if (hillCache.has(key)) return hillCache.get(key);
+      let d = Infinity;
+      const P = a.poly;
+      for (let i = 0; i < P.length; i++) {
+        if ((a.steep || []).includes(i)) continue;
+        const [ax, az] = P[i], [bx, bz] = P[(i + 1) % P.length];
+        d = Math.min(d, segDist(cx, cz, ax, az, bx, bz));
+      }
+      // one terrace per ring of (at least) one cell, so neighbouring cells never differ by more than one step
+      const st = a.step || 0.4;
+      const h = Math.min(Math.abs(a.h), Math.max(1, Math.ceil(d / Math.max(1, a.ring || 1) - 1e-6)) * st) * Math.sign(a.h);
+      hillCache.set(key, h);
+      return h;
+    }
+    (def.areas || []).forEach((a, i) => { a.id = a.id || 'a' + i; });
+    function heightOf(x, z, upper) {
       let h = def.base || 0;
       for (const a of def.areas || []) {
+        if (upper && a.under) continue;
         if (!areaHas(a, x, z)) continue;
-        if (a.kind === 'flat') h = a.h;
+        if (a.kind === 'hill') h = hillH(a, x, z);
+        else if (a.kind === 'flat') h = a.h;
         else {
           const r = a.rect;
           let t = a.axis === 'x' ? (x - r.x0) / (r.x1 - r.x0) : (z - r.z0) / (r.z1 - r.z0);
@@ -1486,19 +1514,20 @@ window.VP_ART = (function () {
       }
       return h;
     }
-    const sloped = (x, z) => (def.areas || []).some((a) => a.kind !== 'flat' && areaHas(a, x, z));
+    const height = (x, z) => heightOf(x, z, false);
+    const upper = (x, z) => heightOf(x, z, true);
+    const sloped = (x, z) => (def.areas || []).some((a) => (a.kind === 'ramp' || a.kind === 'stairs') && areaHas(a, x, z));
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const p of def.walk) for (const [x, z] of p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-    return { inside: cellIn, height, sloped, bbox: { x0, x1, z0, z1 }, def };
+    return { inside: cellIn, height, upper, sloped, bbox: { x0, x1, z0, z1 }, def };
   }
-  const hash2 = (x, z) => { const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); };
   // draws the ground: grass (or sand) on top, earth or rock on the sides of every raised or sunken bit
   function drawTerrain(root, T, st) {
     const { x0, x1, z0, z1 } = T.bbox;
     const fades = [];
     const roofs = (T.def.roofs || []).map((rf) => {
-      const cap = new THREE.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 1 });
-      const side = new THREE.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 1 });
+      const cap = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+      const side = new THREE.MeshLambertMaterial({ color: '#ffffff' });
       fades.push(cap, side);
       return { rf, cap, side, caps: [], bodies: [] };
     });
@@ -1526,14 +1555,22 @@ window.VP_ART = (function () {
         const capList = rf ? rf.caps : caps, bodyList = rf ? rf.bodies : bodies;
         capList.push([cx, h - 0.06, cz, 1, 0.12, 1, colorFor(cx, cz, h)]);
         if (low < h - 0.05) {
-          const b = Math.min(low, h - 0.12) - 0.05;
+          const b = Math.min(low, h - 0.12);
           bodyList.push([cx, (b + h - 0.12) / 2, cz, 1, h - 0.12 - b, 1, h > 0.9 && st.rock ? st.rock : st.side]);
+        }
+        // ground that hangs over a hollow (a cove, a grotto): its top, and rock down to the ceiling
+        const up = T.upper(cx, cz);
+        const hr = roofs.find((r) => inAny(r.rf.under, cx, cz));
+        if (hr && up > h + 0.5) {
+          const ceil = Math.min(up - 0.3, h + (hr.rf.ceil || 1.3));
+          hr.caps.push([cx, up - 0.06, cz, 1, 0.12, 1, colorFor(cx, cz, up)]);
+          hr.bodies.push([cx, (ceil + up - 0.12) / 2, cz, 1, up - 0.12 - ceil, 1, st.rock || st.side]);
         }
       }
     }
     // ramps and stairs: thin slices, so slopes look like gentle voxel steps
     for (const a of T.def.areas || []) {
-      if (a.kind === 'flat') continue;
+      if (a.kind !== 'ramp' && a.kind !== 'stairs') continue;
       const r = a.rect, along = a.axis === 'x' ? r.x1 - r.x0 : r.z1 - r.z0;
       const n = a.kind === 'stairs' ? a.n : Math.max(2, Math.round(along / 0.25));
       for (let s = 0; s < n; s++) {
@@ -1561,21 +1598,9 @@ window.VP_ART = (function () {
     make(caps); make(bodies);
     const outRoofs = roofs.map((r) => {
       make(r.caps, r.cap); make(r.bodies, r.side);
-      // the overhang itself: a slab of rock or turf above the space underneath
-      for (const s of r.rf.slabs || []) {
-        const m = new THREE.Mesh(geo(s.x1 - s.x0, s.t || 0.5, s.z1 - s.z0), r.side);
-        m.position.set((s.x0 + s.x1) / 2, s.y - (s.t || 0.5) / 2 + 0.06, (s.z0 + s.z1) / 2);
-        root.add(m);
-        const top = new THREE.Mesh(geo(s.x1 - s.x0, 0.12, s.z1 - s.z0), r.cap);
-        top.position.set((s.x0 + s.x1) / 2, s.y, (s.z0 + s.z1) / 2);
-        root.add(top);
-        r.slabCols = r.slabCols || [];
-        r.slabCols.push([m, st.rock || st.side], [top, (st.tone && st.tone((s.x0 + s.x1) / 2, (s.z0 + s.z1) / 2, s.y)) || st.topA]);
-      }
-      // tint the see-through materials: instanced colors carry the look, these stay white
-      return { id: r.rf.id, test: r.rf.under, mats: [r.cap, r.side], slabs: r.slabCols || [] };
+      // instanced colors carry the look; these materials only fade while you are underneath
+      return { id: r.rf.id, test: r.rf.under, mats: [r.cap, r.side] };
     });
-    outRoofs.forEach((r) => r.slabs.forEach(([m, col]) => { m.material = m.material.clone(); m.material.color.set(col); r.mats.push(m.material); }));
     // the space around a place: lower ground, so the shape reads from above
     box(root, 160, 0.1, 160, st.outside, 0, bottom - 0.05, 0);
     return outRoofs;
@@ -1627,14 +1652,17 @@ window.VP_ART = (function () {
            (Math.abs(x) < 1.3 && z > 10) ||
            (z > -6.8 && z < -5.2 && x > 10 && x < 26.8) ||
            (x > 25.2 && x < 26.8 && z > -16 && z < -5.2) ||
-           (z > -8.7 && z < -7.4 && x > 26 && x < 31.2);
+           (z > -15.9 && z < -14.5 && x > 26 && x < 31.5);
   }
+  // the lookout hill in the east meadow: terraced on three sides, a rock face to the east with a grotto in it
+  const PARK_HILL = [[29, -14], [31.5, -19], [37, -20], [41.5, -17.5], [42, -12], [39, -9.5], [33.5, -9.5], [30, -11]];
+  const PARK_GROTTO = { x0: 38.5, x1: 42, z0: -16, z1: -13.5 };
   const inPond = (x, z, m = 0) => x > POND.x0 - m && x < POND.x1 + m && z > POND.z0 - m && z < POND.z1 + m;
   const PARK_T = {
     walk: [
       [[-19.5, -15], [-15, -19.5], [15, -19.5], [19.5, -15], [19.5, 15], [15, 19.5], [1.6, 19.5], [1.6, 21], [-1.6, 21], [-1.6, 19.5], [-15, 19.5], [-19.5, 15]],
       [[19, -9], [26, -9], [26, -3], [19, -3]],
-      [[24.5, -17], [31, -21.5], [39, -21], [43, -15], [43, -3], [38.5, 1], [31, 1.5], [24.5, -2]],
+      [[24.5, -17], [31, -21.5], [39, -21.5], [44.5, -17], [45, -9], [42, -3], [38.5, 1], [31, 1.5], [24.5, -2]],
       [[-28, -8], [-23, -10], [-19, -9], [-19, 4], [-23, 6], [-28, 3]],
     ],
     // the hedge between the lawn and the rose garden, with one narrow gap
@@ -1642,12 +1670,10 @@ window.VP_ART = (function () {
     areas: [
       { kind: 'flat', rect: { x0: 2, x1: 10, z0: -8.5, z1: -1 }, h: -0.5 },
       { kind: 'stairs', rect: { x0: 0.6, x1: 2, z0: -5.4, z1: -3.6 }, axis: 'x', h0: 0, h1: -0.5, n: 2 },
-      { kind: 'flat', rect: { x0: 31, x1: 42, z0: -18.5, z1: -9 }, h: 1.6 },
-      { kind: 'flat', rect: { x0: 31, x1: 42, z0: -7.2, z1: -6 }, h: 1.6 },
-      { kind: 'ramp', rect: { x0: 27, x1: 31, z0: -16, z1: -14.4 }, axis: 'x', h0: 0, h1: 1.6 },
+      { kind: 'hill', poly: PARK_HILL, h: 1.6, step: 0.4, ring: 1, steep: [2, 3, 4] },
+      { kind: 'flat', rect: PARK_GROTTO, h: 0, under: true },
     ],
-    roofs: [{ id: 'underpass', zone: [{ x0: 30, x1: 43, z0: -10, z1: -5 }], under: [{ x0: 31, x1: 42, z0: -9, z1: -7 }],
-      slabs: [{ x0: 31, x1: 42, z0: -9, z1: -7, y: 1.6, t: 0.6 }] }],
+    roofs: [{ id: 'underpass', zone: [{ x0: 37, x1: 43, z0: -17.5, z1: -12 }], under: [PARK_GROTTO], ceil: 1.3 }],
   };
   function buildPark(parkRoot) {
     const colliders = [], spots = [];
@@ -1694,7 +1720,7 @@ window.VP_ART = (function () {
     });
     // hidden places: the rose garden behind the west hedge, and the stone underpass through the hill
     const rose = addSpot(parkRoot, spots, colliders, -25, -1.5, 'hidden:roses', spotLooks.bush);
-    const tun = addSpot(parkRoot, spots, colliders, 40.8, -8.5, 'hidden:underpass', spotLooks.stump, 0);
+    const tun = addSpot(parkRoot, spots, colliders, 40.9, -14.3, 'hidden:underpass', spotLooks.stump, 0);
     for (const [x, z] of [[-27, -6], [-26, 2], [-21.5, -7.5], [-21.5, 4], [-24.5, 4.5], [-27.2, -2]]) {
       const g = pivot(parkRoot, x, 0, z);
       box(g, 0.8, 0.55, 0.8, '#3f7f3a', 0, 0.27, 0);
@@ -1704,24 +1730,29 @@ window.VP_ART = (function () {
     { const g = pivot(parkRoot, -23.5, 0, -1.5); box(g, 0.5, 0.5, 0.5, '#b0aaa0', 0, 0.25, 0); box(g, 0.9, 0.12, 0.9, '#b0aaa0', 0, 0.56, 0); box(g, 0.7, 0.04, 0.7, M.water, 0, 0.62, 0); colliders.push({ x: -23.5, z: -1.5, r: 0.5 }); }
     // a few petals on the lawn by the gap: a hint, if you notice
     for (const [x, z] of [[-18.2, -0.6], [-17.4, -0.2], [-18.6, 0.4]]) box(parkRoot, 0.12, 0.02, 0.1, '#e53950', x, 0.02, z);
-    // the underpass: arches at both ends, a lantern inside, and a cat asleep on a crate
-    for (const x of [31, 42]) { box(parkRoot, 0.4, 1.6, 0.4, '#9e958a', x, 0.8, -9); box(parkRoot, 0.4, 1.6, 0.4, '#9e958a', x, 0.8, -7.2); }
-    box(parkRoot, 0.25, 0.25, 0.25, M.lamp, 35.5, 1.05, -8.85);
+    // the grotto in the hill's rock face: a lantern, and a cat asleep on a crate
+    box(parkRoot, 0.22, 0.22, 0.22, M.lamp, 39, 1.0, -15.7);
     const cat = buildCritter('cat');
-    cat.position.set(33.2, 0.4, -8.6);
+    cat.position.set(39.4, 0.4, -14.2);
     cat.rotation.y = 1.2;
     parkRoot.add(cat);
-    box(parkRoot, 0.7, 0.4, 0.6, '#8d6e4c', 33.2, 0.2, -8.6);
-    colliders.push({ x: 33.2, z: -8.6, r: 0.45 });
+    box(parkRoot, 0.7, 0.4, 0.6, '#8d6e4c', 39.4, 0.2, -14.2);
+    colliders.push({ x: 39.4, z: -14.2, r: 0.45 });
+    for (const [x, z, w] of [[42.6, -16.6, 0.7], [42.9, -12.8, 0.5], [43.4, -17.4, 0.45]]) { box(parkRoot, w, w * 0.7, w, '#9e958a', x, w * 0.35, z); colliders.push({ x, z, r: w * 0.6 }); }
     // the lookout: a bench, a lamp and a coin telescope on top of the hill
-    { const g = pivot(parkRoot, 37.5, 1.6, -16.5); box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2); box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0); box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0); colliders.push({ x: 37.5, z: -16.5, r: 0.8 }); }
-    { const g = pivot(parkRoot, 40.4, 1.6, -11.5); box(g, 0.12, 0.9, 0.12, '#455a64', 0, 0.45, 0); box(g, 0.5, 0.22, 0.22, '#455a64', 0.1, 0.95, 0); box(g, 0.1, 0.16, 0.16, '#90caf9', 0.38, 0.97, 0); colliders.push({ x: 40.4, z: -11.5, r: 0.35 }); }
-    box(parkRoot, 0.14, 2.2, 0.14, '#3d3a40', 33, 1.6 + 1.1, -17.5);
-    box(parkRoot, 0.36, 0.3, 0.36, M.lamp, 33, 1.6 + 2.3, -17.5);
-    // low railings along the hill's edge
-    for (let x = 31.5; x <= 41.5; x += 1) { box(parkRoot, 0.1, 0.5, 0.1, '#795548', x, 1.85, -9.2); box(parkRoot, 0.1, 0.5, 0.1, '#795548', x, 1.85, -18.3); }
-    box(parkRoot, 10.5, 0.08, 0.08, '#8d6e63', 36.5, 2.05, -9.2);
-    box(parkRoot, 10.5, 0.08, 0.08, '#8d6e63', 36.5, 2.05, -18.3);
+    const top = (x, z) => T.height(x, z);
+    { const g = pivot(parkRoot, 35.6, top(35.6, -16.3), -16.3); box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2); box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0); box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0); colliders.push({ x: 35.6, z: -16.3, r: 0.8 }); }
+    { const g = pivot(parkRoot, 37.8, top(37.8, -12.6), -12.6); box(g, 0.12, 0.9, 0.12, '#455a64', 0, 0.45, 0); box(g, 0.5, 0.22, 0.22, '#455a64', 0.1, 0.95, 0); box(g, 0.1, 0.16, 0.16, '#90caf9', 0.38, 0.97, 0); colliders.push({ x: 37.8, z: -12.6, r: 0.35 }); }
+    box(parkRoot, 0.14, 2.2, 0.14, '#3d3a40', 33.6, top(33.6, -16.8) + 1.1, -16.8);
+    box(parkRoot, 0.36, 0.3, 0.36, M.lamp, 33.6, top(33.6, -16.8) + 2.3, -16.8);
+    colliders.push({ x: 33.6, z: -16.8, r: 0.2 });
+    // street lamps along the paths
+    const LAMPS = [[-12.4, -12.4], [12.4, -12.4], [-12.4, 12.4], [12.4, 12.4], [23, -7.6]];
+    for (const [x, z] of LAMPS) {
+      box(parkRoot, 0.14, 2.2, 0.14, '#3d3a40', x, 1.1, z);
+      box(parkRoot, 0.36, 0.3, 0.36, M.lamp, x, 2.3, z);
+      colliders.push({ x, z, r: 0.2 });
+    }
     // trees: the lawns, the meadow and a ring of big ones outside the hedge
     const trees = [];
     for (let tries = 0; tries < 900 && trees.length < 52; tries++) {
@@ -1729,13 +1760,15 @@ window.VP_ART = (function () {
       if (!T.inside(x, z) || onPath(x, z) || inPond(x, z, 2.5) || x < -19 || T.height(x, z) !== 0) continue;
       if (Math.abs(x) < 3.5 && z > 12) continue;
       if (spotPos.some(([sx, sz]) => Math.hypot(sx - x, sz - z) < 2.2)) continue;
+      if (LAMPS.some(([lx, lz]) => Math.hypot(lx - x, lz - z) < 3)) continue;
       if (trees.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 2.6)) continue;
-      if (x > 29 && x < 43 && z > -10 && z < -5) continue;
+      if (x > 40 && z > -19 && z < -11) continue;
       if (x > -20 && x < -16 && z > -3 && z < 2) continue;
       trees.push([x, z]);
       voxelTree(parkRoot, x, 0, z, r);
       colliders.push({ x, z, r: 0.45 });
     }
+    for (const [x, z, sc] of [[31.4, -12.6, 0.8], [31.3, -17.4, 0.85], [40.3, -10.9, 0.75]]) { voxelTree(parkRoot, x, T.height(x, z), z, r, sc); colliders.push({ x, z, r: 0.4 }); }
     voxelTree(parkRoot, -17.6, 0, 1.6, r, 1.1);
     colliders.push({ x: -17.6, z: 1.6, r: 0.5 });
     for (let k = 0; k < 70; k++) {
@@ -1750,10 +1783,6 @@ window.VP_ART = (function () {
       box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2);
       box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0);
       box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0);
-    }
-    for (const [x, z] of [[-12.4, -12.4], [12.4, -12.4], [-12.4, 12.4], [12.4, 12.4], [23, -7.6]]) {
-      box(parkRoot, 0.14, 2.2, 0.14, '#3d3a40', x, 1.1, z);
-      box(parkRoot, 0.36, 0.3, 0.36, M.lamp, x, 2.3, z);
     }
     const tuft = new THREE.InstancedMesh(geo(0.12, 0.16, 0.12), mat('#6ba95a'), 380);
     const flower = new THREE.InstancedMesh(geo(0.12, 0.12, 0.12), new THREE.MeshLambertMaterial({ color: '#ffffff' }), 200);
@@ -1770,11 +1799,11 @@ window.VP_ART = (function () {
     parkRoot.add(tuft, flower);
     const secrets = [
       { id: 'roses', name: 'The rose garden', rects: [{ x0: -28, x1: -20, z0: -10, z1: 6 }], hint: 'Some mornings I smell roses by the west hedge. Funny, there aren’t any roses in the park.' },
-      { id: 'underpass', name: 'The old underpass', rects: [{ x0: 32, x1: 41.5, z0: -9, z1: -7 }], hint: 'When I was little there was a stone passage somewhere in the east meadow. I wonder if it’s still there.' },
+      { id: 'underpass', name: 'The hillside grotto', rects: [PARK_GROTTO], hint: 'My grandpa says there’s a little hollow somewhere in the east meadow, where the cats nap when it rains.' },
     ];
     void rose; void tun;
     return { colliders, spots, water, ponds: [POND], onPath, loop: { x: 11, z0: -11, z1: 11 }, vendors: [], q: {},
-      height: T.height, inside: T.inside, bbox: T.bbox, roofs, secrets, exit: { x: 0, z: 20.2 }, lookout: { x0: 31, x1: 42, z0: -18.5, z1: -9.2 } };
+      height: T.height, inside: T.inside, bbox: T.bbox, roofs, secrets, exit: { x: 0, z: 20.2 }, lookout: { x0: 32, x1: 40.5, z0: -18.5, z1: -11 } };
   }
 
 
@@ -2428,17 +2457,15 @@ window.VP_ART = (function () {
     areas: [
       { kind: 'flat', poly: [[-20, 13.2], [20, 13.2], [20, 22], [-20, 22]], h: 0.5 },
       { kind: 'ramp', rect: { x0: -1.6, x1: 1.6, z0: 10.4, z1: 13.2 }, axis: 'z', h0: 0, h1: 0.5 },
-      { kind: 'flat', rect: { x0: 21, x1: 35, z0: -19.5, z1: 3 }, h: 2.4 },
-      { kind: 'flat', rects: BEACH_COVE, h: 0.25 },
-      { kind: 'flat', rect: BEACH_CAVE[0], h: 0.15 },
-      { kind: 'flat', rect: BEACH_CAVE[1], h: 0.1 },
+      { kind: 'flat', poly: [[21, -19.5], [35, -19.5], [35, 3.5], [27.6, 3.5], [23.6, 2.6], [22, 0.5], [21.4, -6.5], [20.4, -9.5], [21, -12.5]], h: 2.4 },
+      { kind: 'flat', rects: BEACH_COVE, h: 0.25, under: true },
+      { kind: 'flat', rect: BEACH_CAVE[0], h: 0.15, under: true },
+      { kind: 'flat', rect: BEACH_CAVE[1], h: 0.1, under: true },
       { kind: 'stairs', rect: { x0: 24, x1: 27, z0: 3, z1: 7.4 }, axis: 'z', h0: 2.4, h1: 0, n: 9 },
     ],
     roofs: [
-      { id: 'cove', zone: [{ x0: 20.5, x1: 36, z0: -7, z1: 4 }], under: BEACH_COVE,
-        slabs: BEACH_COVE.map((c) => ({ ...c, y: 2.4, t: 0.9 })) },
-      { id: 'seacave', zone: [{ x0: 20.5, x1: 36, z0: -19.6, z1: -12.6 }], under: BEACH_CAVE,
-        slabs: BEACH_CAVE.map((c) => ({ ...c, y: 2.4, t: 1.0 })) },
+      { id: 'cove', zone: [{ x0: 20, x1: 36, z0: -7.5, z1: 4 }], under: BEACH_COVE, ceil: 1.4 },
+      { id: 'seacave', zone: [{ x0: 20, x1: 36, z0: -19.6, z1: -12.6 }], under: BEACH_CAVE, ceil: 1.3 },
     ],
   };
   function buildBeach(root) {
