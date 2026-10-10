@@ -723,6 +723,8 @@ window.VP_DATA = (function () {
     lanternpin:{ name: 'Lantern pin',        icon: '🏮', loc: 'oldtown', weight: 3, when: 'night', secret: true },
     umbrella:  { name: 'Tiny umbrella',      icon: '☂️', loc: 'oldtown', weight: 3, when: 'rain', secret: true },
     ticket:    { name: 'Golden tram ticket', icon: '🎫', loc: 'oldtown', weight: 1, secret: true },
+    yarnball:  { name: 'Cat’s yarn ball',   icon: '🧶', loc: 'oldtown', weight: 3, where: 'hidden:courtyard', secret: true },
+    lure:      { name: 'Old fishing lure',  icon: '🎣', loc: 'oldtown', weight: 3, where: 'hidden:bridge', secret: true },
 
     oakleaf:   { name: 'Oak leaf',           icon: '🍂', loc: 'forest', weight: 5 },
     pebble:    { name: 'Mossy pebble',       icon: '🪨', loc: 'forest', weight: 4 },
@@ -730,6 +732,8 @@ window.VP_DATA = (function () {
     owlfeather:{ name: 'Owl feather',        icon: '🦉', loc: 'forest', weight: 3, when: 'night', secret: true },
     snail:     { name: 'Snail shell',        icon: '🐌', loc: 'forest', weight: 3, when: 'rain', secret: true },
     fairystone:{ name: 'Fairy ring stone',   icon: '🧚', loc: 'forest', weight: 1, secret: true, glade: true },
+    carving:   { name: 'Carved wood',       icon: '🪵', loc: 'forest', weight: 3, where: 'hidden:hollowtree', secret: true },
+    rivergem:  { name: 'River gem',         icon: '💎', loc: 'forest', weight: 3, where: 'hidden:waterfall', secret: true },
 
     scallop:   { name: 'Scallop shell',      icon: '🐚', loc: 'beach', weight: 5 },
     seaglass:  { name: 'Sea glass',          icon: '🔷', loc: 'beach', weight: 4 },
@@ -749,6 +753,8 @@ window.VP_DATA = (function () {
     eagle:     { name: 'Eagle feather',      icon: '🦅', loc: 'alpine', weight: 2, when: 'sun', secret: true },
     starpebble:{ name: 'Shooting-star pebble', icon: '🌠', loc: 'alpine', weight: 3, when: 'night', secret: true },
     snowflake: { name: 'Perfect snowflake',  icon: '❄️', loc: 'alpine', weight: 4, when: 'snow', secret: true },
+    glacierice:{ name: 'Glacier ice',       icon: '🧊', loc: 'alpine', weight: 3, where: 'hidden:icecave', secret: true },
+    alpinerose:{ name: 'Alpine rose',       icon: '🌸', loc: 'alpine', weight: 3, where: 'hidden:meadow', secret: true },
 
     amethyst:  { name: 'Amethyst',           icon: '🔮', loc: 'caves', weight: 5, where: 'crystal' },
     quartz:    { name: 'Rose quartz',        icon: '💗', loc: 'caves', weight: 4, where: 'crystal' },
@@ -756,6 +762,8 @@ window.VP_DATA = (function () {
     fossil:    { name: 'Dino fossil',        icon: '🦕', loc: 'caves', weight: 3 },
     pickaxe:   { name: 'Tiny pickaxe',       icon: '⛏️', loc: 'caves', weight: 3 },
     geode:     { name: 'Rainbow geode',      icon: '🌈', loc: 'caves', weight: 1, secret: true },
+    oillamp:   { name: 'Old oil lamp',      icon: '🪔', loc: 'caves', weight: 3, where: 'hidden:lake', secret: true },
+    geodeheart:{ name: 'Geode heart',       icon: '💜', loc: 'caves', weight: 3, where: 'hidden:geode', secret: true },
 
     snowcharm: { name: 'Snowflake charm',    icon: '❄️', loc: 'snowy', weight: 5 },
     mitten:    { name: 'Lost mitten',        icon: '🧤', loc: 'snowy', weight: 4 },
@@ -763,6 +771,8 @@ window.VP_DATA = (function () {
     icecrystal:{ name: 'Ice crystal',        icon: '🧊', loc: 'snowy', weight: 3 },
     snownose:  { name: "Snowman's nose",     icon: '🥕', loc: 'snowy', weight: 1, secret: true },
     candycane: { name: 'Candy cane',         icon: '🍬', loc: 'snowy', weight: 4, when: 'december', secret: true },
+    teacup:    { name: 'Igloo teacup',      icon: '🍵', loc: 'snowy', weight: 3, where: 'hidden:igloo', secret: true },
+    tinysnowman:{ name: 'Tiny snowman',      icon: '⛄', loc: 'snowy', weight: 3, where: 'hidden:snowcave', secret: true },
 
     stub:      { name: 'Ticket stub',        icon: '🎟️', loc: 'carnival', weight: 5 },
     balloon:   { name: 'Runaway balloon',    icon: '🎈', loc: 'carnival', weight: 4 },
@@ -772,18 +782,24 @@ window.VP_DATA = (function () {
     plushdino: { name: 'Plush dino',         icon: '🦖', loc: 'carnival', weight: 0, where: 'prize' },
     plushunicorn:{ name: 'Plush unicorn',    icon: '🦄', loc: 'carnival', weight: 0, where: 'prize' },
     magicball: { name: 'Fortune ball',       icon: '🎱', loc: 'carnival', weight: 1, secret: true },
+    jugglepin: { name: 'Juggling pin',      icon: '🤹', loc: 'carnival', weight: 3, where: 'hidden:bigtop', secret: true },
+    fortunecard:{ name: 'Fortune card',      icon: '🃏', loc: 'carnival', weight: 3, where: 'hidden:wagon', secret: true },
 
     magicbone: { name: 'Magic bone',         icon: '🦴', loc: 'fairy', weight: 4 },
     fairydust: { name: 'Fairy dust',         icon: '💫', loc: 'fairy', weight: 5 },
     elfshoe:   { name: 'Elf shoe',           icon: '👞', loc: 'fairy', weight: 3 },
     moonflower:{ name: 'Moon flower',        icon: '🌺', loc: 'fairy', weight: 3, when: 'night', secret: true },
     chime:     { name: 'Fairy chime',        icon: '🎐', loc: 'fairy', weight: 0, where: 'puzzle', secret: true },
+    glassfly:  { name: 'Glass butterfly',   icon: '🦋', loc: 'fairy', weight: 3, where: 'hidden:ring', secret: true },
+    wishstar:  { name: 'Wishing star',      icon: '💫', loc: 'fairy', weight: 3, where: 'hidden:fairygrotto', secret: true },
 
     moonrock:  { name: 'Moon rock',          icon: '🌑', loc: 'moon', weight: 5 },
     meteorite: { name: 'Meteorite',          icon: '☄️', loc: 'moon', weight: 3 },
     satellite: { name: 'Tiny satellite',     icon: '🛰️', loc: 'moon', weight: 2 },
     patch:     { name: 'Mission patch',      icon: '🎖️', loc: 'moon', weight: 0, where: 'treasure' },
     ufobolt:   { name: 'UFO bolt',           icon: '🛸', loc: 'moon', weight: 1, secret: true },
+    probeantenna:{ name: 'Probe antenna',     icon: '📡', loc: 'moon', weight: 3, where: 'hidden:bigcrater', secret: true },
+    lavastone: { name: 'Lava stone',        icon: '🌋', loc: 'moon', weight: 3, where: 'hidden:lavatube', secret: true },
   };
   const FIND_DUPLICATE_COINS = 3;   // a find you already have is traded for this
   const TREASURE = { min: 30, max: 60, rareChance: 0.25 };
