@@ -381,6 +381,9 @@
   let camFocus = null;
   let towelTask = null;
   let noSave = false;
+  // extra save copies (the main save key never changes)
+  const TRANSFER_KEY = 'voxelpaws-transfer', BUST_KEY = 'voxelpaws-bust', RESCUE_KEY = 'voxelpaws-rescue', LAST_KEY = 'voxelpaws-lastgood';
+  const boot = { updated: false, recovered: false, problem: false, blocked: false };
   let tm = null;           // Trick Mode session
   const walkers = [];
   const encCooldown = new Map();
@@ -7710,6 +7713,12 @@
     try { backup = JSON.parse(localStorage.getItem(CONFIG.BACKUP_KEY)); } catch (_) { /* none */ }
     $('restoreBtn').disabled = !backup;
     $('restoreInfo').textContent = backup && backup.at ? `Backup from ${new Date(backup.at).toLocaleString()}` : 'No backup yet — one is made automatically before every import or new game.';
+    let rescue = null;
+    try { rescue = JSON.parse(localStorage.getItem(RESCUE_KEY)); } catch (_) { rescue = null; }
+    $('rescueInfo').classList.toggle('hidden', !rescue);
+    $('rescueBtn').classList.toggle('hidden', !rescue);
+    if (rescue) $('rescueInfo').textContent = `A save from ${new Date(rescue.at).toLocaleString()} could not be opened, so it is kept here untouched. Download it to keep it safe.`;
+    if (!upd.busy && !upd.found) { $('updInfo').classList.remove('found'); $('updNowBtn').classList.add('hidden'); }
     $('verInfo').textContent = `PixelPups · save format v${CONFIG.SAVE_VERSION} · ${dogs.length} dog${dogs.length === 1 ? '' : 's'} · 🪙 ${state.coins}`;
     $('optSfx').checked = prefs.sfx;
     $('optMusic').checked = prefs.music;
@@ -7718,6 +7727,76 @@
   }
   $('optSfx').addEventListener('change', (e) => { prefs.sfx = e.target.checked; savePrefs(); wakeAudio(); sfx('tip'); });
   $('optMusic').addEventListener('change', (e) => { prefs.music = e.target.checked; savePrefs(); wakeAudio(); });
+  // ----- Updates: phones sometimes keep running an old copy of the game -----
+  const GAME_FILES = ['style.css', 'data.js', 'art.js', 'game.js'];
+  const upd = { busy: false, found: false, boot: null };
+  const fingerprint = (t) => { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + ':' + t.length; };
+  const pageURL = () => location.pathname + location.search;
+  async function printOf(url, fresh) {
+    const r = await fetch(fresh ? url.split('?')[0] + '?check=' + Date.now() : url, { cache: fresh ? 'no-store' : 'force-cache' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return fingerprint(await r.text());
+  }
+  // what this copy of the game is running (read once, shortly after starting)
+  function bootPrints() {
+    if (!upd.boot) {
+      upd.boot = Promise.all([printOf(pageURL(), false), ...GAME_FILES.map((f) => printOf(f + (window.PP_BUST || ''), false))]);
+      upd.boot.catch(() => { upd.boot = null; });
+    }
+    return upd.boot;
+  }
+  async function checkForUpdate() {
+    if (upd.busy) return;
+    upd.busy = true;
+    const info = $('updInfo'), btn = $('updCheckBtn');
+    btn.disabled = true;
+    info.classList.remove('found');
+    info.textContent = 'Looking for a newer version…';
+    try {
+      const now = await bootPrints();
+      const fresh = await Promise.all([printOf(location.pathname, true), ...GAME_FILES.map((f) => printOf(f, true))]);
+      upd.found = fresh.some((p, i) => p !== now[i]);
+      if (upd.found) {
+        info.classList.add('found');
+        info.textContent = 'Update found! A newer version of PixelPups is ready. Your game comes along when you update.';
+        $('updNowBtn').classList.remove('hidden');
+      } else info.textContent = 'You already have the newest version.';
+    } catch (_) {
+      info.textContent = 'Couldn’t reach the game’s website. Check your connection and try again.';
+    }
+    btn.disabled = false;
+    upd.busy = false;
+  }
+  async function updateNow() {
+    if (upd.busy) return;
+    upd.busy = true;
+    $('updNowBtn').disabled = true;
+    $('updInfo').textContent = 'Packing up your game…';
+    // 1. a fresh save, a backup, and a copy that the new version picks up when it starts
+    save();
+    backupCurrent();
+    try {
+      let data = null;
+      try { data = JSON.parse(localStorage.getItem(CONFIG.SAVE_KEY)); } catch (_) { data = null; }
+      localStorage.setItem(TRANSFER_KEY, JSON.stringify({ at: Date.now(), data: data || JSON.parse(JSON.stringify(state)) }));
+    } catch (_) {
+      $('updInfo').textContent = 'Couldn’t pack up your game, so nothing was changed. Try downloading your save first.';
+      $('updNowBtn').disabled = false;
+      upd.busy = false;
+      return;
+    }
+    noSave = true;
+    // 2. replace the old copies the browser kept, then load the game files under a new name
+    $('updInfo').textContent = 'Getting the new version…';
+    await Promise.all([location.pathname, ...GAME_FILES].map((f) => fetch(f, { cache: 'reload' }).catch(() => null)));
+    try { localStorage.setItem(BUST_KEY, String(Date.now())); } catch (_) { /* the reload below still helps */ }
+    const q = new URLSearchParams(location.search);
+    q.set('u', String(Date.now()));
+    location.replace(location.pathname + '?' + q.toString());
+  }
+  function keepRescue(text) {
+    try { localStorage.setItem(RESCUE_KEY, JSON.stringify({ at: Date.now(), text })); } catch (_) { /* nothing more we can do */ }
+  }
   function backupCurrent() {
     try {
       const raw = localStorage.getItem(CONFIG.SAVE_KEY);
@@ -7731,6 +7810,7 @@
     try {
       if (obj) localStorage.setItem(CONFIG.SAVE_KEY, JSON.stringify(obj));
       else localStorage.removeItem(CONFIG.SAVE_KEY);
+      localStorage.removeItem(LAST_KEY);
     } catch (_) { toast('Could not write the save — storage unavailable'); noSave = false; return; }
     location.reload();
   }
@@ -7791,6 +7871,21 @@
       location.reload();
     } else if (b.id === 'importBtn') {
       importText($('importCode').value);
+    } else if (b.id === 'rescueBtn') {
+      let rescue = null;
+      try { rescue = JSON.parse(localStorage.getItem(RESCUE_KEY)); } catch (_) { rescue = null; }
+      if (!rescue) return;
+      const blob = new Blob([rescue.text], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `pixelpups-kept-save.json`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    } else if (b.id === 'updCheckBtn') {
+      checkForUpdate();
+    } else if (b.id === 'updNowBtn') {
+      updateNow();
     } else if (b.id === 'restoreBtn') {
       let backup = null;
       try { backup = JSON.parse(localStorage.getItem(CONFIG.BACKUP_KEY)); } catch (_) { /* none */ }
@@ -8207,6 +8302,7 @@
     if (!Array.isArray(st.styles)) st.styles = freeStyles();
     for (const f of freeStyles()) if (!st.styles.includes(f)) st.styles.push(f);
     if (!Array.isArray(st.dogs)) st.dogs = [];
+    st.dogs = st.dogs.filter((d) => d && typeof d === 'object');
     if (!st.stats || typeof st.stats !== 'object') st.stats = { walks: 0 };
     if (!st.friends || typeof st.friends !== 'object') st.friends = {};
     if (!Array.isArray(st.secrets)) st.secrets = [];
@@ -8275,15 +8371,36 @@
   }
   let awayHours = 0;
   function load() {
-    let raw = null;
-    try { raw = JSON.parse(localStorage.getItem(CONFIG.SAVE_KEY)); } catch (_) { raw = null; }
-    if (!raw || typeof raw !== 'object') return false;
+    let raw = null, text = null;
+    try { text = localStorage.getItem(CONFIG.SAVE_KEY); } catch (_) { boot.blocked = true; }
+    try { raw = JSON.parse(text); } catch (_) { raw = null; }
+    // a game brought along by "Update now"
+    let tr = null;
+    try { tr = JSON.parse(localStorage.getItem(TRANSFER_KEY)); } catch (_) { tr = null; }
+    if (tr) {
+      boot.updated = true;
+      if (tr.data && typeof tr.data === 'object' && (!raw || typeof raw !== 'object' || (tr.data.savedAt || 0) >= (raw.savedAt || 0))) raw = tr.data;
+      try { localStorage.removeItem(TRANSFER_KEY); } catch (_) { /* fine */ }
+    }
+    // the save went missing? bring back the last copy that opened fine
+    if (!raw || typeof raw !== 'object') {
+      let last = null;
+      try { last = JSON.parse(localStorage.getItem(LAST_KEY)); } catch (_) { last = null; }
+      if (last && last.data && typeof last.data === 'object' && Array.isArray(last.data.dogs) && last.data.dogs.length) { raw = last.data; boot.recovered = true; }
+    }
+    if (!raw || typeof raw !== 'object') { if (text) keepRescue(text); return false; }
+    const rawText = JSON.stringify(raw);
     try {
       state = normalize(migrate(raw));
+      for (const d of state.dogs) if (!d.breed) throw new Error('dog without a breed');
     } catch (_) {
+      // never overwrite a save we could not open: keep it aside, so nothing is lost
+      keepRescue(rawText);
+      boot.problem = true;
       state = defaultState();
       return false;
     }
+    try { localStorage.setItem(LAST_KEY, JSON.stringify({ at: Date.now(), data: JSON.parse(rawText) })); } catch (_) { /* storage full: the main save still works */ }
     // time passes while you're away, but gently: after 8 hours a neighbor looks in on your dogs,
     // so time only counts a quarter as much, and needs never drop below a comfortable floor
     const real = clamp((Date.now() - (raw.savedAt || Date.now())) / 3600000, 0, 72);
@@ -8994,6 +9111,14 @@
       return { parts, target: null, wait: rand(0, 2), phase: 0, speed: rand(1.1, 1.8), t: rand(0, 5), sit: 0 };
     });
     title = { show, t: 0, loc: id };
+    $('playBtn').textContent = dogs.length ? 'Continue' : 'Play';
+    const note = boot.blocked ? 'This browser won’t let PixelPups save (Private Browsing or blocked website data?). Your progress may be lost when you close it.' :
+      boot.problem ? 'Your last save couldn’t be opened. It’s kept safe and untouched: see Settings → Backup.' :
+      boot.recovered ? 'Your save had gone missing, so the last good copy was brought back.' :
+      boot.updated ? 'Updated to the newest version. Your game came along!' : '';
+    $('titleNote').textContent = note;
+    $('titleNote').classList.toggle('hidden', !note);
+    $('titleNote').classList.toggle('warn', boot.blocked || boot.problem);
     $('title').classList.remove('hidden');
     $('hud').classList.add('hidden');
     const names = dogs.map((d) => d.name);
@@ -9337,6 +9462,13 @@
       setTimeout(() => toast("That visit link seems broken — showing your own home"), 600);
     }
     const hadSave = load();
+    {
+      const q = new URLSearchParams(location.search);
+      if (q.has('u')) { q.delete('u'); const qs = q.toString(); history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash); }
+    }
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (_) { /* not supported */ }
+    try { localStorage.setItem('voxelpaws-test', '1'); localStorage.removeItem('voxelpaws-test'); } catch (_) { boot.blocked = true; }
+    setTimeout(() => { if (window.fetch) bootPrints(); }, 3000);
     applyPlayerLook();
     syncChunkSet();
     buildRoom();
