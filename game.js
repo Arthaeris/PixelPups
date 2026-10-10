@@ -327,6 +327,8 @@
       stats: { walks: 0, rainWalks: 0 },
       unlocked: [],                    // places you can walk to (the park always)
       locWalks: {},                    // walks per place
+      hiddenFound: {},                 // place -> hidden spots found
+      explored: {},                    // place -> bits of the map you have walked
       glades: [],                      // hidden forest glades found
       treasures: 0,
       summits: 0,
@@ -683,9 +685,10 @@
     for (const m of lamps.slice(0, 40)) {
       const p = new V3();
       m.getWorldPosition(p);
-      const tall = p.y > 1.2;
+      const gy = S.height ? S.height(p.x, p.z) : 0;
+      const tall = p.y - gy > 1.2;
       const pool = lightPool('#ffd890'), halo = lightHalo('#ffd890', tall ? 1.6 : 0.8);
-      pool.position.set(p.x, 0.05, p.z);
+      pool.position.set(p.x, gy + 0.05, p.z);
       pool.scale.set(tall ? 5.2 : 2.4, tall ? 5.2 : 2.4, 1);
       halo.position.copy(p);
       S.root.add(pool, halo);
@@ -710,7 +713,8 @@
   const lv = new V3();
   function beamAt(b, root, face, dist, len, wide, s) {
     root.getWorldPosition(lv);
-    b.pool.position.set(lv.x + Math.sin(face) * dist, 0.06, lv.z + Math.cos(face) * dist);
+    const bx = lv.x + Math.sin(face) * dist, bz = lv.z + Math.cos(face) * dist;
+    b.pool.position.set(bx, groundAt(bx, bz) + 0.06, bz);
     b.pool.rotation.z = face;
     b.pool.scale.set(wide, len, 1);
     b.pool.material.opacity = 0.55 * s;
@@ -1030,7 +1034,7 @@
       const x = rand(-16, 16), z = rand(-16, 11);
       if (isSolid(x, z) || inPond(x, z, 0.6) || Math.hypot(x, z - 16) < 6) continue;
       const type = rollToy();
-      const group = pivot(parkRoot, x, 0, z);
+      const group = pivot(parkRoot, x, groundAt(x, z), z);
       const toy = ART.buildToy(type);
       toy.position.y = 0.16;
       toy.scale.setScalar(1.3);
@@ -1078,6 +1082,7 @@
       const f = furnitureAt(i, j);
       return !!(f && D.ITEMS[f.type].solid);
     }
+    if (S.inside && !S.inside(x, z)) return true;
     if (S.solid && S.solid(x, z)) return true;
     for (const c of parkColliders) {
       if (c.r !== undefined) { if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return true; }
@@ -1087,20 +1092,115 @@
   }
   function bounds() {
     if (place === 'home') return { x0: homeBounds.x0 + 0.25, x1: homeBounds.x1 - 0.25, z0: homeBounds.z0 + 0.25, z1: homeBounds.z1 - 0.25 };
+    if (S && S.bbox) return { x0: S.bbox.x0 + 0.25, x1: S.bbox.x1 - 0.25, z0: S.bbox.z0 + 0.25, z1: S.bbox.z1 - 0.25 };
     return { x0: -19.2, x1: 19.2, z0: -19.2, z1: 19.2 };
   }
   function inBounds(x, z, m = 0) {
     const b = bounds();
-    return x >= b.x0 + m && x <= b.x1 - m && z >= b.z0 + m && z <= b.z1 - m;
+    if (!(x >= b.x0 + m && x <= b.x1 - m && z >= b.z0 + m && z <= b.z1 - m)) return false;
+    if (place !== 'home' && S && S.inside) return S.inside(x, z) && S.inside(x + m, z) && S.inside(x - m, z) && S.inside(x, z + m) && S.inside(x, z - m);
+    return true;
   }
-  function moveWithCollision(pos, dx, dz, r) {
+  // ground height on walks (places with hills, steps and coves); flat everywhere else
+  const terrainOn = () => place === 'park' && !!(S && S.height);
+  const groundAt = (x, z) => (terrainOn() ? S.height(x, z) : 0);
+  const CLIMB = 0.45;
+  // ----- shaped places: ground you can walk under, hidden spots, and the map you fill in as you explore -----
+  let roofOver = null;
+  const inRectXZ = (r, x, z) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1;
+  function atLookout() {
+    const p = player.root.position;
+    return !!(S && S.lookout && inRectXZ(S.lookout, p.x, p.z) && p.y > 1);
+  }
+  const hiddenOf = (l) => ((state.hiddenFound || {})[l] || []);
+  const hiddenTotal = (l) => Object.values(D.FINDS).filter((F) => F.loc === l && F.where && F.where.startsWith('hidden:')).length;
+  function updateTerrain(dt) {
+    roofOver = null;
+    if (!terrainOn()) return;
+    const p = player.root.position;
+    // a cliff or a hill you are standing under turns see-through
+    for (const r of S.roofs || []) {
+      const under = p.y < 1.2 && r.test.some((t) => inRectXZ(t, p.x, p.z));
+      if (under) roofOver = r.id;
+      const want = under ? 0.16 : 1;
+      if (r.fade === undefined) r.fade = 1;
+      if (Math.abs(r.fade - want) > 0.004) {
+        r.fade = lerp(r.fade, want, Math.min(1, dt * 5));
+        if (Math.abs(r.fade - want) < 0.01) r.fade = want;
+        for (const m of r.mats) { m.opacity = r.fade; m.depthWrite = r.fade > 0.98; }
+      }
+    }
+    // stepping into a hidden spot for the first time
+    for (const sec of S.secrets || []) {
+      if (p.y > 1.2 || !sec.rects.some((t) => inRectXZ(t, p.x, p.z))) continue;
+      const got = hiddenOf(loc);
+      if (got.includes(sec.id)) continue;
+      state.hiddenFound = state.hiddenFound || {};
+      state.hiddenFound[loc] = [...got, sec.id];
+      news({ title: 'You found a hidden spot!', text: sec.name, th: TH('loc', loc) });
+      confetti(p.clone().add(new V3(0, 1.2, 0)), 6);
+      sfx('find');
+      gainXP(D.XP_MISC.secret || 60);
+      addMastery(loc, 40);
+      dogs.forEach((d) => { d.happy = Math.min(100, d.happy + 8); });
+      if (mmFog) mmFog.delete(loc);
+      save();
+    }
+    markExplored(p.x, p.z);
+  }
+  // the map starts blank in shaped places and fills in where you have been (2 x 2 cells, kept in the save)
+  let exploreT = 0;
+  function exploreGrid() {
+    const b = S.bbox;
+    return { x0: b.x0, z0: b.z0, w: Math.ceil((b.x1 - b.x0) / 2), h: Math.ceil((b.z1 - b.z0) / 2) };
+  }
+  function exploredBits(l) {
+    state.explored = state.explored || {};
+    if (!Array.isArray(state.explored[l])) state.explored[l] = [];
+    return state.explored[l];
+  }
+  function isExplored(l, G, i, j) {
+    const n = j * G.w + i, a = exploredBits(l);
+    return !!((a[n >> 5] >>> (n & 31)) & 1);
+  }
+  function markExplored(x, z, force) {
+    exploreT -= 1 / 60;
+    if (exploreT > 0 && !force) return;
+    exploreT = 0.25;
+    const G = exploreGrid(), a = exploredBits(loc), R = 7;
+    let changed = false;
+    for (let j = Math.max(0, Math.floor((z - R - G.z0) / 2)); j <= Math.min(G.h - 1, Math.floor((z + R - G.z0) / 2)); j++) {
+      for (let i = Math.max(0, Math.floor((x - R - G.x0) / 2)); i <= Math.min(G.w - 1, Math.floor((x + R - G.x0) / 2)); i++) {
+        const cx = G.x0 + i * 2 + 1, cz = G.z0 + j * 2 + 1;
+        if (Math.hypot(cx - x, cz - z) > R) continue;
+        const n = j * G.w + i;
+        if (!((a[n >> 5] >>> (n & 31)) & 1)) { a[n >> 5] = (a[n >> 5] | (1 << (n & 31))) >>> 0; changed = true; }
+      }
+    }
+    if (changed && mmFog) mmFog.delete(loc);
+  }
+  function exploredShare(l) {
+    if (!S || loc !== l || !S.bbox) return 0;
+    const G = exploreGrid();
+    let n = 0, all = 0;
+    for (let j = 0; j < G.h; j++) for (let i = 0; i < G.w; i++) {
+      if (!S.inside(G.x0 + i * 2 + 1, G.z0 + j * 2 + 1)) continue;
+      all++;
+      if (isExplored(l, G, i, j)) n++;
+    }
+    return all ? n / all : 0;
+  }
+  function moveWithCollision(pos, dx, dz, r, climb = CLIMB) {
+    // on hilly ground you can only step up or down so far: cliffs and ledges stop you like a wall
+    const terr = terrainOn(), h0 = terr ? S.height(pos.x, pos.z) : 0;
+    const stepOK = (x, z) => !terr || Math.abs(S.height(x, z) - h0) <= climb;
     if (dx) {
       const s = Math.sign(dx);
-      if (!(isSolid(pos.x + dx + s * r, pos.z) && !isSolid(pos.x + s * r, pos.z))) pos.x += dx;
+      if (!(isSolid(pos.x + dx + s * r, pos.z) && !isSolid(pos.x + s * r, pos.z)) && stepOK(pos.x + dx + s * r, pos.z) && stepOK(pos.x + dx, pos.z)) pos.x += dx;
     }
     if (dz) {
       const s = Math.sign(dz);
-      if (!(isSolid(pos.x, pos.z + dz + s * r) && !isSolid(pos.x, pos.z + s * r))) pos.z += dz;
+      if (!(isSolid(pos.x, pos.z + dz + s * r) && !isSolid(pos.x, pos.z + s * r)) && stepOK(pos.x, pos.z + dz + s * r) && stepOK(pos.x, pos.z + dz)) pos.z += dz;
     }
     const b = bounds();
     pos.x = clamp(pos.x, b.x0, b.x1);
@@ -1116,9 +1216,11 @@
     if (d < 1e-3) return true;
     const px = (-dz / d) * 0.2, pz = (dx / d) * 0.2;
     const n = Math.ceil(d / 0.2);
+    let ph = groundAt(ax, az);
     for (let k = 1; k <= n; k++) {
       const t = k / n, x = ax + dx * t, z = az + dz * t;
       if (isSolid(x, z) || isSolid(x + px, z + pz) || isSolid(x - px, z - pz)) return false;
+      if (terrainOn()) { const h = S.height(x, z); if (Math.abs(h - ph) > CLIMB) return false; ph = h; }
     }
     return true;
   }
@@ -1131,15 +1233,21 @@
     const prev = new Map([[key(si, sj), null]]);
     const queue = [[si, sj]];
     let found = false;
-    for (let h = 0; h < queue.length && h < 5000; h++) {
+    // at home: tiles and furniture; on walks: the shape of the place, things in the way, and how steep it is
+    const atHome = place === 'home';
+    const pass = atHome ? passable : (i, j) => !isSolid(i + 0.5, j + 0.5);
+    const tileIn = atHome ? isHomeTile : (i, j) => !S.inside || S.inside(i + 0.5, j + 0.5);
+    const climbOK = (i, j, ni, nj) => !terrainOn() || Math.abs(S.height(ni + 0.5, nj + 0.5) - S.height(i + 0.5, j + 0.5)) <= 0.65;
+    for (let h = 0; h < queue.length && h < 9000; h++) {
       const [i, j] = queue[h];
       if (i === ti && j === tj) { found = true; break; }
       for (const [di, dj] of DIRS8) {
         const ni = i + di, nj = j + dj, k = key(ni, nj);
         if (prev.has(k)) continue;
         const isGoal = ni === ti && nj === tj;
-        if (isGoal ? !isHomeTile(ni, nj) : !passable(ni, nj)) continue;
-        if (di && dj && (!passable(i + di, j) || !passable(i, j + dj))) continue;
+        if (isGoal ? !tileIn(ni, nj) : !pass(ni, nj)) continue;
+        if (!climbOK(i, j, ni, nj)) continue;
+        if (di && dj && (!pass(i + di, j) || !pass(i, j + dj) || !climbOK(i, j, i + di, j) || !climbOK(i, j, i, j + dj))) continue;
         prev.set(k, [i, j]);
         queue.push([ni, nj]);
       }
@@ -1274,8 +1382,8 @@
     } else if (player.moveTarget) {
       const goal = player.moveTarget;
       let tgt = goal;
-      if (place === 'home') {
-        // walk around furniture instead of bumping into it
+      if (place === 'home' || terrainOn()) {
+        // walk around furniture (or cliffs) instead of bumping into it
         if (player.pathFor !== goal) { player.path = findPath(pos, goal); player.pathFor = goal; }
         while (player.path.length > 1 && Math.hypot(player.path[0].x - pos.x, player.path[0].z - pos.z) < 0.25) player.path.shift();
         tgt = player.path[0] || goal;
@@ -1296,6 +1404,7 @@
     }
     player.root.rotation.y = angleLerp(player.root.rotation.y, player.face, damp(0.0002, dt));
 
+    if (terrainOn()) { const gy = S.height(pos.x, pos.z); pos.y += (gy - pos.y) * Math.min(1, dt * 16); }
     if (place === 'park') {
       walkDist += moved;
       walkTotal += moved;
@@ -1740,7 +1849,7 @@
       const d = Math.hypot(dx, dz);
       if (d < 1e-4) return 0;
       const step = Math.min(d, speed * dt);
-      moveWithCollision(pos, (dx / d) * step, (dz / d) * step, 0.22);
+      moveWithCollision(pos, (dx / d) * step, (dz / d) * step, 0.22, 0.62);
       this.face = Math.atan2(dx, dz);
       this.moving = true;
       this.curSpeed = speed;
@@ -1765,6 +1874,7 @@
       this.trackRest(dt);
       if (this.spinY !== undefined) this.root.rotation.y = this.spinY;
       else this.root.rotation.y = angleLerp(this.root.rotation.y, this.face, damp(0.0004, dt));
+      if (terrainOn() && this.state !== 'bath') { const gy = groundAt(this.root.position.x, this.root.position.z); this.root.position.y += (gy - this.root.position.y) * Math.min(1, dt * 14); }
       this.animate(dt);
       this.updateBubble();
     }
@@ -2152,6 +2262,12 @@
       if (d > L) {
         pos.x = pp.x + (dx / d) * L;
         pos.z = pp.z + (dz / d) * L;
+        // a leash never drags a dog up a cliff: it hops back to your side instead
+        if (terrainOn() && (Math.abs(groundAt(pos.x, pos.z) - pp.y) > 0.7 || isSolid(pos.x, pos.z))) {
+          const f = player.root.rotation.y;
+          pos.set(pp.x - Math.sin(f) * 0.9, pp.y, pp.z - Math.cos(f) * 0.9);
+          if (isSolid(pos.x, pos.z)) pos.set(pp.x, pp.y, pp.z);
+        }
         this.face = Math.atan2(-dx, -dz);
         this.moving = true;
         this.curSpeed = 3;
@@ -2449,7 +2565,8 @@
     let best = null, bd = maxD;
     for (const s of sniffSpots) {
       if (s.cooldown > 0 || s.taken || s.active === false) continue;
-      const d = pos.distanceTo(s.pos);
+      if (terrainOn() && Math.abs(groundAt(s.pos.x, s.pos.z) - groundAt(pos.x, pos.z)) > 0.6) continue;
+      const d = flatDist(pos, s.pos);
       if (d < bd && (anywhere || s.pos.distanceTo(player.root.position) < 4.2)) { bd = d; best = s; }
     }
     return best;
@@ -2724,6 +2841,7 @@
       w.label.visible = pos.distanceTo(pp) < 9;
       // neighbors slow down for a moment when they pass you, so you can say hi
       if (!w.slowed && pos.distanceTo(pp) < 2.4) { w.slowed = true; w.pause = Math.max(w.pause, 2.2); w.parts.root.rotation.y = Math.atan2(pp.x - pos.x, pp.z - pos.z); }
+      if (terrainOn()) pos.y = S.height(pos.x, pos.z);
       w.dog.update(dt);
       w.dog.updateLeash();
     }
@@ -5010,7 +5128,7 @@
     for (; dist > 0.9; dist -= 0.4) {
       tx = p.x + Math.sin(a) * dist;
       tz = p.z + Math.cos(a) * dist;
-      if (inBounds(tx, tz, 0.3) && !isSolid(tx, tz) && (place === 'home' || !inPond(tx, tz, 0.3))) { ok = true; break; }
+      if (inBounds(tx, tz, 0.3) && !isSolid(tx, tz) && (place === 'home' || !inPond(tx, tz, 0.3)) && (!terrainOn() || lineClear(p.x, p.z, tx, tz))) { ok = true; break; }
     }
     if (!ok) { toast('No room to throw — turn around!'); return; }
     sfx('throw');
@@ -5019,7 +5137,8 @@
     ball.arcK = grav ? grav.arc : 1;
     ball.timeK = grav ? grav.time : 1;
     player.hand.getWorldPosition(ball.from);
-    ball.to.set(tx, def.restY, tz);
+    ball.gy = groundAt(tx, tz);
+    ball.to.set(tx, def.restY + ball.gy, tz);
     ball.t = 0;
     ball.flying = true;
     ball.active = true;
@@ -5038,7 +5157,7 @@
       const t = Math.min(1, ball.t);
       ball.mesh.position.set(
         lerp(ball.from.x, ball.to.x, t),
-        lerp(ball.from.y, def.restY, t) + Math.sin(Math.PI * t) * def.arc * (ball.arcK || 1),
+        lerp(ball.from.y, def.restY + (ball.gy || 0), t) + Math.sin(Math.PI * t) * def.arc * (ball.arcK || 1),
         lerp(ball.from.z, ball.to.z, t));
       if (def.spin === 'flat') { ball.mesh.rotation.x = 0; ball.mesh.rotation.z = 0; ball.mesh.rotation.y += dt * 15; }
       else if (def.spin === 'tumble') { ball.mesh.rotation.x += dt * 9; ball.mesh.rotation.z += dt * 6; }
@@ -5064,7 +5183,7 @@
     } else {
       ball.bounce += dt;
       const fade = Math.max(0, 1 - ball.bounce / (def.decay ? def.decay * 2 : 0.5));
-      ball.mesh.position.y = def.restY + Math.abs(Math.sin(ball.bounce * 8)) * def.bounce * fade;
+      ball.mesh.position.y = def.restY + (ball.gy || 0) + Math.abs(Math.sin(ball.bounce * 8)) * def.bounce * fade;
     }
   }
   function updateToyIcons() {
@@ -5108,8 +5227,9 @@
     vendorTask = null;
     camFocus = null;
     player.moveTarget = null;
-    player.root.position.set(0, 0, 16);
+    player.root.position.set(0, groundAt(0, 16), 16);
     player.root.rotation.y = player.face = Math.PI;
+    if (S.roofs) S.roofs.forEach((r) => { r.fade = 1; r.mats.forEach((m) => { m.opacity = 1; m.depthWrite = true; }); });
     walkTotal = 0;
     walkInfo = { night: nightLevel > 0.5, storm: !!curWeather().lightning, rain: curWeather().precip === 'rain' };
     dogs.forEach((d, i) => {
@@ -5118,7 +5238,7 @@
       d.onArrive = null;
       d.path = null;
       d.zoomLeft = 0;
-      d.root.position.set(-0.6 * (dogs.length - 1) / 2 + i * 0.6, 0, 17.3);
+      d.root.position.set(-0.6 * (dogs.length - 1) / 2 + i * 0.6, groundAt(0, 17.3), 17.3);
       d.root.rotation.y = d.face = Math.PI;
       d.setState('follow');
     });
@@ -5150,6 +5270,7 @@
     eventOnArrive();
     const first = intro && tip('visit:' + loc, { title: LOC().name, text: intro, th: TH('loc', loc) });
     if (!first) toast(intro || (parkLoot ? 'Walk time! Something is glinting in the grass… ✨' : W.muddy ? `Walk time! It's ${W.name.toLowerCase()} — expect muddy paws 🐾` : 'Walk time! Let your dog sniff the ✨ spots'));
+    if (S.secrets && !first) tip('shape:' + loc, { title: `${LOC().name} has grown`, text: loc === 'beach' ? 'There is more to explore now: dunes, a boardwalk and a rocky headland with stairs up to the lighthouse. Some places only show at the right tide.' : 'There is more to explore now: a hill with a view, a sunken pond and a meadow to the east. Not every corner is easy to find.', icon: 'map' });
     if (loc === 'park' && unlockedFeat('minimap')) tip('minimap', { title: 'The mini-map', text: 'The little map in the top right shows sniff spots, shops and the way home. Tap it to make it bigger.', icon: 'map' });
   }
 
@@ -5257,6 +5378,11 @@
     if (Math.random() < D.RARE_FIND * (kind === 'glade' ? 4 : 1) * (d.mood() === 'great' ? 1.5 : 1) * (eventOn('meteors') && isNight() ? eventOn('meteors').mult : 1)) { findRare(pos); return; }
     if (!kind && sniffCritter(d)) return;
     if (kind === 'pool' && Math.random() < 0.7) { grantFind(pick(['starfish', 'crabclaw']), pos); return; }
+    if (kind && kind.startsWith('hidden:')) {
+      const k = Object.keys(D.FINDS).find((f) => D.FINDS[f].where === kind);
+      if (k && (!state.finds[k] || Math.random() < 0.35)) { grantFind(k, pos); return; }
+      if (Math.random() < 0.5) { addCoins(6, pos); spawnEmoji('✨', d.headWorld(0.3), { size: 0.4 }); return; }
+    }
     if (kind === 'crystal') {
       const c = S.q.crystals.find((x) => x.spot === spot);
       if (c) { c.lit = 0; c.mat.emissiveIntensity = 0.04; }
@@ -5462,13 +5588,17 @@
       const here = Object.entries(D.CRITTERS).filter(([k, C]) => C.loc === loc && !(state.critters || {})[k] && !C.ev);
       if (here.length) { const [, C] = pick(here); const when = { night: 'at night', day: 'during the day', rain: 'when it rains', snow: 'when it snows', sun: 'on sunny days' }[C.when] || 'now and then'; out.push(`I spotted a ${C.name.toLowerCase()} around here ${when}. Keep your eyes open!`); }
     }
-    const S = D.SEASONS[clockNow.month];
-    if (S) { const miss = S.finds.filter(([k]) => !state.finds[k]); if (miss.length) out.push(`This month you can sniff out a ${pick(miss)[1].toLowerCase()} anywhere, if you’re lucky.`); }
+    const SE = D.SEASONS[clockNow.month];
+    if (SE) { const miss = SE.finds.filter(([k]) => !state.finds[k]); if (miss.length) out.push(`This month you can sniff out a ${pick(miss)[1].toLowerCase()} anywhere, if you’re lucky.`); }
     for (const Z of D.SETS) { const miss = Z.finds.filter((k) => !state.finds[k]); if (miss.length === 1 && !(state.setsDone || []).includes(Z.id)) out.push(`You’re just one find away from the ${Z.name.toLowerCase()} set. It’s from ${D.LOCATIONS[D.FINDS[miss[0]].loc] ? D.LOCATIONS[D.FINDS[miss[0]].loc].name : 'somewhere'}.`); }
     const secret = Object.entries(ALL_TRICKS).filter(([k, T]) => T.secret && !state.secrets.includes(k) && T.hint);
     if (secret.length && Math.random() < 0.5) out.push(`I once saw a dog do the most amazing trick. The owner whispered: “${pick(secret)[1].hint}”`);
     const waiting = Object.keys(D.STORIES).filter((o) => storyOf(o) && storyChapter(o) && storyReady(o));
     if (waiting.length) out.push(`${pick(waiting)} was asking about you, I think. Keep an eye out on your walks.`);
+    if (S && S.secrets && place === 'park') {
+      const left = S.secrets.filter((x) => !hiddenOf(loc).includes(x.id) && (!x.tide || Math.random() < 0.6));
+      if (left.length && Math.random() < 0.7) out.push(pick(left).hint);
+    }
     if (walkDark() && !walkLit()) out.push('A flashlight from the shop makes night walks so much easier. You’d spot every sniff spot.');
     return out;
   }
@@ -5819,6 +5949,13 @@
     }
     const open = lvl > 0.6;
     if (quirk.tideOpen !== open) { quirk.tideOpen = open; updateLocChip(); }
+    // only the very lowest tides uncover the sand along the cliffs
+    const strip = lvl > 0.8;
+    if (q.stripMesh && q.strip !== strip) { q.strip = strip; q.stripMesh.visible = strip; }
+    // caught by the rising tide? you can always wade back to the beach
+    q.wading = false;
+    const inCave = S.secrets && S.secrets.some((x) => x.tide && x.rects.some((t) => inRectXZ(t, pp.x, pp.z)));
+    q.wading = (pp.z < edge && pp.x < 21 && S.solid(pp.x, pp.z)) || (inCave && !strip);
     ART.M.sea.emissiveIntensity = 0.1 + nightLevel * 0.6;
     for (const c of q.crabs) {
       c.t += dt;
@@ -6355,6 +6492,8 @@
     if (night && has('night')) parts.push('🌙 Night finds are out');
     if (W.precip === 'rain' && has('rain')) parts.push('🌧️ Rainy-day finds');
     if (W.precip === 'snow' && has('snow')) parts.push('❄️ Snow finds');
+    const hidN = hiddenTotal(id);
+    if (hidN && ((state.locWalks || {})[id] || hiddenOf(id).length)) parts.push(`🔍 Hidden spots ${Math.min(hidN, hiddenOf(id).length)}/${hidN}`);
     const ids = Object.keys(D.FINDS).filter((k) => D.FINDS[k].loc === id);
     parts.push(`Collectibles ${ids.filter((k) => state.finds[k]).length}/${ids.length}`);
     return parts.join(' · ');
@@ -6575,7 +6714,7 @@
     } else if (D.LOCATIONS[id]) {
       for (const [k, F] of Object.entries(D.FINDS)) {
         if (F.loc !== id) continue;
-        E.push({ thk: ['pic', F.icon], name: F.name, got: !!state.finds[k], secret: !!F.secret, sub: state.finds[k] > 1 ? `×${state.finds[k]}` : F.where === 'pool' ? 'In tide pools' : F.where === 'treasure' ? (F.loc === 'moon' ? 'In a space capsule' : 'In buried treasure') : F.where === 'crystal' ? 'In glowing crystals' : F.where === 'prize' ? 'Prize booth' : F.where === 'puzzle' ? 'A puzzle reward' : F.glade ? 'In a hidden glade' : WHEN_TEXT[F.when] || '' });
+        E.push({ thk: ['pic', F.icon], name: F.name, got: !!state.finds[k], secret: !!F.secret, sub: state.finds[k] > 1 ? `×${state.finds[k]}` : F.where === 'pool' ? 'In tide pools' : F.where === 'treasure' ? (F.loc === 'moon' ? 'In a space capsule' : 'In buried treasure') : F.where === 'crystal' ? 'In glowing crystals' : F.where === 'prize' ? 'Prize booth' : F.where === 'puzzle' ? 'A puzzle reward' : F.where && F.where.startsWith('hidden:') ? 'In a hidden place' : F.glade ? 'In a hidden glade' : WHEN_TEXT[F.when] || '' });
       }
     } else if (id === 'season') {
       const cm = clockNow.month, months = Object.keys(D.SEASONS).map(Number).sort((a, b) => ((a - cm + 12) % 12) - ((b - cm + 12) % 12));
@@ -6697,10 +6836,14 @@
     } else {
       tx = p.x; tz = p.z;
       dist = 11;
+      // up on a lookout you see further; tucked under a cliff, the camera comes in close
+      if (terrainOn() && atLookout()) dist *= 1.3;
+      if (roofOver) dist *= 0.82;
     }
     dist *= clamp(0.8 / camera.aspect, 1, 1.6) * (mode === 'build' ? 1 : zoom);
     const k = snap ? 1 : damp(camFocus ? 0.005 : 0.02, dt);
-    camLook.set(lerp(camLook.x, tx, k), 0.5, lerp(camLook.z, tz, k));
+    const ly = 0.5 + (terrainOn() ? p.y : 0);
+    camLook.set(lerp(camLook.x, tx, k), snap ? ly : lerp(camLook.y, ly, damp(0.05, dt)), lerp(camLook.z, tz, k));
     camDist = lerp(camDist, dist, snap ? 1 : damp(0.05, dt));
     fogPush = Math.max(0, camDist - 12);
     camera.position.set(camLook.x + camOffsetDir.x * camDist, camLook.y + camOffsetDir.y * camDist, camLook.z + camOffsetDir.z * camDist);
@@ -6805,6 +6948,7 @@
     ndc.set((cx / window.innerWidth) * 2 - 1, -(cy / window.innerHeight) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
     const gp = new V3();
+    groundPlane.constant = terrainOn() ? -player.root.position.y : 0;
     const hitGround = raycaster.ray.intersectPlane(groundPlane, gp);
 
     if (mode === 'decorate') { if (hitGround) decorateTap(gp); return; }
@@ -7118,7 +7262,7 @@
       if (gate && !unlockedFeat(gate) && !opts.owned) { opts = Object.assign({}, opts, { disabled: true, label: `Rank ${featRank(gate)}` }); }
       if (price != null && !opts.owned && !opts.label) {
         let f = 1;
-        if (deal && (V || cur.id === deal.cat)) f *= 1 - deal.off;
+        if (deal && (V || (opts.cat || cur.id) === deal.cat)) f *= 1 - deal.off;
         if (known) f *= 0.9;
         if (opts.off) f *= 1 - opts.off;
         if (f < 1) { was = price; price = Math.max(1, Math.round(price * f)); }
@@ -7195,13 +7339,16 @@
 
       section('week', 'Deals of the week');
       cur.note = '25% off, new every Monday.';
-      for (const [kind, key] of homeSpecials()) {
-        if (kind === 'toy') { const t = D.TOYS[key], owned = state.toys.includes(key); card(thumbOf.toy(key), t.name, owned ? 'In your bag' : toyBlurb(t), t.price, (pr) => { pay(pr); state.toys.push(key); state.toy = key; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned, off: 0.25 }); }
-        else if (kind === 'acc') { const A = D.ACCESSORIES[key], owned = state.accessories.includes(key); card(thumbOf.acc(key), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}`, A.price, (pr) => { pay(pr); state.accessories.push(key); toast(`${A.name} bought! Open a dog bubble → Style`); done(); }, { owned, off: 0.25, feat: 'boutique' }); }
+      const weekly = homeSpecials();
+      // the same discount shows wherever the item is listed, not just in this section
+      const wk = (kind, key) => (weekly.some(([a, b]) => a === kind && b === key) ? 0.25 : 0);
+      for (const [kind, key] of weekly) {
+        if (kind === 'toy') { const t = D.TOYS[key], owned = state.toys.includes(key); card(thumbOf.toy(key), t.name, owned ? 'In your bag' : toyBlurb(t), t.price, (pr) => { pay(pr); state.toys.push(key); state.toy = key; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned, off: 0.25, cat: 'toys' }); }
+        else if (kind === 'acc') { const A = D.ACCESSORIES[key], owned = state.accessories.includes(key); card(thumbOf.acc(key), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}`, A.price, (pr) => { pay(pr); state.accessories.push(key); toast(`${A.name} bought! Open a dog bubble → Style`); done(); }, { owned, off: 0.25, feat: 'boutique', cat: 'boutique' }); }
         else {
           const it = D.ITEMS[key], use = it.use;
           const feat = use === 'bath' ? 'bath' : use === 'cook' ? 'kitchen' : use === 'gift' ? 'gifts' : null;
-          card(thumbOf.item(key), it.name, 'For your home', it.price, (pr) => { pay(pr); state.inventory[key] = (state.inventory[key] || 0) + 1; selectedInv = key; toast(`${it.name} added. Place it in Decorate`); done(); }, { off: 0.25, feat });
+          card(thumbOf.item(key), it.name, 'For your home', it.price, (pr) => { pay(pr); state.inventory[key] = (state.inventory[key] || 0) + 1; selectedInv = key; toast(`${it.name} added. Place it in Decorate`); done(); }, { off: 0.25, feat, cat: it.cat });
         }
       }
       section('toys', 'Toys');
@@ -7212,7 +7359,7 @@
       for (const [k, t] of Object.entries(D.TOYS)) {
         if (t.price == null || k === 'tennis' || t.vendor) continue;
         const owned = state.toys.includes(k);
-        card(thumbOf.toy(k), t.name, owned ? 'In your bag' : toyBlurb(t), t.price, (pr) => { pay(pr); state.toys.push(k); state.toy = k; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned });
+        card(thumbOf.toy(k), t.name, owned ? 'In your bag' : toyBlurb(t), t.price, (pr) => { pay(pr); state.toys.push(k); state.toy = k; updateToyIcons(); toast(`${t.name} is ready to throw!`); done(); }, { owned, off: wk('toy', k) });
       }
       section('styles', 'Walls & floors');
       lockSec('styles');
@@ -7229,7 +7376,7 @@
       for (const [id, A] of Object.entries(D.ACCESSORIES)) {
         if (A.unlock || A.vendor) continue;
         const owned = state.accessories.includes(id);
-        card(thumbOf.acc(id), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, A.price, (pr) => { pay(pr); state.accessories.push(id); toast(`${A.name} bought! Open a dog bubble → Style`); done(); }, { owned });
+        card(thumbOf.acc(id), A.name, owned ? 'In your wardrobe' : `For the ${A.slot}${A.rainproof ? ' · keeps rain dirt off' : ''}`, A.price, (pr) => { pay(pr); state.accessories.push(id); toast(`${A.name} bought! Open a dog bubble → Style`); done(); }, { owned, off: wk('acc', id) });
       }
       section('bath', 'Shampoo');
       lockSec('bath');
@@ -7264,7 +7411,7 @@
           const kind = locked ? 'Needs gardens' : it.use === 'bath' ? 'Tap it for bath time' : it.use === 'cook' ? 'Tap it to cook' : it.use === 'gift' ? 'Pack gifts for visitors' : it.auto ? 'Refills itself' : it.role === 'bed' ? (it.regen ? 'Dogs rest extra fast' : 'Dogs nap on it') : it.role === 'food' ? 'Fill it with Bowls' : it.role === 'water' ? 'Fill it with Bowls' : it.use ? 'Tap it to use' : it.lounge ? 'Couch Potatoes love it' : it.garden ? 'For gardens' : it.solid ? 'Decoration' : 'Dogs can walk on it';
           const use = it.use;
           const feat = use === 'bath' ? 'bath' : use === 'cook' ? 'kitchen' : use === 'gift' ? 'gifts' : null;
-          card(thumbOf.item(t), it.name, owned ? `You have ${owned} · ${kind}` : kind, it.price, (pr) => { pay(pr); state.inventory[t] = (state.inventory[t] || 0) + 1; selectedInv = t; toast(`${it.name} added. Place it in Decorate`); done(); }, { disabled: locked, label: locked ? 'Locked' : null, count: owned, feat });
+          card(thumbOf.item(t), it.name, owned ? `You have ${owned} · ${kind}` : kind, it.price, (pr) => { pay(pr); state.inventory[t] = (state.inventory[t] || 0) + 1; selectedInv = t; toast(`${it.name} added. Place it in Decorate`); done(); }, { disabled: locked, label: locked ? 'Locked' : null, count: owned, feat, off: wk('item', t) });
         }
       }
     }
@@ -8091,6 +8238,11 @@
     st.xp = Math.max(0, Math.round(+st.xp || 0));
     st.rankSeen = clamp(Math.round(+st.rankSeen || 1), 1, D.RANK_MAX);
     st.mastery = obj(st.mastery);
+    // shaped places: hidden spots you found, and the parts of each map you have explored
+    st.hiddenFound = obj(st.hiddenFound);
+    for (const k of Object.keys(st.hiddenFound)) if (!D.LOCATIONS[k] || !Array.isArray(st.hiddenFound[k])) delete st.hiddenFound[k]; else st.hiddenFound[k] = st.hiddenFound[k].filter((x) => typeof x === 'string');
+    st.explored = obj(st.explored);
+    for (const k of Object.keys(st.explored)) if (!D.LOCATIONS[k] || !Array.isArray(st.explored[k])) delete st.explored[k]; else st.explored[k] = st.explored[k].map((n) => (+n >>> 0) || 0);
     for (const k of Object.keys(st.mastery)) if (!D.LOCATIONS[k] || !(+st.mastery[k] >= 0)) delete st.mastery[k]; else st.mastery[k] = +st.mastery[k];
     if (!st.xpDay || typeof st.xpDay !== 'object' || typeof st.xpDay.n !== 'object') st.xpDay = null;
     if (!st.event || typeof st.event !== 'object' || !st.event.id) st.event = null;
@@ -8534,11 +8686,19 @@
   // Mini-map on walks: small and faint until you touch it, tap to make it big
   // =====================================================================
   const MM_GROUND = { park: '#8fcb6f', oldtown: '#bdb6aa', forest: '#4f8a3c', beach: '#ead39a', alpine: '#9ccc65', caves: '#5d5d66', snowy: '#eef4fb', carnival: '#7e6ca8', fairy: '#a5d6a7', moon: '#c9c9d1' };
-  const mmBase = new Map();
+  const mmBase = new Map(), mmFog = new Map();
   let mmBig = false, mmIdle = 0, mmT = 0;
+  // the square of the world the map shows: the classic 39 x 39, or the whole outline of a shaped place
+  function mmView() {
+    if (S && S.bbox) {
+      const b = S.bbox, span = Math.max(b.x1 - b.x0, b.z1 - b.z0) + 2;
+      return { x0: (b.x0 + b.x1) / 2 - span / 2, z0: (b.z0 + b.z1) / 2 - span / 2, span };
+    }
+    return { x0: -19.5, z0: -19.5, span: 39 };
+  }
   function mmBackground() {
     if (mmBase.has(loc)) return mmBase.get(loc);
-    const N = 78, c = document.createElement('canvas');
+    const V = mmView(), N = Math.round(V.span * 2), c = document.createElement('canvas');
     c.width = c.height = N;
     const x = c.getContext('2d');
     const hex = MM_GROUND[loc] || '#8fcb6f', rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
@@ -8546,24 +8706,56 @@
     const COL = { ground: rgb, path: mix(rgb, [255, 244, 214], 0.45), solid: rgb.map((v) => Math.round(v * 0.68)), water: [90, 176, 224] };
     const col = (k) => `rgb(${COL[k].join(',')})`;
     const sea = S.q && S.q.sea && S.q.sea.rect;
+    const shaped = !!S.inside, roofs = S.roofs || [];
+    const roofTop = (wx, wz) => (roofs.some((rf) => rf.test.some((t) => inRectXZ(t, wx, wz))) ? 1 : null);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-      const wx = -19.5 + (i + 0.5) * (39 / N), wz = -19.5 + (j + 0.5) * (39 / N);
+      const wx = V.x0 + (i + 0.5) * (V.span / N), wz = V.z0 + (j + 0.5) * (V.span / N);
+      if (shaped && !S.inside(wx, wz)) continue;
       let k = 'ground';
-      if (inPond(wx, wz) || (sea && wx > sea.x0 && wx < sea.x1 && wz > sea.z0 && wz < sea.z1)) k = 'water';
-      else if (isSolid(wx, wz)) k = 'solid';
-      else if (onPath(wx, wz)) k = 'path';
-      x.fillStyle = col(k);
+      // what hangs over a cove or a tunnel is drawn as the ground on top: hidden spots stay hidden
+      const over = shaped ? roofTop(wx, wz) : null;
+      const h = over !== null ? Math.max(1.6, S.height(wx, wz) + 1.6) : shaped ? S.height(wx, wz) : 0;
+      if (over === null && (inPond(wx, wz) || (sea && wx > sea.x0 && wx < sea.x1 && wz > sea.z0 && wz < sea.z1 && (!shaped || S.height(wx, wz) < 0.2)))) k = 'water';
+      else if (over === null && isSolidMap(wx, wz)) k = 'solid';
+      else if (over === null && onPath(wx, wz)) k = 'path';
+      let c3 = COL[k];
+      if (k !== 'water' && h) c3 = h > 0 ? mix(c3, [255, 255, 255], Math.min(0.4, h * 0.11)) : mix(c3, [0, 0, 0], Math.min(0.3, -h * 0.35));
+      x.fillStyle = `rgb(${c3.join(',')})`;
       x.fillRect(i, j, 1, 1);
     }
     mmBase.set(loc, c);
     return c;
   }
+  // the map only shows where shaped places have been explored; the rest is a soft cloud
+  function isSolidMap(wx, wz) { return place === 'park' ? isSolid(wx, wz) : false; }
+  function mmFogLayer() {
+    if (!S.bbox) return null;
+    if (mmFog.has(loc)) return mmFog.get(loc);
+    const V = mmView(), N = Math.round(V.span), c = document.createElement('canvas');
+    c.width = c.height = N;
+    const x = c.getContext('2d'), G = exploreGrid();
+    x.fillStyle = 'rgba(232,236,246,1)';
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const wx = V.x0 + i + 0.5, wz = V.z0 + j + 0.5;
+      const gi = Math.floor((wx - G.x0) / 2), gj = Math.floor((wz - G.z0) / 2);
+      if (gi >= 0 && gj >= 0 && gi < G.w && gj < G.h && isExplored(loc, G, gi, gj)) continue;
+      if (!S.inside(wx, wz)) continue;
+      x.fillRect(i, j, 1, 1);
+    }
+    mmFog.set(loc, c);
+    return c;
+  }
+  function mmSeen(wx, wz) {
+    if (!S.bbox) return true;
+    const G = exploreGrid(), i = Math.floor((wx - G.x0) / 2), j = Math.floor((wz - G.z0) / 2);
+    return i >= 0 && j >= 0 && i < G.w && j < G.h && isExplored(loc, G, i, j);
+  }
   // points of interest: [x, z, kind]
   function mmPoints() {
     const P = [];
-    P.push([0, 19.2, 'exit']);
+    P.push(S.exit ? [S.exit.x, S.exit.z, 'exit'] : [0, 19.2, 'exit']);
     for (const v of S.vendors || []) P.push([v.front.x, v.front.z, 'shop']);
-    for (const s of sniffSpots) if (s.cooldown <= 0 && s.active !== false && s.kind !== 'glade' && s.kind !== 'crystal') P.push([s.pos.x, s.pos.z, s.golden ? 'gold' : 'sniff']);
+    for (const s of sniffSpots) if (s.cooldown <= 0 && s.active !== false && s.kind !== 'glade' && s.kind !== 'crystal' && !(s.kind && s.kind.startsWith('hidden:') && !hiddenOf(loc).includes(s.kind.slice(7))) && mmSeen(s.pos.x, s.pos.z)) P.push([s.pos.x, s.pos.z, s.golden ? 'gold' : 'sniff']);
     const q = S.q || {};
     if (q.portal && q.portal.group.visible) P.push([q.portal.pos.x, q.portal.pos.z, 'magic']);
     if (q.rocket) P.push([q.rocket.pos.x, q.rocket.pos.z, 'special']);
@@ -8608,24 +8800,26 @@
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     if (cv.width !== Math.round(size * dpr)) { cv.width = cv.height = Math.round(size * dpr); cv.style.width = cv.style.height = size + 'px'; }
     const x = cv.getContext('2d');
-    const W = cv.width, k = W / 39, toPx = (wx) => (wx + 19.5) * k;
+    const V = mmView(), W = cv.width, k = W / V.span, toPx = (wx) => (wx - V.x0) * k, toPz = (wz) => (wz - V.z0) * k;
     x.clearRect(0, 0, W, W);
     x.imageSmoothingEnabled = false;
     x.globalAlpha = 0.92;
     x.drawImage(mmBackground(), 0, 0, W, W);
+    const fog = mmFogLayer();
+    if (fog) { x.globalAlpha = 0.94; x.imageSmoothingEnabled = true; x.drawImage(fog, 0, 0, W, W); x.imageSmoothingEnabled = false; }
     x.globalAlpha = 1;
     const s = (mmBig ? 5.5 : 3.6) * dpr;
     const used = new Set(['you']);
-    for (const [px, pz, kind] of mmPoints()) { mmGlyph(x, kind, toPx(px), toPx(pz), kind === 'sniff' ? s * 0.8 : s); used.add(kind); }
-    for (const w of walkers) { const p = w.parts.root.position; x.fillStyle = 'rgba(80,70,110,0.75)'; x.beginPath(); x.arc(toPx(p.x), toPx(p.z), s * 0.55, 0, TAU); x.fill(); used.add('walker'); }
+    for (const [px, pz, kind] of mmPoints()) { mmGlyph(x, kind, toPx(px), toPz(pz), kind === 'sniff' ? s * 0.8 : s); used.add(kind); }
+    for (const w of walkers) { const p = w.parts.root.position; x.fillStyle = 'rgba(80,70,110,0.75)'; x.beginPath(); x.arc(toPx(p.x), toPz(p.z), s * 0.55, 0, TAU); x.fill(); used.add('walker'); }
     for (const d of dogs) {
       const p = d.root.position, C = ART.coatOf(d.breed, d.coat);
       x.fillStyle = C.body; x.strokeStyle = '#fff'; x.lineWidth = s * 0.3;
-      x.beginPath(); x.arc(toPx(p.x), toPx(p.z), s * 0.75, 0, TAU); x.fill(); x.stroke();
+      x.beginPath(); x.arc(toPx(p.x), toPz(p.z), s * 0.75, 0, TAU); x.fill(); x.stroke();
       used.add('dog');
     }
     const pp = player.root.position, a = player.face;
-    x.save(); x.translate(toPx(pp.x), toPx(pp.z)); x.rotate(-a + Math.PI);
+    x.save(); x.translate(toPx(pp.x), toPz(pp.z)); x.rotate(-a + Math.PI);
     x.fillStyle = '#ffffff'; x.strokeStyle = '#1d1834'; x.lineWidth = s * 0.3;
     x.beginPath(); x.moveTo(0, -s * 1.3); x.lineTo(s, s); x.lineTo(0, s * 0.45); x.lineTo(-s, s); x.closePath(); x.fill(); x.stroke();
     x.restore();
@@ -8811,8 +9005,8 @@
           else {
             const step = Math.min(d, s.speed * dt);
             const nx = pos.x + (dx / d) * step, nz = pos.z + (dz / d) * step;
-            if (isSolid(nx, nz)) { s.target = null; s.wait = 0.5; }
-            else { pos.x = nx; pos.z = nz; }
+            if (isSolid(nx, nz) || Math.abs(groundAt(nx, nz) - groundAt(pos.x, pos.z)) > 0.6) { s.target = null; s.wait = 0.5; }
+            else { pos.x = nx; pos.z = nz; pos.y = groundAt(nx, nz); }
             p.root.rotation.y = angleLerp(p.root.rotation.y, Math.atan2(dx, dz), 0.15);
             s.phase += dt * (4 + s.speed * 3.2);
             const sw = Math.sin(s.phase) * 0.7;
@@ -9013,6 +9207,7 @@
       updateSniffSpots(dt);
       updateParkLoot(dt);
       updateQuirks(dt);
+      updateTerrain(dt);
       updateVendorTask();
       if (!tiredWarned && dogs.some((d) => d.energy < CRITICAL)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
     } else {
@@ -9192,6 +9387,7 @@
       openHouse, upgradeHouse, houseTier, roomCap, openPeople, renderPeople, storyMeet, storyPlay, storyTrick, storyComplete, storyReady, checkAllowance, get walkersList() { return walkers; },
       openDogSheet, renderDogSheet, startExam, examTry, examEnd, badgeRows, addSpec, heartsOfBond, get sheetDog() { return sheetDog; },
       rank, rankInfo, xpAtRank, gainXP, earn, addMastery, starsOf, unlockedFeat, needRank, refreshGates, openRanks, renderShop, fillAll, recordWalk, get notes() { return [...notes]; },
+      groundAt, moveWithCollision, findPath, lineClear, updateTerrain, get roofOver() { return roofOver; }, atLookout, hiddenOf, hiddenTotal, exploredShare, markExplored, mmBackground, mmFogLayer, updateMinimap, locNote,
       doEcho, startSled, useRocket, usePortal, rideWheel, carnivalTrick, turnStatue, catchFloater, craterDig, travel, canVisitNow, ctxAction, get ctxKind() { return ctxKind; },
     };
   }
