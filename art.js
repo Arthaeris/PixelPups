@@ -1501,7 +1501,9 @@ window.VP_ART = (function () {
       let h = def.base || 0;
       for (const a of def.areas || []) {
         if (upper && a.under) continue;
-        if (!areaHas(a, x, z)) continue;
+        // flat ground and hills go by whole cells (as they are drawn); ramps and stairs are smooth
+        const cell = a.kind === 'flat' || a.kind === 'hill';
+        if (!(cell ? areaHas(a, Math.floor(x) + 0.5, Math.floor(z) + 0.5) : areaHas(a, x, z))) continue;
         if (a.kind === 'hill') h = hillH(a, x, z);
         else if (a.kind === 'flat') h = a.h;
         else {
@@ -1514,12 +1516,27 @@ window.VP_ART = (function () {
       }
       return h;
     }
-    const height = (x, z) => heightOf(x, z, false);
-    const upper = (x, z) => heightOf(x, z, true);
-    const sloped = (x, z) => (def.areas || []).some((a) => (a.kind === 'ramp' || a.kind === 'stairs') && areaHas(a, x, z));
+    // everything about a cell is worked out once and kept (the game asks a lot while finding paths)
+    const slopes = (def.areas || []).filter((a) => a.kind === 'ramp' || a.kind === 'stairs');
+    const cells = new Map();
+    const cellOf = (x, z) => {
+      const i = Math.floor(x), j = Math.floor(z), k = i * 4096 + j;
+      let c = cells.get(k);
+      if (!c) {
+        // a cell is "smooth" when a ramp or stairs touch any part of it: then heights are worked out point by point
+        const smooth = slopes.some((a) => a.rect.x0 < i + 1 && a.rect.x1 > i && a.rect.z0 < j + 1 && a.rect.z1 > j);
+        c = { in: cellIn(x, z), smooth, h: smooth ? 0 : heightOf(i + 0.5, j + 0.5, false), up: smooth ? 0 : heightOf(i + 0.5, j + 0.5, true) };
+        cells.set(k, c);
+      }
+      return c;
+    };
+    const height = (x, z) => { const c = cellOf(x, z); return c.smooth ? heightOf(x, z, false) : c.h; };
+    const upper = (x, z) => { const c = cellOf(x, z); return c.smooth ? heightOf(x, z, true) : c.up; };
+    const inside = (x, z) => cellOf(x, z).in;
+    const sloped = (x, z) => slopes.some((a) => areaHas(a, x, z));
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const p of def.walk) for (const [x, z] of p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-    return { inside: cellIn, height, upper, sloped, bbox: { x0, x1, z0, z1 }, def };
+    return { inside, height, upper, sloped, bbox: { x0, x1, z0, z1 }, def };
   }
   // draws the ground: grass (or sand) on top, earth or rock on the sides of every raised or sunken bit
   function drawTerrain(root, T, st) {
@@ -1532,7 +1549,10 @@ window.VP_ART = (function () {
       return { rf, cap, side, caps: [], bodies: [] };
     });
     const caps = [], bodies = [];
-    const bottom = st.bottom ?? -1.2;
+    // "outer": the land around a place is drawn as ground too (at outer.h), so sunken bits inside can be lower than it
+    const OUT = st.outer || null;
+    const bottom = OUT ? OUT.h : st.bottom ?? -1.2;
+    const M0 = OUT ? OUT.margin || 12 : 0;
     const C = new THREE.Color();
     const colorFor = (x, z, h) => {
       const j = hash2(x, z);
@@ -1541,9 +1561,16 @@ window.VP_ART = (function () {
       if (tone) return tone;
       return j < 0.33 ? st.topA : j < 0.66 ? st.topB : st.topC || st.topA;
     };
-    for (let i = Math.floor(x0); i < Math.ceil(x1); i++) {
-      for (let k = Math.floor(z0); k < Math.ceil(z1); k++) {
+    for (let i = Math.floor(x0) - M0; i < Math.ceil(x1) + M0; i++) {
+      for (let k = Math.floor(z0) - M0; k < Math.ceil(z1) + M0; k++) {
         const cx = i + 0.5, cz = k + 0.5;
+        if (OUT && !T.inside(cx, cz)) {
+          let lo = OUT.h;
+          for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (T.inside(cx + dx, cz + dz)) lo = Math.min(lo, T.height(cx + dx, cz + dz));
+          caps.push([cx, OUT.h - 0.06, cz, 1, 0.12, 1, hash2(cx, cz) < 0.5 ? st.outside : OUT.b || st.outside]);
+          if (lo < OUT.h - 0.05) bodies.push([cx, (lo + OUT.h - 0.12) / 2, cz, 1, OUT.h - 0.12 - lo, 1, OUT.rock || st.rock || st.side]);
+          continue;
+        }
         if (!T.inside(cx, cz) || T.sloped(cx, cz)) continue;
         const h = T.height(cx, cz);
         let low = h;
@@ -1580,7 +1607,8 @@ window.VP_ART = (function () {
         const w = a.axis === 'x' ? along / n : r.x1 - r.x0, d = a.axis === 'x' ? r.z1 - r.z0 : along / n;
         const top = a.kind === 'stairs' ? (st.stair || st.side) : colorFor(px, pz, h);
         caps.push([px, h - 0.06, pz, w, 0.12, d, top]);
-        bodies.push([px, (h - 0.12 + bottom) / 2, pz, w, h - 0.12 - bottom, d, a.kind === 'stairs' ? (st.stairSide || st.side) : st.side]);
+        const sb = Math.min(bottom, a.h0, a.h1) - 0.1;
+        bodies.push([px, (h - 0.12 + sb) / 2, pz, w, h - 0.12 - sb, d, a.kind === 'stairs' ? (st.stairSide || st.side) : st.side]);
       }
     }
     const make = (list, mtl) => {
@@ -1601,8 +1629,17 @@ window.VP_ART = (function () {
       // instanced colors carry the look; these materials only fade while you are underneath
       return { id: r.rf.id, test: r.rf.under, mats: [r.cap, r.side] };
     });
-    // the space around a place: lower ground, so the shape reads from above
-    box(root, 160, 0.1, 160, st.outside, 0, bottom - 0.05, 0);
+    if (OUT) {
+      // flat land further out, framing the drawn cells
+      const X0 = Math.floor(x0) - M0, X1 = Math.ceil(x1) + M0, Z0 = Math.floor(z0) - M0, Z1 = Math.ceil(z1) + M0, W = 160, y = OUT.h - 0.06;
+      box(root, X1 - X0 + 2 * W, 0.12, W, st.outside, (X0 + X1) / 2, y, Z0 - W / 2);
+      box(root, X1 - X0 + 2 * W, 0.12, W, st.outside, (X0 + X1) / 2, y, Z1 + W / 2);
+      box(root, W, 0.12, Z1 - Z0, st.outside, X0 - W / 2, y, (Z0 + Z1) / 2);
+      box(root, W, 0.12, Z1 - Z0, st.outside, X1 + W / 2, y, (Z0 + Z1) / 2);
+    } else {
+      // the space around a place: lower ground, so the shape reads from above
+      box(root, 160, 0.1, 160, st.outside, 0, bottom - 0.05, 0);
+    }
     return outRoofs;
   }
   // hedges, fences or rocks along the edge of the walkable shape, with gaps where you may pass
@@ -1617,6 +1654,7 @@ window.VP_ART = (function () {
         if (inAny(st.gaps || [], cx, cz)) continue;
         let h = -Infinity;
         for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (T.inside(cx + dx, cz + dz)) h = Math.max(h, T.height(cx + dx, cz + dz));
+        if (st.floor !== undefined) h = Math.max(h, st.floor);
         list.push([cx, h, cz]);
       }
     }
@@ -1669,7 +1707,7 @@ window.VP_ART = (function () {
     blocks: [{ x0: -20, x1: -19, z0: -9.5, z1: -1.01 }, { x0: -20, x1: -19, z0: 0.01, z1: 4.5 }],
     areas: [
       { kind: 'flat', rect: { x0: 2, x1: 10, z0: -8.5, z1: -1 }, h: -0.5 },
-      { kind: 'stairs', rect: { x0: 0.6, x1: 2, z0: -5.4, z1: -3.6 }, axis: 'x', h0: 0, h1: -0.5, n: 2 },
+      { kind: 'stairs', rect: { x0: 0, x1: 2, z0: -5, z1: -3 }, axis: 'x', h0: 0, h1: -0.5, n: 2 },
       { kind: 'hill', poly: PARK_HILL, h: 1.6, step: 0.4, ring: 1, steep: [2, 3, 4] },
       { kind: 'flat', rect: PARK_GROTTO, h: 0, under: true },
     ],
@@ -2001,13 +2039,17 @@ window.VP_ART = (function () {
     colliders.push({ x0: cx - hw, x1: cx + hw, z0: cz - hd, z1: cz + hd });
     return { id, group: g, front: new V3(x + Math.sin(rot) * 1.35, 0, z + Math.cos(rot) * 1.35) };
   }
+  // the shaped place being built right now (tufts and flowers stay on its ground)
+  let curT = null;
+  const onShape = (x, z) => !curT || (curT.inside(x, z) && !curT.sloped(x, z));
+  const groundY = (x, z) => (curT ? curT.height(x, z) : 0);
   function tufts(root, n, color, ok, rr, y = 0.07, size = 0.12) {
     const t = new THREE.InstancedMesh(geo(size, 0.16, size), mat(color), n);
     let i = 0;
     for (let k = 0; k < n * 20 && i < n; k++) {
       const x = (rr() * 2 - 1) * 19, z = (rr() * 2 - 1) * 19;
-      if (!ok(x, z)) continue;
-      placeInst(t, i++, x, y, z);
+      if (!ok(x, z) || !onShape(x, z)) continue;
+      placeInst(t, i++, x, y + groundY(x, z), z);
     }
     t.count = i;
     root.add(t);
@@ -2018,14 +2060,49 @@ window.VP_ART = (function () {
     let i = 0;
     for (let k = 0; k < n * 20 && i < n; k++) {
       const x = (rr() * 2 - 1) * 19, z = (rr() * 2 - 1) * 19;
-      if (!ok(x, z)) continue;
-      placeInst(f, i, x, 0.08, z);
+      if (!ok(x, z) || !onShape(x, z)) continue;
+      placeInst(f, i, x, 0.08 + groundY(x, z), z);
       f.setColorAt(i, cc[i % cc.length]);
       i++;
     }
     f.count = i;
     root.add(f);
   }
+
+  // ----- shaped places: the original 39 x 39 square (kept at ground level), trimmed corners and new parts around it -----
+  function coreSquare(cut = {}) {
+    const E = 19.5, nw = cut.nw || 0, ne = cut.ne || 0, sw = cut.sw || 0, se = cut.se || 0;
+    return [[-E + nw, -E], [E - ne, -E], [E, -E + ne], [E, E - se], [E - se, E], [1.6, E], [1.6, 21], [-1.6, 21], [-1.6, E], [-E + sw, E], [-E, E - sw], [-E, -E + nw]];
+  }
+  function gateHome(root, o = {}) {
+    for (const x of [-1.6, 1.6]) box(root, 0.3, 1.5, 0.3, o.gate || '#a0703f', x, 0.75, 20.6);
+    box(root, 3.5, 0.18, 0.18, o.gate || '#a0703f', 0, 1.5, 20.6);
+    const sign = textSprite(o.sign || '🏠 Home', 0.7);
+    sign.position.set(0, 2.1, 20.6);
+    root.add(sign);
+  }
+  // o: walk, blocks, areas, roofs, style (for drawTerrain, with outer ground), wall (edgeWall look), colliders
+  function shapedPlace(root, o) {
+    const T = terrain({ walk: o.walk, blocks: o.blocks || [], areas: o.areas || [], roofs: o.roofs || [] });
+    const style = Object.assign({ outer: { h: 0, margin: 12 } }, o.style);
+    const roofs = drawTerrain(root, T, style);
+    if (o.wall !== false) edgeWall(root, T, o.colliders, Object.assign({ h: 0.9, a: '#8d6e4c', b: '#7b5e40', floor: style.outer.h }, o.wall, { gaps: [{ x0: -2, x1: 2, z0: 19, z1: 22.5 }].concat((o.wall && o.wall.gaps) || []) }));
+    if (o.gate !== false) gateHome(root, o.gate || {});
+    curT = T;
+    return { T, roofs };
+  }
+  // things you can walk into (a tent, a hollow tree, an arch) fade like cliffs while you are inside
+  function fadeable(group) {
+    const mats = [], seen = new Map();
+    group.traverse((m) => {
+      if (!m.isMesh || !m.material || m.material.isSpriteMaterial) return;
+      if (!seen.has(m.material)) { const c = m.material.clone(); seen.set(m.material, c); mats.push(c); }
+      m.material = seen.get(m.material);
+    });
+    return mats;
+  }
+  // a hidden-place extra for the return value of a place
+  const shapeOut = (T, roofs, extra) => Object.assign({ height: T.height, inside: T.inside, bbox: T.bbox, roofs, exit: { x: 0, z: 20.2 } }, extra);
 
   // ----- little animals and cars (they face +z; cars face +x) -----
   function buildCritter(kind, color) {
@@ -2161,16 +2238,37 @@ window.VP_ART = (function () {
     const L = { x: 11, z0: -11, z1: 11 };
     const r = mulberry32(7);
     const q = { crosswalks: [], cars: [], pigeons: [], puddles: null, cat: null, plaza: { x: 0, z: 3, r: 4.4 }, red: [], green: [] };
-    box(root, 100, 0.1, 100, '#a39887', 0, -0.05, 0);
-    const cob = new THREE.Mesh(geo(39, 0.1, 39), floorTex({ pattern: 'tiles', c1: '#bfb29b', c2: '#b1a48d' }, 26));
-    cob.position.set(0, -0.045, 0);
-    root.add(cob);
-    drawLoop(root, L, '#d6c7aa', 2.2);
-    // the street with two crosswalks where the promenade crosses it
+    // the town square, a hidden courtyard behind the north houses, and steps down to the old canal basin in the east
+    const ALLEY = { x0: 7.6, x1: 10, z0: -19.6, z1: -14.5 };
+    const UNDER = { x0: 22.5, x1: 27, z0: -5.4, z1: -2.6 };
+    const COURT = [[4.5, -19.5], [4.5, -22.5], [6.5, -25.5], [11, -26.5], [14.5, -24], [15, -19.5]];
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare(), COURT, [[19.5, -14.5], [23, -14.5], [25, -16], [31, -16], [31, -1.2], [22.5, -1.2], [22.5, -5.3], [19.5, -5.3]]],
+      areas: [
+        { kind: 'flat', rect: { x0: 22.5, x1: 27, z0: -16, z1: -5.4 }, h: -1.8 },
+        { kind: 'flat', rect: UNDER, h: -1.8, under: true },
+        { kind: 'flat', rect: { x0: 22.5, x1: 27, z0: -2.6, z1: -1.2 }, h: -1.8 },
+        { kind: 'flat', rect: { x0: 27, x1: 31, z0: -16, z1: -1.2 }, h: -2.4 },
+        { kind: 'stairs', rect: { x0: 20, x1: 22, z0: -14, z1: -8 }, axis: 'z', h0: 0, h1: -1.8, n: 5 },
+      ],
+      roofs: [{ id: 'bridge', zone: [{ x0: 22, x1: 32, z0: -6, z1: -2 }], under: [UNDER], ceil: 1.3 }],
+      style: { topA: '#bfb29b', topB: '#b1a48d', topC: '#c4b8a0', pathA: '#d6c7aa', pathB: '#d0c1a3', side: '#9c8f7a', rock: '#8f8577', stair: '#bdb5a6', stairSide: '#a49c8e',
+        outside: '#a39887', outer: { h: 0, b: '#9c917f', margin: 10 }, path: loopOnPath(L, 1.5) },
+      wall: { h: 0.9, a: '#cfc5b3', b: '#bdb5a6' },
+      gate: { gate: '#8d6e63' },
+    });
+    // the street with two crosswalks where the promenade crosses it; in the east it crosses the canal on a little bridge
     const sz0 = -5.2, sz1 = -2.8;
-    box(root, 60, 0.05, sz1 - sz0, '#5f6168', 0, 0.025, (sz0 + sz1) / 2);
-    box(root, 60, 0.1, 0.16, '#a7a7a7', 0, 0.05, sz0 - 0.08);
-    box(root, 60, 0.1, 0.16, '#a7a7a7', 0, 0.05, sz1 + 0.08);
+    box(root, 58.5, 0.05, sz1 - sz0, '#5f6168', -6.75, 0.025, (sz0 + sz1) / 2);
+    box(root, 58.5, 0.1, 0.16, '#a7a7a7', -6.75, 0.05, sz0 - 0.08);
+    box(root, 58.5, 0.1, 0.16, '#a7a7a7', -6.75, 0.05, sz1 + 0.08);
+    box(root, 6, 0.05, sz1 - sz0, '#5f6168', 34, 0.025, (sz0 + sz1) / 2);
+    const bridge = pivot(root);
+    box(bridge, 8.5, 0.3, sz1 - sz0 + 0.4, '#9e958a', 26.75, -0.13, (sz0 + sz1) / 2);
+    box(bridge, 8.5, 0.05, sz1 - sz0, '#5f6168', 26.75, 0.025, (sz0 + sz1) / 2);
+    for (const z of [sz0 - 0.12, sz1 + 0.12]) { box(bridge, 8.5, 0.5, 0.16, '#bdb5a6', 26.75, 0.25, z); }
+    box(bridge, 0.6, 2.1, sz1 - sz0 + 0.4, '#9e958a', 27.3, -1.25, (sz0 + sz1) / 2);
     for (let x = -19; x <= 19; x += 2.4) if (Math.abs(Math.abs(x) - 11) > 2) box(root, 1.1, 0.055, 0.1, '#f5f5f5', x, 0.03, -4);
     for (const cx of [-11, 11]) {
       for (let k = 0; k < 6; k++) box(root, 2.4, 0.06, 0.22, '#f5f5f5', cx, 0.032, sz0 + 0.25 + k * 0.4);
@@ -2184,7 +2282,7 @@ window.VP_ART = (function () {
         colliders.push({ x: px, z: pz, r: 0.15 });
       }
     }
-    colliders.push({ x0: -30, x1: -12.3, z0: sz0, z1: sz1 }, { x0: -9.7, x1: 9.7, z0: sz0, z1: sz1 }, { x0: 12.3, x1: 30, z0: sz0, z1: sz1 });
+    colliders.push({ x0: -30, x1: -12.3, z0: sz0, z1: sz1 }, { x0: -9.7, x1: 9.7, z0: sz0, z1: sz1 }, { x0: 12.3, x1: 22.5, z0: sz0, z1: sz1 });
     q.street = { z0: sz0, z1: sz1 };
     q.setPed = (green) => {
       q.red.forEach((m) => { m.material = green ? M.lightOff : M.redOn; });
@@ -2200,16 +2298,16 @@ window.VP_ART = (function () {
     });
     // houses: a row along the north and one on each side, all facing the town
     const pal = ['#f8bbd0', '#ffe0b2', '#c5e1a5', '#b3e5fc', '#fff59d', '#d1c4e9', '#ffccbc', '#e6ee9c', '#b2dfdb'];
-    const roofs = ['#8d4b3a', '#5d4037', '#6d4c41', '#7b3f2f'];
+    const roofCols = ['#8d4b3a', '#5d4037', '#6d4c41', '#7b3f2f'];
     function house(x, z, w, d, rot, k) {
       const g = pivot(root, x, 0, z);
       g.rotation.y = rot;
       const floors = 2 + (k % 2);
       const H = floors * 1.3 + 0.4;
       box(g, w, H, d, pal[k % pal.length], 0, H / 2, 0);
-      box(g, w + 0.2, 0.3, d + 0.2, roofs[k % roofs.length], 0, H + 0.15, 0);
-      box(g, w * 0.7, 0.4, d * 0.6, roofs[k % roofs.length], 0, H + 0.5, 0);
-      box(g, w * 0.35, 0.35, d * 0.3, roofs[k % roofs.length], 0, H + 0.85, 0);
+      box(g, w + 0.2, 0.3, d + 0.2, roofCols[k % roofCols.length], 0, H + 0.15, 0);
+      box(g, w * 0.7, 0.4, d * 0.6, roofCols[k % roofCols.length], 0, H + 0.5, 0);
+      box(g, w * 0.35, 0.35, d * 0.3, roofCols[k % roofCols.length], 0, H + 0.85, 0);
       box(g, 0.8, 1.2, 0.08, '#6d4c41', w * 0.25 * (k % 2 ? 1 : -1), 0.6, d / 2 + 0.03);
       box(g, 0.1, 0.1, 0.06, '#ffd54f', w * 0.25 * (k % 2 ? 1 : -1) + 0.25, 0.6, d / 2 + 0.08);
       for (let f = 0; f < floors; f++) {
@@ -2222,8 +2320,46 @@ window.VP_ART = (function () {
       }
       return g;
     }
-    for (let k = 0; k < 9; k++) house(-17.6 + k * 4.4, -17.05, 4.3, 5, 0, k);
-    colliders.push({ x0: -22, x1: 22, z0: -22, z1: -14.5 });
+    for (let k = 0; k < 9; k++) if (k !== 6) house(-17.6 + k * 4.4, -17.05, 4.3, 5, 0, k);
+    colliders.push({ x0: -22, x1: 6.6, z0: -19.6, z1: -14.5 }, { x0: 11, x1: 22, z0: -19.6, z1: -14.5 });
+    // where house 7 used to be: a narrow house built over an alley, which leads to a courtyard behind
+    const arch = pivot(root);
+    for (const [x0, x1] of [[6.55, 7.6], [10, 11.05]]) { box(arch, x1 - x0, 3.1, 5, '#ffe0b2', (x0 + x1) / 2, 1.55, -17.05); colliders.push({ x0, x1, z0: -19.6, z1: -14.5 }); }
+    box(arch, 4.5, 1.1, 5, '#ffe0b2', 8.8, 2.65, -17.05);
+    box(arch, 4.7, 0.3, 5.2, '#7b3f2f', 8.8, 3.35, -17.05);
+    box(arch, 3.2, 0.4, 3, '#7b3f2f', 8.8, 3.7, -17.05);
+    box(arch, 2.4, 0.12, 0.3, '#9e958a', 8.8, 2.05, -14.6);
+    for (const wx of [7.9, 9.7]) { box(arch, 0.6, 0.6, 0.06, '#ffffff', wx, 2.7, -14.52); box(arch, 0.48, 0.48, 0.07, M.window, wx, 2.7, -14.51); }
+    const archMats = fadeable(arch);
+    roofs.push({ id: 'arch', test: [ALLEY], mats: archMats });
+    // the courtyard: a well, washing on a line, flower pots and a sleepy cat
+    { const g = pivot(root, 9.6, 0, -23.2); box(g, 1.4, 0.7, 1.4, '#9e958a', 0, 0.35, 0); box(g, 1.0, 0.06, 1.0, M.water, 0, 0.68, 0); for (const x of [-0.6, 0.6]) box(g, 0.12, 1.5, 0.12, '#6d4c41', x, 1.1, 0); box(g, 1.5, 0.2, 0.9, '#7b3f2f', 0, 1.9, 0); colliders.push({ x: 9.6, z: -23.2, r: 0.85 }); }
+    for (const [x, z] of [[5.6, -20.3], [13.8, -20.4]]) box(root, 0.1, 2, 0.1, '#6d4c41', x, 1, z);
+    box(root, 8.2, 0.03, 0.03, '#eeeeee', 9.7, 1.9, -20.35);
+    [['#ef9a9a', 6.6], ['#90caf9', 7.6], ['#fff59d', 9.2], ['#a5d6a7', 11.3], ['#ce93d8', 12.6]].forEach(([c, x]) => box(root, 0.55, 0.6, 0.04, c, x, 1.55, -20.35));
+    for (const [x, z, c] of [[5.4, -22.4, '#e53950'], [6.6, -24.8, '#ffb74d'], [13.4, -23.8, '#f48fb1']]) { box(root, 0.5, 0.4, 0.5, '#b0623c', x, 0.2, z); box(root, 0.3, 0.2, 0.3, c, x, 0.5, z); colliders.push({ x, z, r: 0.35 }); }
+    { const g = pivot(root, 12.4, 0, -25.2); g.rotation.y = -0.6; box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2); for (const x of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#37474f', x, 0.2, 0); colliders.push({ x: 12.4, z: -25.2, r: 0.8 }); }
+    { const c2 = buildCritter('cat', '#e0a060'); c2.position.set(12.3, 0.48, -25.25); c2.rotation.y = 0.9; root.add(c2); }
+    box(root, 0.2, 0.25, 0.2, M.lamp, 8.8, 1.9, -19.75);
+    const yard = addSpot(root, spots, colliders, 6.8, -23.3, 'hidden:courtyard', spotLooks.planter, 0.4);
+    // the canal basin: a quay down the steps, a rowboat, and a nook under the bridge
+    box(root, 4.0, 0.08, 14.8, M.water, 29, -2.0, -8.6);
+    ponds.push({ x0: 27, x1: 31, z0: -16, z1: -1.2 });
+    colliders.push({ x0: 27, x1: 31.5, z0: -16.5, z1: -1 });
+    { const g = pivot(root, 29, -2.0, -11); box(g, 1.1, 0.35, 2.6, '#8d6e4c', 0, 0.15, 0); box(g, 0.9, 0.08, 2.3, '#a1785a', 0, 0.3, 0); box(g, 0.9, 0.12, 0.25, '#6d4c41', 0, 0.36, 0.4); }
+    for (let z = -7.8; z <= -5.6; z += 0.7) box(root, 0.08, 0.6, 0.08, '#37474f', 22.55, 0.3, z);
+    for (let x = 20.2; x <= 22.2; x += 1) box(root, 0.08, 0.6, 0.08, '#37474f', x, 0.3, -7.95);
+    box(root, 0.06, 0.06, 2.3, '#37474f', 22.55, 0.6, -6.7);
+    for (let z = -12.4; z <= -8.2; z += 1.05) box(root, 0.08, 0.6, 0.08, '#37474f', 19.95, 0.3, z);
+    box(root, 0.06, 0.06, 4.3, '#37474f', 19.95, 0.6, -10.3);
+    for (let x = 22.8; x <= 26.8; x += 1) box(root, 0.08, 0.6, 0.08, '#37474f', x, 0.3, -14.55);
+    for (const [x, z] of [[24.6, -14.8], [26.2, -9.6]]) { box(root, 0.35, 0.5, 0.35, '#5d4037', x, -1.55, z); box(root, 0.4, 0.06, 0.4, '#4e342e', x, -1.28, z); colliders.push({ x, z, r: 0.25 }); }
+    box(root, 0.22, 0.25, 0.22, M.lamp, 24.6, -0.6, -2.75);
+    for (const [x, z] of [[23.2, -4.6], [23.4, -3.2]]) { box(root, 0.5, 0.45, 0.5, '#8d6e4c', x, -1.58, z); colliders.push({ x, z, r: 0.3 }); }
+    const nook = addSpot(root, spots, colliders, 25.6, -3.6, 'hidden:bridge', spotLooks.hydrant, 0.3);
+    nook.group.position.y = -1.8;
+    roofs.find((rf) => rf.id === 'bridge').mats.push(...fadeable(bridge));
+    void yard;
     for (let k = 0; k < 4; k++) {
       house(17.3, 1.7 + k * 4.3, 4.2, 4.6, -Math.PI / 2, k + 3);
       house(-17.3, 1.7 + k * 4.3, 4.2, 4.6, Math.PI / 2, k + 5);
@@ -2304,9 +2440,12 @@ window.VP_ART = (function () {
       box(q.puddles, 0.8 + r() * 0.6, 0.02, 0.6 + r() * 0.5, '#8fb3cf', x, 0.06, z);
     }
     q.puddles.visible = false;
-    boundary(root, { color: '#cfc5b3', post: '#bdb5a6', rails: [], height: 0.9, north: false, gate: '#8d6e63' });
     const onPath = (x, z) => loopOnPath(L, 1.5)(x, z) || (z > q.street.z0 - 0.3 && z < q.street.z1 + 0.3);
-    return { colliders, spots, water, ponds, onPath, loop: L, vendors, q };
+    const secrets = [
+      { id: 'courtyard', name: 'The hidden courtyard', rects: [{ x0: 4.5, x1: 15, z0: -26.5, z1: -20 }], hint: 'There’s a house on the north row that’s only a front. My cat disappears through it every evening.' },
+      { id: 'bridge', name: 'Under the old bridge', rects: [UNDER], hint: 'The boatmen used to sit under the bridge by the old canal, out of the rain. I don’t know how they got down there.' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q }, shapeOut(T, roofs, { secrets }));
   }
 
   // ----- Whispering Forest -----
@@ -2315,8 +2454,26 @@ window.VP_ART = (function () {
     const L = { x: 11, z0: -11, z1: 11 };
     const r = mulberry32(99);
     const q = { glades: [], squirrels: [], fireflies: null, owl: null, snails: null };
-    box(root, 100, 0.1, 100, '#4f7d3c', 0, -0.05, 0);
-    box(root, 39, 0.1, 39, '#679a4f', 0, -0.045, 0);
+    // the old wood, a mossy dell in the west with a giant hollow tree, and a rocky terrace in the north-east with a waterfall
+    const DELL = [[-21.5, -6.5], [-29, -8], [-33, -4], [-33, 2.5], [-29.5, 6], [-23, 5.5], [-21.5, 3]];
+    const TERRACE = [[15, -21], [19, -25], [26, -25], [29, -21], [28.5, -14.5], [22, -12.5], [17, -15]];
+    const GROT = { x0: 23.5, x1: 26, z0: -25, z1: -22.5 };
+    const HOLLOW = { x0: -29.4, x1: -26.6, z0: -2.4, z1: 0.4 };
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare(), [[-19.5, -6.5], [-23, -9], [-30, -9.5], [-35, -5], [-35, 3], [-31, 7.5], [-24, 7], [-19.5, 4.5]],
+        [[9, -19.5], [12, -24], [17, -29], [27, -30], [31.5, -26], [31.5, -14], [25, -10], [19.5, -9.5]]],
+      areas: [
+        { kind: 'hill', poly: DELL, h: -1.2, step: 0.4, ring: 1 },
+        { kind: 'hill', poly: TERRACE, h: 1.6, step: 0.4, ring: 1, steep: [0, 1, 2] },
+        { kind: 'flat', rect: GROT, h: 0, under: true },
+      ],
+      roofs: [{ id: 'waterfall', zone: [{ x0: 21.5, x1: 28, z0: -26, z1: -20 }], under: [GROT], ceil: 1.3 }],
+      style: { topA: '#679a4f', topB: '#6fa356', topC: '#619449', side: '#6d5a3e', rock: '#7d7468', outside: '#4f7d3c', outer: { h: 0, b: '#4a7538' },
+        tone: (x, z, h) => (h < -0.1 ? (hash2(x, z) < 0.5 ? '#5d9a4a' : '#56914a') : h > 1 ? (hash2(x, z) < 0.5 ? '#76a85a' : '#6e9f52') : null) },
+      wall: { h: 1.2, a: '#3e6b35', b: '#35602e' },
+      gate: { gate: '#5d4037' },
+    });
     const trail = '#a38660';
     drawLoop(root, L, trail, 1.8);
     box(root, 22, 0.04, 1.4, trail, 0, 0.02, 0);
@@ -2374,25 +2531,37 @@ window.VP_ART = (function () {
       if (trees.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 1.8)) continue;
       trees.push([x, z, 0.8 + r() * 0.5]);
     }
-    for (let k = 0; k < 160; k++) {
-      const a = r() * 6.283, d = 21 + r() * 14, x = Math.sin(a) * d, z = Math.cos(a) * d;
+    for (let k = 0; k < 220; k++) {
+      const a = r() * 6.283, d = 21 + r() * 18, x = Math.sin(a) * d, z = Math.cos(a) * d;
       if (z > 19 && Math.abs(x) < 8) continue;
+      if ([[0, 0], [1.6, 0], [-1.6, 0], [0, 1.6], [0, -1.6]].some(([dx, dz]) => T.inside(x + dx, z + dz))) continue;
       trees.push([x, z, 0.9 + r() * 0.6, true]);
+    }
+    // pines in the new parts, on whatever level the ground is
+    for (let tries = 0, n = 0; tries < 900 && n < 34; tries++) {
+      const x = -35 + r() * 67, z = -30 + r() * 38;
+      if (Math.abs(x) < 19.5 && Math.abs(z) < 19.5) continue;
+      if (![[0, 0], [0.9, 0], [-0.9, 0], [0, 0.9], [0, -0.9]].every(([dx, dz]) => T.inside(x + dx, z + dz))) continue;
+      if (inRect({ x0: -31, x1: -24.5, z0: -4.5, z1: 2.6 }, x, z) || inRect({ x0: 18.5, x1: 27, z0: -29, z1: -21.5 }, x, z) || Math.hypot(x - 24, z - 18.5 + 37) < 0) continue;
+      if (inRect({ x0: 21, x1: 27, z0: -20, z1: -16.5 }, x, z) || inRect({ x0: -21, x1: -14, z0: -1, z1: 5 }, x, z)) continue;
+      if (trees.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 2)) continue;
+      trees.push([x, z, 0.8 + r() * 0.5, false, T.height(x, z)]);
+      n++;
     }
     const trunk = new THREE.InstancedMesh(geo(0.32, 1, 0.32), mat('#6d4c33'), trees.length);
     const l1 = new THREE.InstancedMesh(geo(1.7, 0.7, 1.7), mat('#2e6b3a'), trees.length);
     const l2 = new THREE.InstancedMesh(geo(1.2, 0.7, 1.2), mat('#357a42'), trees.length);
     const l3 = new THREE.InstancedMesh(geo(0.7, 0.6, 0.7), mat('#3f8a4c'), trees.length);
-    trees.forEach(([x, z, s, far], i) => {
+    trees.forEach(([x, z, s, far, y = 0], i) => {
       const ry = r() * 1.5;
-      placeInst(trunk, i, x, 0.5 * s, z, s, ry);
-      placeInst(l1, i, x, 1.25 * s, z, s, ry);
-      placeInst(l2, i, x, 1.85 * s, z, s, ry);
-      placeInst(l3, i, x, 2.4 * s, z, s, ry);
+      placeInst(trunk, i, x, y + 0.5 * s, z, s, ry);
+      placeInst(l1, i, x, y + 1.25 * s, z, s, ry);
+      placeInst(l2, i, x, y + 1.85 * s, z, s, ry);
+      placeInst(l3, i, x, y + 2.4 * s, z, s, ry);
       if (!far) colliders.push({ x, z, r: 0.45 });
     });
     root.add(trunk, l1, l2, l3);
-    const near = trees.filter((t) => !t[3]);
+    const near = trees.filter((t) => !t[3] && Math.abs(t[0]) < 19 && Math.abs(t[1]) < 19);
     tufts(root, 220, '#4e8a3e', (x, z) => !onPath(x, z), r);
     tufts(root, 120, '#b5793a', (x, z) => !onPath(x, z), r, 0.04, 0.16);
     flowerField(root, 70, ['#ffffff', '#f8bbd0', '#fff59d'], (x, z) => !onPath(x, z) || inGlade(x, z), r);
@@ -2440,8 +2609,42 @@ window.VP_ART = (function () {
     pg.add(inner);
     pg.visible = false;
     q.portal = { group: pg, ring, pos: new V3(1.6, 0, -17.2) };
-    boundary(root, { color: '#6d4c33', post: '#5d4037', gate: '#5d4037' });
-    return { colliders, spots, water, ponds, onPath, loop: L, vendors, q };
+    // the mossy dell: a giant hollow tree you can step inside
+    const tree = pivot(root, -28, -1.2, -1);
+    for (const [x0, x1, z0, z1] of [[-2, 2, -2, -1.4], [-2, 2, 1.4, 2], [-2, -1.4, -1.4, 1.4], [1.4, 2, -1.4, -0.7], [1.4, 2, 0.7, 1.4]]) {
+      box(tree, x1 - x0, 3.4, z1 - z0, '#6d4c33', (x0 + x1) / 2, 1.7, (z0 + z1) / 2);
+      colliders.push({ x0: -28 + x0, x1: -28 + x1, z0: -1 + z0, z1: -1 + z1 });
+    }
+    box(tree, 4.4, 0.5, 4.4, '#5d4029', 0, 3.6, 0);
+    box(tree, 6.2, 1.4, 6.2, '#2f6a37', 0, 4.4, 0);
+    box(tree, 4.6, 1.2, 4.6, '#38793f', 0, 5.6, 0);
+    box(tree, 2.6, 1.0, 2.6, '#428a48', 0, 6.6, 0);
+    for (const [x, z, w, d] of [[2.4, -1.6, 1.4, 0.5], [-2.3, 1.7, 0.5, 1.4], [-1.2, -2.4, 0.5, 1.2]]) box(tree, w, 0.5, d, '#5d4029', x, 0.25, z);
+    box(tree, 0.2, 0.2, 0.2, M.firefly, -1.1, 1.6, 0.6);
+    for (const [x, z] of [[-0.9, -0.8], [0.6, 0.9]]) { box(tree, 0.12, 0.25, 0.12, '#efe6d8', x, 0.12, z); box(tree, 0.28, 0.1, 0.28, '#e57373', x, 0.3, z); }
+    roofs.push({ id: 'hollowtree', test: [HOLLOW], mats: fadeable(tree) });
+    const hollowSpot = addSpot(root, spots, colliders, -28.6, -0.4, 'hidden:hollowtree', spotLooks.stump, 0);
+    hollowSpot.group.position.y = -1.2;
+    for (const [x, z] of [[-24.5, -5.5], [-31.5, 3.6], [-23.2, 3.8], [-30.5, -6]]) { const y = T.height(x, z); box(root, 0.14, 0.3, 0.14, '#efe6d8', x, y + 0.15, z); box(root, 0.4, 0.12, 0.4, '#ffb74d', x, y + 0.35, z); }
+    // the terrace: a waterfall down its north face into a pool, and a dry hollow behind the falling water
+    const fallMat = new THREE.MeshLambertMaterial({ color: '#9fd3ef', transparent: true, opacity: 0.75, emissive: '#2a6a8a', emissiveIntensity: 0.2 });
+    box(root, 2.8, 1.7, 0.18, fallMat, 21.4, 0.85, -25.12);
+    box(root, 2.3, 1.4, 0.1, fallMat, 24.75, 0.75, -25.08);
+    box(root, 3.8, 0.07, 2.2, M.water, 21.4, 0.03, -26.5);
+    box(root, 4.2, 0.06, 2.6, '#7a6a4a', 21.4, 0.02, -26.5);
+    for (let k = 0; k < 6; k++) box(root, 0.2, 0.05, 0.2, '#ffffff', 20 + k * 0.55, 0.08, -25.5 - (k % 2) * 0.3);
+    ponds.push({ x0: 19.5, x1: 23.3, z0: -27.6, z1: -25.3 });
+    colliders.push({ x0: 19.5, x1: 23.3, z0: -27.6, z1: -25.3 });
+    box(root, 0.2, 0.2, 0.2, M.firefly, 25.6, 0.9, -23);
+    { const g = pivot(root, 24.4, 0, -23.4); box(g, 0.8, 0.5, 0.6, '#7d7468', 0, 0.25, 0); colliders.push({ x: 24.4, z: -23.4, r: 0.35 }); }
+    const fallSpot = addSpot(root, spots, colliders, 25.3, -23.6, 'hidden:waterfall', spotLooks.log, 0);
+    { const y = T.height(24, -19); const g = pivot(root, 24, y, -19); box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const x of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', x, 0.2, 0); colliders.push({ x: 24, z: -19, r: 0.8 }); }
+    void fallSpot;
+    const secrets = [
+      { id: 'hollowtree', name: 'The hollow tree', rects: [HOLLOW], hint: 'Past the west glade the ground dips into a mossy hollow. There’s an old tree there, wider than a house, they say.' },
+      { id: 'waterfall', name: 'Behind the waterfall', rects: [GROT], hint: 'Somewhere up in the north-east you can hear water falling. Dogs always want to sniff behind it.' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q }, shapeOut(T, roofs, { secrets, lookout: { x0: 19, x1: 28, z0: -22, z1: -15 } }));
   }
 
   // ----- Sunny Beach -----
@@ -2456,12 +2659,12 @@ window.VP_ART = (function () {
     walk: [[[-31, -19.5], [35, -19.5], [35, 4], [30, 9], [18, 14], [8, 17.5], [1.6, 19.5], [1.6, 21], [-1.6, 21], [-1.6, 19.5], [-8, 17.5], [-18, 14], [-27, 8], [-33, -2], [-33, -12]]],
     areas: [
       { kind: 'flat', poly: [[-20, 13.2], [20, 13.2], [20, 22], [-20, 22]], h: 0.5 },
-      { kind: 'ramp', rect: { x0: -1.6, x1: 1.6, z0: 10.4, z1: 13.2 }, axis: 'z', h0: 0, h1: 0.5 },
+      { kind: 'ramp', rect: { x0: -2, x1: 2, z0: 10, z1: 13 }, axis: 'z', h0: 0, h1: 0.5 },
       { kind: 'flat', poly: [[21, -19.5], [35, -19.5], [35, 3.5], [27.6, 3.5], [23.6, 2.6], [22, 0.5], [21.4, -6.5], [20.4, -9.5], [21, -12.5]], h: 2.4 },
       { kind: 'flat', rects: BEACH_COVE, h: 0.25, under: true },
       { kind: 'flat', rect: BEACH_CAVE[0], h: 0.15, under: true },
       { kind: 'flat', rect: BEACH_CAVE[1], h: 0.1, under: true },
-      { kind: 'stairs', rect: { x0: 24, x1: 27, z0: 3, z1: 7.4 }, axis: 'z', h0: 2.4, h1: 0, n: 9 },
+      { kind: 'stairs', rect: { x0: 24, x1: 27, z0: 3, z1: 9 }, axis: 'z', h0: 2.4, h1: 0, n: 6 },
     ],
     roofs: [
       { id: 'cove', zone: [{ x0: 20, x1: 36, z0: -7.5, z1: 4 }], under: BEACH_COVE, ceil: 1.4 },
@@ -2605,20 +2808,39 @@ window.VP_ART = (function () {
     const L = { x: 11, z0: -11, z1: 11 };
     const r = mulberry32(31);
     const q = { flags: [], cows: [], petals: null, snow: null };
-    box(root, 100, 0.1, 100, '#76a84e', 0, -0.05, 0);
-    box(root, 39, 0.1, 39, '#84b85a', 0, -0.045, 0);
-    // stepped hills with rocky, snowy tops just outside the fence (north and west)
+    // the meadow, a mountain to climb in the north (with an ice cave in its rocky east side),
+    // and a secret flower meadow in the west, through a gap in the boulders
+    const MT = [[-11, -20.5], [-7, -27], [0, -30.5], [8, -29.5], [12.5, -24], [12, -20.5]];
+    const ICE = { x0: 8.5, x1: 11.6, z0: -26.5, z1: -24 };
+    const WEST = [[-19.5, 3.5], [-23, 1.5], [-29, 3], [-31, 9], [-27.5, 14.5], [-22, 15], [-19.5, 12.5]];
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare({ nw: 4, ne: 4 }), [[-14, -19.5], [-11, -26], [-4, -31.5], [6, -32], [14.5, -27.5], [15.5, -19.5]], WEST],
+      blocks: [{ x0: -21.4, x1: -19.6, z0: 3, z1: 9.4 }, { x0: -21.4, x1: -19.6, z0: 11.1, z1: 13 }],
+      areas: [
+        { kind: 'hill', poly: MT, h: 2.8, step: 0.4, ring: 1, steep: [3, 4] },
+        { kind: 'flat', rect: ICE, h: 0, under: true },
+      ],
+      roofs: [{ id: 'icecave', zone: [{ x0: 7, x1: 14, z0: -28.5, z1: -21.5 }], under: [ICE], ceil: 1.3 }],
+      style: { topA: '#84b85a', topB: '#7fb255', topC: '#89bd60', side: '#7a6a52', rock: '#9aa0a6', outside: '#76a84e', outer: { h: 0, b: '#70a049' },
+        path: loopOnPath(L, 1.3), pathA: '#c4b28c', pathB: '#bcaa84',
+        tone: (x, z, h) => (h > 1.9 ? (hash2(x, z) < 0.5 ? '#eef2f7' : '#e4e9f0') : h > 1.1 ? (hash2(x, z) < 0.5 ? '#9aa0a6' : '#a4aab0') : null) },
+      wall: { h: 0.8, a: '#8d6e4c', b: '#7b5e40', gaps: [{ x0: -22, x1: -19, z0: 9, z1: 11.5 }] },
+      gate: { gate: '#6d4c33' },
+    });
+    // stepped hills with rocky, snowy tops all around the outside
     const hill = (x, z, w, d, h) => {
+      for (const [dx, dz] of [[0, 0], [-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2], [0, -d / 2], [0, d / 2], [-w / 2, 0], [w / 2, 0]]) if (T.inside(x + dx * 1.15, z + dz * 1.15)) return;
       const steps = Math.max(2, Math.round(h / 0.9));
       for (let k = 0; k < steps; k++) {
         const f = 1 - k / steps, top = k >= steps - 2;
         box(root, w * f, 0.9, d * f, top ? (k === steps - 1 && h > 3 ? '#eef2f7' : '#9aa0a6') : k % 2 ? '#6f9e48' : '#78a850', x, 0.45 + k * 0.9, z);
       }
     };
-    for (let x = -26; x <= 26; x += 6.5) hill(x + (r() - 0.5) * 2, -24 - r() * 3, 7 + r() * 3, 6 + r() * 2, 2.5 + r() * 3.5);
-    for (let z = -16; z <= 16; z += 7) hill(-24 - r() * 2, z, 6 + r() * 2, 7 + r() * 2, 1.8 + r() * 3);
+    for (let x = -34; x <= 30; x += 6.5) hill(x + (r() - 0.5) * 2, -34 - r() * 3, 7 + r() * 3, 6 + r() * 2, 3.5 + r() * 3.5);
+    for (let x = -30; x <= 26; x += 7) hill(x + (r() - 0.5) * 2, -25 - r() * 2, 6 + r() * 2, 5 + r() * 2, 2 + r() * 2.5);
+    for (let z = -16; z <= 18; z += 7) hill(-24.5 - r() * 2 - (z > 0 && z < 17 ? 9 : 0), z, 6 + r() * 2, 7 + r() * 2, 1.8 + r() * 3);
     for (let z = -16; z <= 4; z += 8) hill(24 + r() * 2, z, 5, 6, 1.8);
-    drawLoop(root, L, '#c4b28c', 1.6);
     // a little lake
     const pond = { x0: -7.5, x1: -2.5, z0: -6.7, z1: -3.3 };
     box(root, 5.6, 0.06, 4.0, '#a1887f', -5, 0.02, -5);
@@ -2678,8 +2900,28 @@ window.VP_ART = (function () {
       box(q.snow, 0.8 + r() * 1.5, 0.05, 0.6 + r() * 1.2, '#f5f8fc', x, 0.03, z);
     }
     q.snow.visible = false;
-    boundary(root, { color: '#8d6e4c', post: '#6d4c33', gate: '#6d4c33' });
-    return { colliders, spots, water, ponds, onPath, loop: L, vendors, q, fog: { near: 50, far: 160 } };
+    // the mountain: a cairn and a little flag on the summit, a bench with a view
+    { const x = 0.5, z = -25.5, y = T.height(x, z); for (let k = 0; k < 4; k++) box(root, 0.9 - k * 0.2, 0.25, 0.9 - k * 0.2, k % 2 ? '#b0b0b0' : '#9e9e9e', x, y + 0.12 + k * 0.25, z); box(root, 0.06, 1.2, 0.06, '#795548', x, y + 1.5, z); box(root, 0.5, 0.3, 0.03, '#e53935', x + 0.27, y + 1.95, z); colliders.push({ x, z, r: 0.5 }); }
+    { const x = -3.5, z = -24.2, y = T.height(x, z); const g = pivot(root, x, y, z); box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', bx, 0.2, 0); colliders.push({ x, z, r: 0.8 }); }
+    // the ice cave
+    const iceMat = new THREE.MeshLambertMaterial({ color: '#b3e5fc', emissive: '#4fc3f7', emissiveIntensity: 0.25 });
+    for (const [x, z, h] of [[9, -26, 0.9], [9.2, -24.6, 0.6], [10.4, -26.2, 0.5], [11, -24.4, 0.35]]) box(root, 0.3, h, 0.3, iceMat, x, h / 2, z);
+    box(root, 2.6, 0.03, 2, '#d6eef8', 10, 0.02, -25.2);
+    const iceSpot = addSpot(root, spots, colliders, 10.2, -25.3, 'hidden:icecave', spotLooks.boulder, 0.3);
+    // the secret meadow: edelweiss, a bench and a bunny
+    for (const [x, z, sc] of [[-20.5, 6, 1.3], [-20.4, 8.2, 1.1], [-20.6, 12.1, 1.2], [-21.8, 4.2, 0.9]]) { box(root, 1.4 * sc, 1.0 * sc, 1.2 * sc, '#9e9e9e', x, 0.5 * sc, z); box(root, 0.9 * sc, 0.5 * sc, 0.8 * sc, '#b0b0b0', x + 0.2, 1.1 * sc, z); }
+    { const fl = new THREE.InstancedMesh(geo(0.12, 0.12, 0.12), new THREE.MeshLambertMaterial({ color: '#ffffff' }), 160); const cols = ['#ffffff', '#fff59d', '#ffffff', '#ce93d8'].map((c) => new THREE.Color(c)); let i = 0;
+      for (let k = 0; k < 3000 && i < 160; k++) { const x = -31 + r() * 12, z = 1 + r() * 14; if (!inPoly(WEST, x, z) || x > -21.5) continue; placeInst(fl, i, x, 0.08, z); fl.setColorAt(i, cols[i % 4]); i++; }
+      fl.count = i; root.add(fl); }
+    { const g = pivot(root, -27.4, 0, 11.6); g.rotation.y = 2.4; box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', bx, 0.2, 0); colliders.push({ x: -27.4, z: 11.6, r: 0.8 }); }
+    { const b = buildCritter('bunny'); b.position.set(-25.5, 0, 5.2); b.rotation.y = 1; root.add(b); colliders.push({ x: -25.5, z: 5.2, r: 0.3 }); }
+    const meadowSpot = addSpot(root, spots, colliders, -26.6, 7.8, 'hidden:meadow', spotLooks.flowers, 0);
+    void iceSpot; void meadowSpot;
+    const secrets = [
+      { id: 'icecave', name: 'The ice cave', rects: [ICE], hint: 'The mountain’s rocky side is cold even in summer. Something in there keeps the snow from melting.' },
+      { id: 'meadow', name: 'The secret meadow', rects: [{ x0: -31, x1: -21.6, z0: 1.5, z1: 15 }], hint: 'Edelweiss only grows where people don’t walk. Behind the big boulders in the west, maybe?' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q, fog: { near: 50, far: 160 } }, shapeOut(T, roofs, { secrets, lookout: { x0: -6, x1: 7, z0: -29, z1: -22.5 } }));
   }
 
   // ===================================================================
@@ -2719,13 +2961,31 @@ window.VP_ART = (function () {
     const ring = loopOnPath(L, 1.9);
     const open = (x, z) => ring(x, z) || Math.hypot(x, z) < 5.6 || (Math.abs(x) < 1.4 && Math.abs(z) < 11) || (Math.abs(z) < 1.4 && Math.abs(x) < 11) ||
       (Math.abs(x) < 1.7 && z > 10) || Math.hypot(x + 15.5, z + 6) < 2.9 || (Math.abs(z + 6) < 1.2 && x > -15.5 && x < -11) ||
-      Math.hypot(x - 15.5, z - 6) < 2.9 || (Math.abs(z - 6) < 1.2 && x < 15.5 && x > 11);
-    box(root, 100, 0.1, 100, '#1f1b22', 0, -0.05, 0);
-    box(root, 39, 0.1, 39, '#3a3440', 0, -0.045, 0);
+      Math.hypot(x - 15.5, z - 6) < 2.9 || (Math.abs(z - 6) < 1.2 && x < 15.5 && x > 11) ||
+      (Math.abs(z + 6) < 1.2 && x < -15.5) || (Math.abs(z - 6) < 1.2 && x > 15.5);
+    // new: a passage west and down some steps to a cavern with an underground lake, and one east into a geode
+    const CAV = [[-26.5, -12], [-31, -14.5], [-37, -11], [-38, -2], [-34, 3.5], [-28, 3], [-26.5, -2]];
+    const GEO = [[22.5, 2.5], [26, 1], [29.5, 3], [30, 8], [27, 11], [23, 10], [22.5, 8]];
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare(), [[-19.5, -7.2], [-26.5, -7.2], [-26.5, -4.8], [-19.5, -4.8]], CAV, [[19.5, 4.8], [22.6, 4.8], [22.6, 7.2], [19.5, 7.2]], GEO],
+      areas: [
+        { kind: 'flat', poly: CAV, h: -1.6 },
+        { kind: 'stairs', rect: { x0: -28, x1: -23, z0: -7, z1: -5 }, axis: 'x', h0: -1.6, h1: 0, n: 4 },
+      ],
+      style: { topA: '#3a3440', topB: '#36303c', topC: '#3e3845', side: '#2c2730', rock: '#4a4350', stair: '#5a5160', stairSide: '#4a4350', outside: '#1f1b22', outer: { h: 0, b: '#231f27', rock: '#2c2730', margin: 8 } },
+      wall: false,
+      gate: { gate: '#5d4037' },
+    });
     drawLoop(root, L, '#4a4350', 2.6);
     // rock everywhere the tunnels aren't
     const cells = [];
-    for (let i = -20; i < 20; i++) for (let j = -20; j < 20; j++) if (!open(i + 0.5, j + 0.5)) cells.push([i + 0.5, j + 0.5]);
+    const inCore = (x, z) => Math.abs(x) < 19.5 && Math.abs(z) < 19.5;
+    for (let i = Math.floor(T.bbox.x0) - 6; i < Math.ceil(T.bbox.x1) + 6; i++) for (let j = -26; j < 26; j++) {
+      const x = i + 0.5, z = j + 0.5;
+      if (z > 19 && Math.abs(x) < 2.2) continue;
+      if (inCore(x, z) ? !open(x, z) : !T.inside(x, z)) cells.push([x, z]);
+    }
     const rockA = new THREE.InstancedMesh(geo(1, 1, 1), mat('#5a5160'), cells.length);
     const rockB = new THREE.InstancedMesh(geo(0.7, 0.5, 0.7), mat('#6d6373'), cells.length);
     cells.forEach(([x, z], k) => {
@@ -2782,10 +3042,48 @@ window.VP_ART = (function () {
     box(root, 2.8, 0.04, 0.08, '#9e9e9e', -15.5, 0.06, -6.45);
     box(root, 2.8, 0.04, 0.08, '#9e9e9e', -15.5, 0.06, -5.55);
     const vendors = [stall(root, colliders, 'miner', -3.7, 1.4, Math.PI / 2, { counter: '#6d4c41', wall: '#4e342e', awning: '#fbc02d', top: '#8d6e63', shirt: '#546e7a', hair: '#bdbdbd', goods: ['⛑️', '⛏️', '🔦'] })];
-    boundary(root, { noPosts: true, rails: [], color: '#5a5160', gate: '#5d4037', sign: '🏠 Home' });
-    const solid = (x, z) => !open(x, z);
-    return { colliders, spots, water, ponds, onPath: (x, z) => !open(x, z) || ring(x, z), loop: L, vendors, q, solid,
-      env: { sky: '#08070b', hemi: 0.34, sun: 0.08, fog: [20, 42], noWeather: true, dark: true } };
+    // the lake cavern: still water, glowing mushrooms and torches
+    box(root, 4.6, 0.06, 5.6, M.water, -33.7, -1.58, -6.3);
+    ponds.push({ x0: -36, x1: -31.4, z0: -9.1, z1: -3.5 });
+    colliders.push({ x0: -36.2, x1: -31.4, z0: -9.2, z1: -3.4 });
+    const glowCap = new THREE.MeshLambertMaterial({ color: '#80deea', emissive: '#26c6da', emissiveIntensity: 0.6 });
+    for (const [x, z, s2] of [[-30.4, -10.6, 1], [-29.4, -11.6, 0.7], [-36.4, -0.6, 1.2], [-35.2, 1.4, 0.8], [-28.6, 1.4, 0.9], [-30.2, -2.4, 0.6]]) {
+      box(root, 0.16 * s2, 0.5 * s2, 0.16 * s2, '#e0f7fa', x, -1.6 + 0.25 * s2, z);
+      box(root, 0.6 * s2, 0.18 * s2, 0.6 * s2, glowCap, x, -1.6 + 0.55 * s2, z);
+      colliders.push({ x, z, r: 0.3 * s2 });
+    }
+    for (const [x, z, y] of [[-21.5, -7.6, 0], [-27.2, -3.4, -1.6], [-27.4, -9.6, -1.6]]) {
+      box(root, 0.1, 1.2, 0.1, '#5d4037', x, y + 0.6, z);
+      box(root, 0.18, 0.2, 0.18, M.fire, x, y + 1.3, z);
+      box(root, 0.1, 0.14, 0.1, M.fire2, x, y + 1.46, z);
+    }
+    const lakeSpot = addSpot(root, spots, colliders, -30.2, -5.2, 'hidden:lake', spotLooks.boulder, 0.4);
+    lakeSpot.group.position.y = -1.6;
+    // the geode: a little round room glittering with crystals
+    const geoMat = new THREE.MeshLambertMaterial({ color: '#e1bee7', emissive: '#ab47bc', emissiveIntensity: 0.5 });
+    const geoMat2 = new THREE.MeshLambertMaterial({ color: '#b3e5fc', emissive: '#29b6f6', emissiveIntensity: 0.5 });
+    for (let i = 21; i < 31; i++) for (let j = 0; j < 12; j++) {
+      const x = i + 0.5, z = j + 0.5;
+      if (!T.inside(x, z) || x < 23) continue;
+      const wall = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dz]) => !T.inside(x + dx, z + dz));
+      if (!wall) continue;
+      for (let k = 0; k < 2; k++) {
+        const h = 0.5 + r() * 1.1;
+        const c = box(root, 0.22, h, 0.22, (i + j + k) % 3 ? geoMat : geoMat2, x + wall[0] * 0.38 + (r() - 0.5) * 0.5, h / 2, z + wall[1] * 0.38 + (r() - 0.5) * 0.5);
+        c.rotation.z = (r() - 0.5) * 0.6;
+        c.rotation.x = (r() - 0.5) * 0.6;
+      }
+    }
+    for (const [x, z, h] of [[25.4, 5.2, 0.9], [27.2, 7.6, 0.7], [26.6, 4.2, 0.5]]) { box(root, 0.3, h, 0.3, geoMat, x, h / 2, z); colliders.push({ x, z, r: 0.25 }); }
+    const geodeSpot = addSpot(root, spots, colliders, 24.6, 7.6, 'hidden:geode', (g) => { box(g, 0.7, 0.4, 0.5, '#6d6373', 0, 0.2, 0); box(g, 0.2, 0.4, 0.2, geoMat2, 0.1, 0.5, 0); }, 0.4);
+    void geodeSpot;
+    const solid = (x, z) => inCore(x, z) && !open(x, z);
+    const secrets = [
+      { id: 'lake', name: 'The underground lake', rects: [{ x0: -31, x1: -27, z0: -12.5, z1: 3 }], hint: 'Past the old mine cart the tunnel goes on, they say. Down and down, to water that never sees the sun.' },
+      { id: 'geode', name: 'The geode', rects: [{ x0: 22.6, x1: 30, z0: 1, z1: 11 }], hint: 'Bats fly out of the east tunnel every evening with glitter on their wings. Where do they sleep?' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath: (x, z) => (inCore(x, z) && !open(x, z)) || ring(x, z), loop: L, vendors, q, solid,
+      env: { sky: '#08070b', hemi: 0.34, sun: 0.08, fog: [20, 42], noWeather: true, dark: true } }, shapeOut(T, roofs, { secrets }));
   }
 
   // ----- Snowy Village: snow, sledding, a rocket at the observatory, December lights -----
@@ -2794,10 +3092,27 @@ window.VP_ART = (function () {
     const L = { x: 11, z0: -11, z1: 11 };
     const r = mulberry32(21);
     const q = { sled: null, rocket: null, festive: null, tree: null };
-    box(root, 100, 0.1, 100, '#c9d5e1', 0, -0.05, 0);
-    box(root, 39, 0.1, 39, '#d4dfea', 0, -0.045, 0);
-    drawLoop(root, L, '#b5c3d1', 1.8);
+    // the village, a frozen pond in a hollow to the west (with an igloo), and a snowy ridge in the east with a cave in its north face
+    const BASIN = [[-21.5, -12], [-30, -11], [-33.5, -4], [-31.5, 3], [-25.5, 5.5], [-21.5, 2]];
+    const RIDGE = [[21, -4], [25, -8], [29.5, -7], [30.5, -1], [26.5, 3], [21.5, 3]];
+    const ICV = { x0: 25.5, x1: 28.5, z0: -7.5, z1: -4.5 };
+    const IGLOO = { x0: -31.4, x1: -29.6, z0: -8.4, z1: -6.6 };
     const onPath = loopOnPath(L, 1.3);
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare({ sw: 3 }), [[-19.5, -13.5], [-24, -15], [-32, -12], [-35.5, -4], [-33, 4], [-26, 7.5], [-19.5, 6]],
+        [[19.5, -9], [23.5, -12.5], [30.5, -10.5], [32, -2], [28, 4.5], [19.5, 4.5]]],
+      areas: [
+        { kind: 'hill', poly: BASIN, h: -0.8, step: 0.4, ring: 1 },
+        { kind: 'hill', poly: RIDGE, h: 2.0, step: 0.4, ring: 1, steep: [0, 1, 2] },
+        { kind: 'flat', rect: ICV, h: 0, under: true },
+      ],
+      roofs: [{ id: 'snowcave', zone: [{ x0: 24, x1: 31, z0: -9, z1: -3 }], under: [ICV], ceil: 1.3 }],
+      style: { topA: '#d4dfea', topB: '#dbe5ef', topC: '#cfdbe6', pathA: '#b5c3d1', pathB: '#adbccb', side: '#9fb0c2', rock: '#8a96a3', outside: '#c9d5e1', outer: { h: 0, b: '#c3cfdb' }, path: onPath,
+        tone: (x, z, h) => (h < -0.7 ? (hash2(x, z) < 0.5 ? '#bfe3f5' : '#b5dcf0') : h > 0.9 ? (hash2(x, z) < 0.5 ? '#eef4fa' : '#e3ecf5') : null) },
+      wall: { h: 0.8, a: '#8d6e63', b: '#7b5e52' },
+      gate: { gate: '#6d4c41' },
+    });
     // wooden chalets with snowy roofs
     const woods = ['#a1785a', '#8d6e4c', '#b48a64', '#7b5a3e'];
     function chalet(x, z, rot, k) {
@@ -2884,8 +3199,35 @@ window.VP_ART = (function () {
       spotLooks.signpost];
     [[-12.7, -6], [12.7, -3], [-6, -12.7], [5, -12.7], [-12.7, 8.5], [12.7, 13], [4.5, 4.5], [-4, 10]].forEach(([x, z], i) => addSpot(root, spots, colliders, x, z, 'sniff', looks[i % 3], 0.42));
     tufts(root, 120, '#ffffff', (x, z) => !onPath(x, z), r, 0.05, 0.2);
-    boundary(root, { color: '#8d6e63', post: '#6d4c41', gate: '#6d4c41' });
-    return { colliders, spots, water, ponds, onPath, loop: L, vendors, q, env: { snowFall: true } };
+    // the frozen pond and the igloo
+    const ig = pivot(root, -30.5, -0.8, -7.5);
+    for (let k = 0; k < 4; k++) {
+      const w = 3.4 - k * 0.7, hh = 0.55, y = k * hh;
+      if (k < 2) {
+        for (const [x0, x1, z0, z1] of [[-w / 2, w / 2, -w / 2, -w / 2 + 0.5], [-w / 2, w / 2, w / 2 - 0.5, w / 2], [-w / 2, -w / 2 + 0.5, -w / 2 + 0.5, w / 2 - 0.5], [w / 2 - 0.5, w / 2, -w / 2 + 0.5, -0.6], [w / 2 - 0.5, w / 2, 0.6, w / 2 - 0.5]]) box(ig, x1 - x0, hh, z1 - z0, k % 2 ? '#f5f9ff' : '#e8f1fa', (x0 + x1) / 2, y + hh / 2, (z0 + z1) / 2);
+      } else box(ig, w, hh, w, k % 2 ? '#f5f9ff' : '#e8f1fa', 0, y + hh / 2, 0);
+    }
+    box(ig, 0.9, 0.9, 0.8, '#f5f9ff', 2.1, 0.45, -1.1); box(ig, 0.9, 0.9, 0.8, '#f5f9ff', 2.1, 0.45, 1.1); box(ig, 0.9, 0.3, 3.0, '#f5f9ff', 2.1, 1.05, 0);
+    colliders.push({ x0: -28.85, x1: -27.95, z0: -9.0, z1: -8.2 }, { x0: -28.85, x1: -27.95, z0: -6.8, z1: -6.0 });
+    box(ig, 0.18, 0.18, 0.18, M.lamp, -0.9, 0.5, 0.9);
+    box(ig, 0.8, 0.06, 0.6, '#c62828', -0.6, 0.03, -0.5);
+    for (const [x0, x1, z0, z1] of [[-32.2, -28.8, -9.2, -8.7], [-32.2, -28.8, -6.3, -5.8], [-32.2, -31.7, -8.7, -6.3], [-29.3, -28.8, -8.7, -8.1], [-29.3, -28.8, -6.9, -6.3]]) colliders.push({ x0, x1, z0, z1 });
+    roofs.push({ id: 'igloo', test: [IGLOO], mats: fadeable(ig) });
+    const igSpot = addSpot(root, spots, colliders, -30.9, -7.3, 'hidden:igloo', looks[1], 0.3);
+    igSpot.group.position.y = -0.8;
+    for (const [x, z] of [[-25.6, -8.6], [-27.6, 0.6]]) { const y = T.height(x, z); box(root, 0.7, 0.6, 0.7, '#ffffff', x, y + 0.3, z); box(root, 0.5, 0.45, 0.5, '#ffffff', x, y + 0.82, z); box(root, 0.07, 0.07, 0.22, '#ff9800', x, y + 0.85, z + 0.27); colliders.push({ x, z, r: 0.45 }); }
+    // the ridge: a bench and a lamp up top, and the snow cave under its north face
+    { const x = 25.5, z = -0.6, y = T.height(x, z); const g = pivot(root, x, y, z); box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#37474f', bx, 0.2, 0); colliders.push({ x, z, r: 0.8 }); }
+    { const x = 23.6, z = -1.6, y = T.height(x, z); box(root, 0.14, 2.2, 0.14, '#37474f', x, y + 1.1, z); box(root, 0.3, 0.3, 0.3, M.lamp, x, y + 2.3, z); colliders.push({ x, z, r: 0.15 }); }
+    const icy = new THREE.MeshLambertMaterial({ color: '#b3e5fc', emissive: '#4fc3f7', emissiveIntensity: 0.25 });
+    for (const [x, z, h] of [[25.9, -4.9, 0.8], [28, -5, 0.5], [26.4, -6.9, 0.4]]) box(root, 0.28, h, 0.28, icy, x, h / 2, z);
+    const caveSpot = addSpot(root, spots, colliders, 27.1, -5.4, 'hidden:snowcave', looks[0], 0.4);
+    void caveSpot;
+    const secrets = [
+      { id: 'igloo', name: 'The igloo', rects: [IGLOO], hint: 'Someone built an igloo by the frozen pond, past the observatory. Nobody knows who.' },
+      { id: 'snowcave', name: 'The snow cave', rects: [ICV], hint: 'The ridge east of the village has a snowy north side. The wind blows right into a hole there.' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q, env: { snowFall: true } }, shapeOut(T, roofs, { secrets, lookout: { x0: 21.5, x1: 30, z0: -5, z1: 3 } }));
   }
 
   // ----- Moonlight Carnival: game booths, a Ferris wheel, a carousel and lights -----
@@ -2894,10 +3236,23 @@ window.VP_ART = (function () {
     const L = { x: 11, z0: -11, z1: 11 };
     const r = mulberry32(77);
     const q = { wheel: null, carousel: null, booths: [] };
-    box(root, 100, 0.1, 100, '#4f5d3f', 0, -0.05, 0);
-    box(root, 39, 0.1, 39, '#62704c', 0, -0.045, 0);
-    drawLoop(root, L, '#b59c78', 2.0);
+    // the fairground, a raised boardwalk in the east with the big top on it, and a quiet corner behind the north-west tent
+    const BW = [[22, -4.5], [30, -3.5], [32, 2], [29.5, 8.5], [22.5, 8.5], [22, 4.6]];
+    const BIGTOP = { x0: 25.6, x1: 29.4, z0: 0.6, z1: 4.4 };
     const onPath = loopOnPath(L, 1.4);
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare({ sw: 4, se: 4 }), [[19.5, -5], [24, -7], [31, -5.5], [33.5, 2], [30.5, 9.5], [23, 10.5], [19.5, 8]],
+        [[-19.5, -10], [-23, -11.5], [-27.5, -17], [-25, -23.5], [-17, -23], [-13, -19.5]]],
+      areas: [
+        { kind: 'flat', poly: BW, h: 0.6 },
+        { kind: 'stairs', rect: { x0: 20, x1: 22, z0: 1, z1: 3 }, axis: 'x', h0: 0, h1: 0.6, n: 2 },
+      ],
+      style: { topA: '#62704c', topB: '#5c6a47', topC: '#687751', pathA: '#b59c78', pathB: '#ad9472', side: '#6d5a3e', stair: '#a1785a', stairSide: '#7b5a3e', outside: '#4f5d3f', outer: { h: 0, b: '#4a573b' }, path: onPath,
+        tone: (x, z, h) => (h > 0.4 ? (Math.floor(z) % 2 ? '#a1785a' : '#96704f') : null) },
+      wall: { h: 0.8, a: '#d7ccc8', b: '#c7bcb8' },
+      gate: { gate: '#8d6e63' },
+    });
     // Ferris wheel
     const wx = 0, wz = -15.6, hubY = 6.3, R = 5;
     for (const sx of [-1.5, 1.5]) {
@@ -2988,8 +3343,49 @@ window.VP_ART = (function () {
     const popcorn = (g) => { box(g, 0.35, 0.45, 0.35, '#e53935', 0, 0.22, 0); box(g, 0.36, 0.45, 0.1, '#ffffff', 0, 0.22, 0); box(g, 0.3, 0.12, 0.3, '#fff59d', 0, 0.5, 0); };
     [[-6, -12.7], [6, -12.7], [-12.7, -10], [12.7, -9], [12.7, 8], [-12.7, 10], [5.5, 7.5], [-5.5, 7.5]].forEach(([x, z], i) => addSpot(root, spots, colliders, x, z, 'sniff', i % 2 ? hay : popcorn, 0.42));
     flowerField(root, 120, ['#ff5252', '#ffeb3b', '#40c4ff', '#e040fb', '#69f0ae'], (x, z) => !onPath(x, z), r);
-    boundary(root, { color: '#d7ccc8', post: '#8d6e63' });
-    return { colliders, spots, water, ponds, onPath, loop: L, vendors, q };
+    // the big top on the boardwalk: walk in through the flap
+    const tent = pivot(root, 27.5, 0.6, 2.5);
+    const stripe = (k) => (k % 2 ? '#ffffff' : '#e53935');
+    for (let k = 0; k < 10; k++) {
+      const t = -2.5 + k * 0.5 + 0.25;
+      box(tent, 0.5, 1.8, 0.3, stripe(k), t, 0.9, -2.35);
+      box(tent, 0.5, 1.8, 0.3, stripe(k), t, 0.9, 2.35);
+      box(tent, 0.3, 1.8, 0.5, stripe(k + 1), 2.35, 0.9, t);
+      if (Math.abs(t) > 0.8) box(tent, 0.3, 1.8, 0.5, stripe(k + 1), -2.35, 0.9, t);
+    }
+    box(tent, 0.3, 0.5, 1.6, '#e53935', -2.35, 1.55, 0);
+    for (let k = 0; k < 4; k++) box(tent, 5.4 - k * 1.3, 0.55, 5.4 - k * 1.3, k % 2 ? '#ffffff' : '#e53935', 0, 1.95 + k * 0.5, 0);
+    box(tent, 0.1, 0.9, 0.1, M.gold, 0, 4.2, 0); box(tent, 0.5, 0.3, 0.04, '#ffd54f', 0.27, 4.5, 0);
+    box(tent, 3.0, 0.04, 3.0, '#e6c35c', 0, 0.02, 0);
+    box(tent, 3.2, 0.2, 0.15, '#e53935', 0, 0.1, -1.5); box(tent, 3.2, 0.2, 0.15, '#e53935', 0, 0.1, 1.5); box(tent, 0.15, 0.2, 3.2, '#e53935', 1.5, 0.1, 0);
+    box(tent, 0.6, 0.4, 0.6, '#1e88e5', 0.6, 0.2, 0.4); box(tent, 0.62, 0.06, 0.62, '#ffd54f', 0.6, 0.42, 0.4);
+    box(tent, 0.18, 0.18, 0.18, M.bulbs[1], 1.6, 1.5, -1.6);
+    for (const [x0, x1, z0, z1] of [[24.9, 30.1, -0.2, 0.4], [24.9, 30.1, 4.6, 5.2], [29.6, 30.1, 0.4, 4.6], [24.9, 25.4, 0.4, 1.6], [24.9, 25.4, 3.4, 4.6]]) colliders.push({ x0, x1, z0, z1 });
+    roofs.push({ id: 'bigtop', test: [BIGTOP], mats: fadeable(tent) });
+    const topSpot = addSpot(root, spots, colliders, 28.4, 1.6, 'hidden:bigtop', popcorn, 0.35);
+    topSpot.group.position.y = 0.6;
+    for (let k = 0; k < 14; k++) { const t = k / 13; box(root, 0.12, 0.12, 0.12, M.bulbs[k % 5], 22.4 + t * 7.2, 0.6 + 2.2 - Math.sin(t * Math.PI) * 0.4, 7.8); }
+    for (const x of [22.4, 29.6]) { box(root, 0.12, 2.4, 0.12, '#5d4037', x, 0.6 + 1.2, 7.8); colliders.push({ x, z: 7.8, r: 0.15 }); }
+    for (const [x, z] of [[23.2, -3], [30.5, 6.2]]) { box(root, 0.7, 0.5, 0.7, '#e6c35c', x, 0.85, z); colliders.push({ x, z, r: 0.45 }); }
+    // behind the north-west tent: the fortune teller’s wagon
+    const wg = pivot(root, -23, 0, -18.4);
+    wg.rotation.y = 0.5;
+    box(wg, 3.2, 1.8, 1.8, '#7e57c2', 0, 1.25, 0);
+    box(wg, 3.4, 0.25, 2.0, '#ffd54f', 0, 2.25, 0);
+    box(wg, 2.2, 0.35, 1.4, '#5e35b1', 0, 2.5, 0);
+    for (const [x, z] of [[-1, -0.95], [1, -0.95], [-1, 0.95], [1, 0.95]]) box(wg, 0.7, 0.7, 0.12, '#5d4037', x, 0.35, z);
+    box(wg, 0.8, 0.8, 0.06, M.window, 0.6, 1.4, 0.92);
+    box(wg, 0.3, 0.3, 0.3, M.orb, 0.6, 1.4, 0.7);
+    box(wg, 0.6, 1.3, 0.06, '#4527a0', -0.8, 1.0, 0.92);
+    colliders.push({ x: -23, z: -18.4, r: 1.7 });
+    { const g = pivot(root, -20.2, 0, -21.2); for (let k = 0; k < 3; k++) box(g, 0.7, 0.6, 0.7, '#8d6e4c', (k - 1) * 0.75, 0.3, 0); box(g, 0.7, 0.6, 0.7, '#a1785a', 0.35, 0.9, 0); colliders.push({ x: -20.2, z: -21.2, r: 1.0 }); }
+    const wagSpot = addSpot(root, spots, colliders, -21.2, -16, 'hidden:wagon', hay, 0.42);
+    void wagSpot;
+    const secrets = [
+      { id: 'bigtop', name: 'Inside the big top', rects: [BIGTOP], hint: 'The big top on the boardwalk looks closed, but the flap on the west side is never tied.' },
+      { id: 'wagon', name: 'The fortune teller’s wagon', rects: [{ x0: -27.5, x1: -19.6, z0: -23.5, z1: -12 }], hint: 'Madame Zelda parks her wagon behind one of the tents. She says she knew you’d come.' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q }, shapeOut(T, roofs, { secrets }));
   }
 
   // ----- Fairy Realm: talking animals, floating toys, the statue puzzle -----
@@ -2998,10 +3394,24 @@ window.VP_ART = (function () {
     const L = { x: 11, z0: -11, z1: 11 };
     const r = mulberry32(55);
     const q = { statues: [], orb: null, floaters: [], animals: [], motes: null };
-    box(root, 100, 0.1, 100, '#8fd0a2', 0, -0.05, 0);
-    box(root, 39, 0.1, 39, '#a5e2b6', 0, -0.045, 0);
-    drawLoop(root, L, '#e6d3f5', 1.8);
+    // the realm, and a soft green hill to the north: a fairy ring on top, a glowing grotto in its rocky west side
+    const FH = [[-9, -21], [-6, -27.5], [1, -30], [8, -28.5], [11, -23.5], [10, -20.8]];
+    const FGR = { x0: -7.4, x1: -4.5, z0: -26, z1: -23.5 };
+    const RING = { x0: 0.4, x1: 4.6, z0: -28.4, z1: -24.6 };
     const onPath = loopOnPath(L, 1.3);
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare({ nw: 3, ne: 5, sw: 5, se: 3 }), [[-12, -19.5], [-10, -26], [-3, -31.5], [6, -32], [12.5, -26.5], [14.5, -19.5]]],
+      areas: [
+        { kind: 'hill', poly: FH, h: 2.0, step: 0.4, ring: 1, steep: [0] },
+        { kind: 'flat', rect: FGR, h: 0, under: true },
+      ],
+      roofs: [{ id: 'fairygrotto', zone: [{ x0: -9, x1: -3, z0: -28, z1: -21.5 }], under: [FGR], ceil: 1.3 }],
+      style: { topA: '#a5e2b6', topB: '#9edcb0', topC: '#ace6bc', pathA: '#e6d3f5', pathB: '#dccaee', side: '#a98cc9', rock: '#b39ddb', outside: '#8fd0a2', outer: { h: 0, b: '#88c99b' }, path: onPath,
+        tone: (x, z, h) => (h > 1 ? (hash2(x, z) < 0.5 ? '#aee6bd' : '#a7e1b6') : null) },
+      wall: { h: 0.7, a: '#f8bbd0', b: '#ce93d8' },
+      gate: false,
+    });
     // the glowing orb and four stone dogs around it
     const O = new V3(0, 0, -2);
     box(root, 6.6, 0.05, 6.6, '#d9c8ef', O.x, 0.025, O.z);
@@ -3023,7 +3433,7 @@ window.VP_ART = (function () {
       q.statues.push({ group: s, pos: new V3(O.x + dx, 0, O.z + dz), rot: 0, target, turn: 0 });
     });
     // giant mushrooms and candy trees
-    const free = (x, z, m = 2) => !onPath(x, z) && Math.hypot(x - O.x, z - O.z) > 5 && !(x > 12 && x < 16 && z > 2 && z < 8) && !(Math.abs(x) < 3.5 && z > 11);
+    const free = (x, z, m = 2) => T.inside(x, z) && !onPath(x, z) && Math.hypot(x - O.x, z - O.z) > 5 && !(x > 12 && x < 16 && z > 2 && z < 8) && !(Math.abs(x) < 3.5 && z > 11);
     let n = 0;
     for (let k = 0; k < 400 && n < 16; k++) {
       const x = (r() * 2 - 1) * 18, z = (r() * 2 - 1) * 18;
@@ -3079,12 +3489,31 @@ window.VP_ART = (function () {
     // a portal arch over the way home
     for (const sx of [-1, 1]) box(root, 0.3, 2.6, 0.3, M.crystal, sx * 1.6, 1.3, 19.3);
     box(root, 3.5, 0.3, 0.3, M.crystal, 0, 2.7, 19.3);
+    { const sign = textSprite('🏠 Home', 0.7); sign.position.set(0, 3.3, 19.3); root.add(sign); }
     const vendors = [stall(root, colliders, 'fairyshop', 13.9, 5, -Math.PI / 2, { counter: '#f8bbd0', wall: '#ce93d8', awning: '#80deea', top: '#fff', shirt: '#81c784', hair: '#fff59d', goods: ['🦋', '🪄', '🧚'] })];
     const water = drinkSpot(root, colliders, -2.4, 13.6);
     const glowstone = (g) => { box(g, 0.5, 0.35, 0.5, '#e1bee7', 0, 0.17, 0); box(g, 0.25, 0.25, 0.25, M.orb, 0.05, 0.45, 0); };
     [[-12.7, -9], [12.7, -1], [-3, -12.7], [9.5, -12.7], [-12.7, 8], [12.7, 11], [-7, 6], [7, 6]].forEach(([x, z], i) => addSpot(root, spots, colliders, x, z, 'sniff', i % 2 ? glowstone : spotLooks.flowers, i % 2 ? 0.42 : 0));
-    boundary(root, { color: '#f8bbd0', post: '#ce93d8', gate: '#ce93d8', sign: '🏠 Home' });
-    return { colliders, spots, water, ponds, onPath, loop: L, vendors, q, env: { sky: '#f3dcff', hemi: 0.95, sun: 0.45, noWeather: true, fogColor: '#f3dcff' } };
+    // the hill: a fairy ring of tiny mushrooms on top, and a glowing grotto
+    const ry = T.height(2.5, -26.5);
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2, x = 2.5 + Math.sin(a) * 1.5, z = -26.5 + Math.cos(a) * 1.5;
+      box(root, 0.1, 0.22, 0.1, '#fff8e1', x, ry + 0.11, z);
+      box(root, 0.3, 0.1, 0.3, k % 2 ? '#e53935' : '#9575cd', x, ry + 0.26, z);
+    }
+    box(root, 0.3, 0.3, 0.3, M.orb, 2.5, ry + 1.4, -26.5);
+    for (const [x, z] of [[-1.5, -27], [6, -27.2], [4.6, -22.8]]) { const y = T.height(x, z), s2 = 0.9; box(root, 0.4 * s2, 1.4 * s2, 0.4 * s2, '#fff8e1', x, y + 0.7 * s2, z); box(root, 1.6 * s2, 0.5 * s2, 1.6 * s2, '#9575cd', x, y + 1.55 * s2, z); colliders.push({ x, z, r: 0.45 }); }
+    const ringSpot = addSpot(root, spots, colliders, 3.9, -25.6, 'hidden:ring', glowstone, 0.3);
+    ringSpot.group.position.y = T.height(3.9, -25.6);
+    for (const [x, z, h] of [[-6.8, -25.4, 0.8], [-5, -25.6, 0.5], [-5.2, -23.9, 0.4]]) box(root, 0.26, h, 0.26, M.crystal, x, h / 2, z);
+    box(root, 0.28, 0.28, 0.28, M.orb, -6, 0.9, -24.8);
+    const grotSpot = addSpot(root, spots, colliders, -5.6, -24.6, 'hidden:fairygrotto', spotLooks.flowers, 0);
+    void grotSpot;
+    const secrets = [
+      { id: 'ring', name: 'The fairy ring', rects: [RING], high: true, hint: 'If you stand inside a ring of mushrooms, the fairies notice you. There’s one on the hill, I’m sure of it.' },
+      { id: 'fairygrotto', name: 'The glowing grotto', rects: [FGR], hint: 'The hill in the north has a rocky side that glows at night, as if something inside were awake.' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q, env: { sky: '#f3dcff', hemi: 0.95, sun: 0.45, noWeather: true, fogColor: '#f3dcff' } }, shapeOut(T, roofs, { secrets, lookout: { x0: -4, x1: 8, z0: -29, z1: -22 } }));
   }
 
   // ----- Moon Base: low gravity, craters (one hides a capsule), a rover and domes -----
@@ -3093,16 +3522,32 @@ window.VP_ART = (function () {
     const L = { x: 11, z0: -11, z1: 11 };
     const r = mulberry32(88);
     const q = { craters: [], rover: null };
-    box(root, 100, 0.1, 100, '#6f7076', 0, -0.05, 0);
-    box(root, 39, 0.1, 39, '#8b8c92', 0, -0.045, 0);
-    drawLoop(root, L, '#a3a4aa', 1.6);
+    // the base, a huge crater in the east to climb down into, and a mesa in the west with an old lava tube under it
+    const CR = [[21.5, -9], [27, -11.5], [32, -9.5], [34.5, -2.5], [31.5, 5], [25.5, 7], [21.5, 3]];
+    const MS = [[-22, -5], [-27, -7.5], [-31, -4], [-30.5, 3], [-25, 5], [-22, 2.5]];
+    const LT = { x0: -27.6, x1: -25.4, z0: -1.6, z1: 4.6 };
     const onPath = loopOnPath(L, 1.3);
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare({ sw: 4, nw: 3 }), [[19.5, -10], [25, -14], [33, -12], [36.5, -2.5], [33, 7], [25, 9.5], [19.5, 6]],
+        [[-19.5, -6.5], [-24, -9.5], [-31.5, -7.5], [-34, 0], [-30, 7.5], [-19.5, 7]]],
+      areas: [
+        { kind: 'hill', poly: CR, h: -1.6, step: 0.4, ring: 1 },
+        { kind: 'hill', poly: MS, h: 2.0, step: 0.4, ring: 1, steep: [3, 4] },
+        { kind: 'flat', rect: LT, h: 0, under: true },
+      ],
+      roofs: [{ id: 'lavatube', zone: [{ x0: -29.5, x1: -23, z0: -3, z1: 6 }], under: [LT], ceil: 1.3 }],
+      style: { topA: '#8b8c92', topB: '#85868c', topC: '#909197', pathA: '#a3a4aa', pathB: '#9c9da3', side: '#6f7076', rock: '#5f6066', outside: '#6f7076', outer: { h: 0, b: '#696a70' }, path: onPath,
+        tone: (x, z, h) => (h < -0.5 ? (hash2(x, z) < 0.5 ? '#7a7b81' : '#74757b') : h > 1 ? (hash2(x, z) < 0.5 ? '#9a9ba1' : '#a0a1a7') : null) },
+      wall: { h: 0.6, a: '#c0c4cc', b: '#b0b4bc' },
+      gate: { gate: '#90a4ae', sign: '🚀 Home' },
+    });
     // little dents everywhere
     const dents = new THREE.InstancedMesh(geo(0.6, 0.03, 0.6), mat('#7a7b81'), 140);
     let n = 0;
     for (let k = 0; k < 2000 && n < 140; k++) {
       const x = (r() * 2 - 1) * 19, z = (r() * 2 - 1) * 19;
-      if (onPath(x, z)) continue;
+      if (onPath(x, z) || !T.inside(x, z)) continue;
       placeInst(dents, n++, x, 0.01, z, 0.5 + r() * 1.4);
     }
     dents.count = n;
@@ -3156,8 +3601,28 @@ window.VP_ART = (function () {
     const boulder = (g) => { box(g, 0.8, 0.5, 0.7, '#9e9ea6', 0, 0.25, 0); box(g, 0.5, 0.3, 0.5, '#b0b0b8', 0.1, 0.6, 0); };
     const crate = (g) => { box(g, 0.7, 0.6, 0.7, '#eceff1', 0, 0.3, 0); box(g, 0.72, 0.1, 0.72, '#ff7043', 0, 0.4, 0); };
     [[-12.7, -6], [12.7, -8.5], [-12.7, 8], [12.7, 9.5], [3, 12.7], [-6, -12.7]].forEach(([x, z], i) => addSpot(root, spots, colliders, x, z, 'sniff', i % 2 ? crate : boulder, 0.42));
-    boundary(root, { color: '#c0c4cc', post: '#90a4ae', gate: '#90a4ae', sign: '🚀 Home' });
-    return { colliders, spots, water, ponds, onPath, loop: L, vendors, q, env: { sky: '#04040c', hemi: 0.55, sun: 1.0, noWeather: true, fogColor: '#04040c' } };
+    // the big crater: an old probe rests at the bottom
+    { const x = 28, z = -2, y = T.height(x, z); const g = pivot(root, x, y, z); g.rotation.y = 0.7;
+      box(g, 1.2, 0.8, 1.2, '#cfd8dc', 0, 0.5, 0); box(g, 0.9, 0.3, 0.9, '#ffca28', 0, 1.05, 0); box(g, 2.6, 0.06, 0.8, '#3949ab', 0, 0.75, 0);
+      for (const [lx, lz] of [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]]) box(g, 0.08, 0.5, 0.08, '#90a4ae', lx, 0.12, lz);
+      box(g, 0.05, 0.9, 0.05, '#eceff1', 0.3, 1.6, 0); box(g, 0.2, 0.2, 0.2, M.bulbs[0], 0.3, 2.05, 0); colliders.push({ x, z, r: 0.9 }); }
+    for (const [x, z, s2] of [[24, -8.6, 1], [32.6, 2.2, 0.8], [23, 5, 0.7], [30.8, -8.4, 0.9]]) { const y = T.height(x, z); box(root, 1.0 * s2, 0.5 * s2, 0.8 * s2, '#9e9ea6', x, y + 0.25 * s2, z); colliders.push({ x, z, r: 0.5 * s2 }); }
+    const craterSpot = addSpot(root, spots, colliders, 26.6, -0.8, 'hidden:bigcrater', boulder, 0.42);
+    craterSpot.group.position.y = T.height(26.6, -0.8);
+    // the lava tube: dark rock, warm glowing cracks
+    const ember = new THREE.MeshLambertMaterial({ color: '#ff7043', emissive: '#ff3d00', emissiveIntensity: 0.6 });
+    for (const [x, z, w, d] of [[-27.2, 0.4, 0.15, 1.4], [-25.8, 2.6, 0.15, 1.2], [-26.4, -0.9, 0.9, 0.1]]) box(root, w, 0.03, d, ember, x, 0.02, z);
+    for (const [x, z] of [[-27.1, 2.2], [-25.9, -0.3]]) { box(root, 0.5, 0.35, 0.5, '#4e4f55', x, 0.17, z); colliders.push({ x, z, r: 0.3 }); }
+    box(root, 0.24, 0.24, 0.24, M.crystal, -26.6, 0.6, -1.1);
+    const tubeSpot = addSpot(root, spots, colliders, -26.4, 1.4, 'hidden:lavatube', crate, 0.35);
+    // up on the mesa: a little old flag
+    { const x = -27, z = -3, y = T.height(x, z); box(root, 0.06, 1.6, 0.06, '#eeeeee', x, y + 0.8, z); box(root, 0.7, 0.45, 0.03, '#ff7043', x + 0.37, y + 1.35, z); colliders.push({ x, z, r: 0.2 }); }
+    void tubeSpot;
+    const secrets = [
+      { id: 'bigcrater', name: 'The deep crater', rects: [{ x0: 24, x1: 32, z0: -7, z1: 3 }], hint: 'An old probe landed in a crater east of the base, long before the domes were built. It still blinks.' },
+      { id: 'lavatube', name: 'The lava tube', rects: [LT], hint: 'Under the mesa in the west there’s a tunnel left by lava, ages ago. It’s still warm inside.' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q, env: { sky: '#04040c', hemi: 0.55, sun: 1.0, noWeather: true, fogColor: '#04040c' } }, shapeOut(T, roofs, { secrets, lookout: { x0: -30, x1: -23, z0: -6.5, z1: 2 } }));
   }
 
   // a tiled ground texture for big areas
@@ -3174,6 +3639,10 @@ window.VP_ART = (function () {
   }
 
   function buildLocation(id, root) {
+    curT = null;
+    try { return buildLocationRaw(id, root); } finally { curT = null; }
+  }
+  function buildLocationRaw(id, root) {
     switch (id) {
       case 'oldtown': return buildOldTown(root);
       case 'forest': return buildForest(root);
