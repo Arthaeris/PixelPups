@@ -263,7 +263,7 @@
   const fog = new THREE.Fog(0xcfe6f2, 24, 50);
   let fogPush = 0;   // fog distances follow the camera, so zooming out never fogs the view
 
-  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 300);
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 300);
   const hemiLight = new THREE.HemisphereLight(0xffffff, 0xb9a88a, 0.85);
   world.add(hemiLight);
   const sunLight = new THREE.DirectionalLight(0xffffff, 0.55);
@@ -627,6 +627,7 @@
     } catch (_) { return null; }
   })();
   const ADD = THREE.AdditiveBlending;
+  const POOL_Y = 0.24;
   const PLANE1 = THREE.PlaneGeometry ? new THREE.PlaneGeometry(1, 1) : new THREE.BoxGeometry(1, 1, 0.001);
   function lightPool(color) {
     const m = new THREE.Mesh(PLANE1, new THREE.MeshBasicMaterial({ map: glowTex, color, transparent: true, opacity: 0, blending: ADD, depthWrite: false, fog: false }));
@@ -651,7 +652,7 @@
       const L = D.GLOW[f.type];
       if (!L) continue;
       const pool = lightPool(L.color), halo = lightHalo(L.color, 0.6 + L.r * 0.45);
-      pool.position.set(f.i + 0.5, 0.012, f.j + 0.5);
+      pool.position.set(f.i + 0.5, 0.08, f.j + 0.5);
       pool.scale.set(L.r * 2, L.r * 2, 1);
       halo.position.set(f.i + 0.5, L.y, f.j + 0.5);
       homeLightGroup.add(pool, halo);
@@ -688,7 +689,7 @@
       const gy = S.height ? S.height(p.x, p.z) : 0;
       const tall = p.y - gy > 1.2;
       const pool = lightPool('#ffd890'), halo = lightHalo('#ffd890', tall ? 1.6 : 0.8);
-      pool.position.set(p.x, gy + 0.05, p.z);
+      pool.position.set(p.x, gy + POOL_Y, p.z);
       pool.scale.set(tall ? 5.2 : 2.4, tall ? 5.2 : 2.4, 1);
       halo.position.copy(p);
       S.root.add(pool, halo);
@@ -714,7 +715,7 @@
   function beamAt(b, root, face, dist, len, wide, s) {
     root.getWorldPosition(lv);
     const bx = lv.x + Math.sin(face) * dist, bz = lv.z + Math.cos(face) * dist;
-    b.pool.position.set(bx, groundAt(bx, bz) + 0.06, bz);
+    b.pool.position.set(bx, groundAt(bx, bz) + POOL_Y + 0.01, bz);
     b.pool.rotation.z = face;
     b.pool.scale.set(wide, len, 1);
     b.pool.material.opacity = 0.55 * s;
@@ -727,7 +728,7 @@
       const t = animT;
       for (const h of homeLights) {
         const on = glowOn(h.f, h.L) ? 1 : 0;
-        const fl = h.L.flicker ? 0.85 + Math.sin(t * 8 + h.k) * 0.08 + Math.sin(t * 13.7 + h.k) * 0.06 : h.L.twinkle ? 0.9 + Math.sin(t * 2 + h.k) * 0.1 : 1;
+        const fl = h.L.flicker ? 0.92 + Math.sin(t * 4.2 + h.k) * 0.04 + Math.sin(t * 7.3 + h.k) * 0.025 : h.L.twinkle ? 0.9 + Math.sin(t * 2 + h.k) * 0.1 : 1;
         h.pool.material.opacity = 0.62 * night * on * fl;
         h.halo.material.opacity = 0.5 * night * on * fl;
       }
@@ -1127,7 +1128,9 @@
       if (Math.abs(r.fade - want) > 0.004) {
         r.fade = lerp(r.fade, want, Math.min(1, dt * 5));
         if (Math.abs(r.fade - want) < 0.01) r.fade = want;
-        for (const m of r.mats) { m.opacity = r.fade; m.depthWrite = r.fade > 0.98; }
+        // solid again: back to a normal opaque material, so nothing flickers when you are not underneath
+        const see = r.fade < 0.999;
+        for (const m of r.mats) { if (m.transparent !== see) { m.transparent = see; m.needsUpdate = true; } m.opacity = r.fade; m.depthWrite = !see; }
       }
     }
     // stepping into a hidden spot for the first time
@@ -1843,17 +1846,32 @@
     }
 
     // ----- movement -----
+    // on hilly walks a dog finds its way round cliffs and up the slopes, like you do
+    navPoint(tx, tz, dt) {
+      const pos = this.root.position;
+      const N = this.nav || (this.nav = { t: 0, path: null, tx: 0, tz: 0 });
+      N.t -= dt;
+      if (lineClear(pos.x, pos.z, tx, tz)) { N.path = null; return null; }
+      if (!N.path || N.t <= 0 || Math.hypot(N.tx - tx, N.tz - tz) > 1.5) {
+        N.path = findPath(pos, { x: tx, z: tz });
+        N.t = 0.7; N.tx = tx; N.tz = tz;
+      }
+      while (N.path.length > 1 && Math.hypot(N.path[0].x - pos.x, N.path[0].z - pos.z) < 0.35) N.path.shift();
+      return N.path.length > 1 ? N.path[0] : null;
+    }
     moveTowards(tx, tz, speed, dt) {
       const pos = this.root.position;
+      const gx = tx, gz = tz;
+      if (terrainOn()) { const w = this.navPoint(tx, tz, dt); if (w) { tx = w.x; tz = w.z; } }
       const dx = tx - pos.x, dz = tz - pos.z;
       const d = Math.hypot(dx, dz);
-      if (d < 1e-4) return 0;
+      if (d < 1e-4) return Math.hypot(gx - pos.x, gz - pos.z);
       const step = Math.min(d, speed * dt);
       moveWithCollision(pos, (dx / d) * step, (dz / d) * step, 0.22, 0.62);
       this.face = Math.atan2(dx, dz);
       this.moving = true;
       this.curSpeed = speed;
-      return Math.hypot(tx - pos.x, tz - pos.z);
+      return Math.hypot(gx - pos.x, gz - pos.z);
     }
 
     // ----- main update -----
@@ -2104,7 +2122,9 @@
       if (this.returning && pos.distanceTo(pp) < 2.4) this.returning = false;
       const n = dogs.length, idx = dogs.indexOf(this);
       const a = player.root.rotation.y + Math.PI + (idx - (n - 1) / 2) * 0.75;
-      const tx = pp.x + Math.sin(a) * 1.5, tz = pp.z + Math.cos(a) * 1.5;
+      let tx = pp.x + Math.sin(a) * 1.5, tz = pp.z + Math.cos(a) * 1.5;
+      // the spot behind you is down a ledge? then just come to you
+      if (terrainOn() && (isSolid(tx, tz) || !lineClear(pp.x, pp.z, tx, tz))) { tx = pp.x + Math.sin(a) * 0.4; tz = pp.z + Math.cos(a) * 0.4; }
       const d = Math.hypot(tx - pos.x, tz - pos.z);
       const tired = this.energy < CRITICAL ? 0.6 : 1;
       if (d > 0.35) this.moveTowards(tx, tz, (d > 2.2 ? 4.2 : 2.4) * tired * (this.isPuppy() ? 0.9 : 1), dt);
@@ -2258,15 +2278,20 @@
     applyLeash() {
       if (this.offLeash || this.returning || this.state === 'fetch' || this.state === 'return') return;
       const pp = player.root.position, pos = this.root.position;
-      const dx = pos.x - pp.x, dz = pos.z - pp.z, d = Math.hypot(dx, dz), L = 3.2;
+      const dx = pos.x - pp.x, dz = pos.z - pp.z, d = Math.hypot(dx, dz);
+      // on hills the leash goes round corners: a dog walking the long way up the slope gets some slack
+      const clear = !terrainOn() || lineClear(pp.x, pp.z, pos.x, pos.z);
+      const L = clear ? 3.2 : 7;
       if (d > L) {
-        pos.x = pp.x + (dx / d) * L;
-        pos.z = pp.z + (dz / d) * L;
-        // a leash never drags a dog up a cliff: it hops back to your side instead
-        if (terrainOn() && (Math.abs(groundAt(pos.x, pos.z) - pp.y) > 0.7 || isSolid(pos.x, pos.z))) {
+        if (clear) {
+          pos.x = pp.x + (dx / d) * L;
+          pos.z = pp.z + (dz / d) * L;
+        } else {
+          // really stuck: the dog catches up at your side
           const f = player.root.rotation.y;
           pos.set(pp.x - Math.sin(f) * 0.9, pp.y, pp.z - Math.cos(f) * 0.9);
-          if (isSolid(pos.x, pos.z)) pos.set(pp.x, pp.y, pp.z);
+          if (isSolid(pos.x, pos.z) || !lineClear(pp.x, pp.z, pos.x, pos.z)) pos.set(pp.x, pp.y, pp.z);
+          if (this.nav) this.nav.path = null;
         }
         this.face = Math.atan2(-dx, -dz);
         this.moving = true;
@@ -5229,7 +5254,7 @@
     player.moveTarget = null;
     player.root.position.set(0, groundAt(0, 16), 16);
     player.root.rotation.y = player.face = Math.PI;
-    if (S.roofs) S.roofs.forEach((r) => { r.fade = 1; r.mats.forEach((m) => { m.opacity = 1; m.depthWrite = true; }); });
+    if (S.roofs) S.roofs.forEach((r) => { r.fade = 1; r.mats.forEach((m) => { m.opacity = 1; m.depthWrite = true; if (m.transparent) { m.transparent = false; m.needsUpdate = true; } }); });
     walkTotal = 0;
     walkInfo = { night: nightLevel > 0.5, storm: !!curWeather().lightning, rain: curWeather().precip === 'rain' };
     dogs.forEach((d, i) => {
