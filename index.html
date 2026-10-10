@@ -10,7 +10,16 @@
   <meta name="theme-color" content="#cfe6f2">
   <meta name="color-scheme" content="light">
   <title>PixelPups</title>
-  <link rel="stylesheet" href="style.css">
+  <script>
+    // after "Update now" the game files are loaded under a fresh name, so no old copy can get in the way
+    (function () {
+      var v = '';
+      try { v = localStorage.getItem('voxelpaws-bust') || ''; } catch (e) { v = ''; }
+      window.PP_BUST = v ? '?v=' + encodeURIComponent(v) : '';
+      document.write('<link rel="stylesheet" href="style.css' + window.PP_BUST + '">');
+    })();
+  </script>
+  <noscript><link rel="stylesheet" href="style.css"></noscript>
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -125,6 +134,7 @@
     <div class="titleTop"><h1 class="logo"><i data-i="paw"></i>PixelPups</h1><p id="titleSub"></p></div>
     <div class="titleCard glass">
       <button id="playBtn" class="primary">Play</button>
+      <p id="titleNote" class="sub hidden"></p>
       <div class="titleRow">
         <button class="soft" id="titleSettings"><i data-i="gear"></i> Settings</button>
         <button class="soft" id="titleHelp"><i data-i="question"></i> How to play</button>
@@ -431,6 +441,12 @@
         <button class="x" data-act="closeSettings" aria-label="Close"><i data-i="x"></i></button>
       </div>
       <div class="sheetBody">
+        <div class="section"><i data-i="rotate"></i>Updates</div>
+        <p class="sub" id="updInfo">Phones sometimes hold on to an old copy of the game. Check here for a newer version.</p>
+        <div class="btnRow">
+          <button class="soft" id="updCheckBtn"><i data-i="search"></i> Search for update…</button>
+          <button class="primary hidden" id="updNowBtn">Update now</button>
+        </div>
         <div class="section"><i data-i="note"></i>Sound</div>
         <label class="toggle"><span>Sound effects</span><input type="checkbox" id="optSfx"><i></i></label>
         <label class="toggle"><span>Jukebox music</span><input type="checkbox" id="optMusic"><i></i></label>
@@ -472,6 +488,8 @@
         <div class="section"><i data-i="undo"></i>Backup</div>
         <p class="sub" id="restoreInfo"></p>
         <button class="soft" id="restoreBtn">Restore previous save</button>
+        <p class="sub hidden" id="rescueInfo"></p>
+        <button class="soft hidden" id="rescueBtn">Download the kept save</button>
         <div class="section"><i data-i="sprout"></i>New game</div>
         <button class="soft danger" id="newGameBtn">Start a new game</button>
         <p class="sub ver" id="verInfo"></p>
@@ -512,8 +530,8 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="data.js"></script>
-  <script src="art.js"></script>
-  <script src="game.js"></script>
+  <script>
+    ['data.js', 'art.js', 'game.js'].forEach(function (f) { document.write('<script src="' + f + (window.PP_BUST || '') + '"><\/script>'); });
+  </script>
 </body>
 </html>
