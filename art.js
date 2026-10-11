@@ -1180,6 +1180,35 @@ window.VP_ART = (function () {
     return url;
   }
 
+  // a little pixel face for a neighbor (hair, skin and shirt from their look; the hair style follows their name)
+  function personPortraitURL(info) {
+    const key = 'p|' + info.owner + '|' + info.shirt + '|' + info.hair;
+    if (portraitCache.has(key)) return portraitCache.get(key);
+    let h = 0;
+    for (const ch of String(info.owner)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const skins = ['#f1c8a0', '#e0ac7e', '#c68a5c', '#8d5a3b', '#f6d5b8'];
+    const skin = info.skin || skins[h % skins.length], hair = info.hair || '#5a3a22', shirt = info.shirt || '#5b7cfa';
+    const style = h % 3;
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const x = c.getContext('2d');
+    const px = (col, X, Y, w = 1, hh = 1) => { x.fillStyle = col; x.fillRect(X * 4, Y * 4, w * 4, hh * 4); };
+    if (style === 1) px(hair, 3, 4, 10, 9);
+    px(shirt, 2, 13, 12, 3); px(shirt, 3, 12, 10, 1);
+    px(skin, 6, 11, 4, 2);
+    px(skin, 4, 3, 8, 9);
+    px(hair, 4, 1, 8, 3); px(hair, 3, 2, 10, 2); px(hair, 3, 4, 1, style === 2 ? 2 : 4); px(hair, 12, 4, 1, style === 2 ? 2 : 4);
+    if (style === 0) px(hair, 4, 4, 3, 1);
+    if (style === 2) { px(hair, 5, 0, 6, 1); }
+    px('#1a1a1a', 6, 7, 1, 2); px('#1a1a1a', 9, 7, 1, 2);
+    px('#ffffff', 6, 7); px('#ffffff', 9, 7);
+    px('#f29a9a', 5, 9); px('#f29a9a', 10, 9);
+    px('#b5524f', 7, 10, 2, 1);
+    const url = c.toDataURL();
+    portraitCache.set(key, url);
+    return url;
+  }
+
   // ===================================================================
   // Player
   // ===================================================================
@@ -4136,7 +4165,7 @@ window.VP_ART = (function () {
 
   return {
     mulberry32, geo, mat, box, pivot, blob, emojiTexture, emojiSprite, textSprite, setSpriteText, M,
-    buildItem, buildToy, buildDog, coatOf, portraitURL, buildPlayer, buildAccessory, gardenFloorMaterial, buildHole,
+    buildItem, buildToy, buildDog, coatOf, portraitURL, personPortraitURL, buildPlayer, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
     icon, thumbURL, hasThumb, scentFX, setScentGold,
