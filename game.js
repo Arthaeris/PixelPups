@@ -86,8 +86,14 @@
     if (!ready) thumbWait.add(key);
     return `<img class="th${cls ? ' ' + cls : ''}" data-th="${esc(key)}" alt=""${url ? ` src="${url}"` : ''}>`;
   }
+  let thumbScan = 0;
   function pumpThumbs() {
-    if (!thumbWait.size) return;
+    // pictures can arrive later inside cards that were queued (news, tips): look for them now and then
+    if (!thumbWait.size) {
+      if (++thumbScan % 10) return;
+      if (!document.querySelector('img.th[data-th]:not([src]):not(.none)')) return;
+      thumbWait.add('scan');
+    }
     // only pictures that are on the page, the ones you can see first
     const imgs = [...document.querySelectorAll('img.th[data-th]:not([src]):not(.none)')];
     if (!imgs.length) { thumbWait.clear(); return; }
@@ -619,13 +625,18 @@
       const c = document.createElement('canvas');
       c.width = c.height = 64;
       const x = c.getContext('2d');
-      const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-      g.addColorStop(0, 'rgba(255,255,255,1)');
-      g.addColorStop(0.35, 'rgba(255,255,255,0.55)');
-      g.addColorStop(0.7, 'rgba(255,255,255,0.16)');
-      g.addColorStop(1, 'rgba(255,255,255,0)');
-      x.fillStyle = g;
-      x.fillRect(0, 0, 64, 64);
+      // the glow is written pixel by pixel: Safari adds coloured noise to canvas gradients, which showed as confetti in the light
+      const img = x.createImageData(64, 64), A = [[0, 1], [0.35, 0.55], [0.7, 0.16], [1, 0]];
+      for (let j = 0; j < 64; j++) for (let i = 0; i < 64; i++) {
+        const d = Math.min(1, Math.hypot(i + 0.5 - 32, j + 0.5 - 32) / 32);
+        let k = 0;
+        while (k < A.length - 2 && d > A[k + 1][0]) k++;
+        const t = (d - A[k][0]) / (A[k + 1][0] - A[k][0]);
+        const n = (j * 64 + i) * 4;
+        img.data[n] = img.data[n + 1] = img.data[n + 2] = 255;
+        img.data[n + 3] = Math.round(255 * (A[k][1] + (A[k + 1][1] - A[k][1]) * t));
+      }
+      x.putImageData(img, 0, 0);
       return new THREE.CanvasTexture(c);
     } catch (_) { return null; }
   })();
@@ -5388,6 +5399,7 @@
 
   function updateSniffSpots(dt) {
     for (const s of sniffSpots) {
+      if (title) { s.sparkle.visible = false; continue; }
       if (s.cooldown > 0) s.cooldown -= dt;
       // at night, without a light you only notice the spots close by
       const near = !nightHidesSpots() || flatDist(s.pos, player.root.position) < 6.5;
@@ -5717,7 +5729,7 @@
     const st = state.chats[w.info.owner] = state.chats[w.info.owner] || { n: 0, day: -1 };
     st.n++;
     progress('chat');
-    $('talkPic').src = ART.portraitURL(w.info.dog.breed, w.info.dog.coat);
+    $('talkPic').src = ART.personPortraitURL(w.info);
     $('talkName').textContent = w.info.owner;
     $('talkSub').textContent = `with ${w.info.dog.name}`;
     showTalkLine(chatLine(w, true));
@@ -7844,7 +7856,13 @@
   function backupCurrent() {
     try {
       const raw = localStorage.getItem(CONFIG.SAVE_KEY);
-      if (raw) localStorage.setItem(CONFIG.BACKUP_KEY, JSON.stringify({ at: Date.now(), data: JSON.parse(raw) }));
+      if (!raw) return;
+      const cur = JSON.parse(raw);
+      // never replace a backup that has dogs in it with a save that has none
+      let old = null;
+      try { old = JSON.parse(localStorage.getItem(CONFIG.BACKUP_KEY)); } catch (_) { old = null; }
+      if (old && old.data && (old.data.dogs || []).length && !(cur.dogs || []).length) return;
+      localStorage.setItem(CONFIG.BACKUP_KEY, JSON.stringify({ at: Date.now(), data: cur }));
     } catch (_) { /* storage full or unavailable */ }
   }
   function replaceSave(obj) {
@@ -8426,11 +8444,14 @@
       if (tr.data && typeof tr.data === 'object' && (!raw || typeof raw !== 'object' || (tr.data.savedAt || 0) >= (raw.savedAt || 0))) raw = tr.data;
       try { localStorage.removeItem(TRANSFER_KEY); } catch (_) { /* fine */ }
     }
-    // the save went missing? bring back the last copy that opened fine
-    if (!raw || typeof raw !== 'object') {
+    // the save went missing (or lost its dogs, which can't happen in play)? bring back the last copy that opened fine
+    if (!raw || typeof raw !== 'object' || !Array.isArray(raw.dogs) || !raw.dogs.length) {
       let last = null;
       try { last = JSON.parse(localStorage.getItem(LAST_KEY)); } catch (_) { last = null; }
-      if (last && last.data && typeof last.data === 'object' && Array.isArray(last.data.dogs) && last.data.dogs.length) { raw = last.data; boot.recovered = true; }
+      if (last && last.data && typeof last.data === 'object' && Array.isArray(last.data.dogs) && last.data.dogs.length) {
+        if (raw && typeof raw === 'object') keepRescue(JSON.stringify(raw));
+        raw = last.data; boot.recovered = true;
+      }
     }
     if (!raw || typeof raw !== 'object') { if (text) keepRescue(text); return false; }
     const rawText = JSON.stringify(raw);
@@ -8444,7 +8465,7 @@
       state = defaultState();
       return false;
     }
-    try { localStorage.setItem(LAST_KEY, JSON.stringify({ at: Date.now(), data: JSON.parse(rawText) })); } catch (_) { /* storage full: the main save still works */ }
+    if (state.dogs.length) { try { localStorage.setItem(LAST_KEY, JSON.stringify({ at: Date.now(), data: JSON.parse(rawText) })); } catch (_) { /* storage full: the main save still works */ } }
     // time passes while you're away, but gently: after 8 hours a neighbor looks in on your dogs,
     // so time only counts a quarter as much, and needs never drop below a comfortable floor
     const real = clamp((Date.now() - (raw.savedAt || Date.now())) / 3600000, 0, 72);
@@ -9154,7 +9175,11 @@
       if (p.name) { const tag = textSprite(p.name, 0.3); tag.position.set(0, 1.15, 0); parts.root.add(tag); }
       return { parts, target: null, wait: rand(0, 2), phase: 0, speed: rand(1.1, 1.8), t: rand(0, 5), sit: 0 };
     });
-    title = { show, t: 0, loc: id };
+    // a clean view: no signs, drops or other little hints floating about
+    const hidden = [];
+    sniffSpots.forEach((s) => { s.sparkle.visible = false; });
+    parkRoot.traverse((o) => { if (o.isSprite && o.visible && o.material.map !== glowTex) { o.visible = false; hidden.push(o); } });
+    title = { show, t: 0, loc: id, hidden };
     $('playBtn').textContent = dogs.length ? 'Continue' : 'Play';
     const note = boot.blocked ? 'This browser won’t let PixelPups save (Private Browsing or blocked website data?). Your progress may be lost when you close it.' :
       boot.problem ? 'Your last save couldn’t be opened. It’s kept safe and untouched: see Settings → Backup.' :
@@ -9224,6 +9249,7 @@
   function leaveTitle(then) {
     if (!title) return;
     for (const s of title.show) parkRoot.remove(s.parts.root);
+    for (const o of title.hidden || []) o.visible = true;
     title = null;
     $('title').classList.add('hidden');
     player.root.visible = true;
