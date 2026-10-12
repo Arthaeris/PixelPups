@@ -1444,3 +1444,77 @@ body.sheetOpen #talk { display: none; }
 #updInfo.found { color: var(--accent); font-weight: 800; }
 #titleNote { margin: 0; text-align: center; font-size: 13px; }
 #titleNote.warn { color: #c22a48; font-weight: 700; }
+
+/* ---------- the calendar (in the weather sheet) ---------- */
+#wxTabs, #crTabs { margin-top: 8px; }
+.calHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 6px; }
+.calHead div { display: flex; flex-direction: column; align-items: center; }
+.calHead b { font-size: 19px; }
+.calHead small { font-size: 12px; color: var(--ink-2); font-weight: 700; }
+.calNav { width: 42px; height: 42px; padding: 0; border-radius: 50%; }
+.calGrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin: 8px 0 4px; }
+.calDay { position: relative; aspect-ratio: 1 / 0.92; border: none; border-radius: 14px; background: var(--g-card); box-shadow: inset 0 0 0 1px var(--g-line); color: var(--ink); padding: 4px 3px 2px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; }
+.calDay small { font-size: 11px; color: var(--ink-2); align-self: flex-start; padding-left: 3px; }
+.calDay span { display: flex; gap: 1px; min-height: 22px; align-items: center; }
+.calDay span .th { width: 22px; height: 22px; }
+.calDay span .i { font-size: 16px; color: var(--accent-ink); }
+.calDay.past { opacity: 0.55; }
+.calDay.today { background: rgba(107, 92, 246, 0.24); box-shadow: inset 0 0 0 2px var(--accent); }
+.calDay.today small { color: var(--accent-ink); font-weight: 800; }
+.calDay.sel { box-shadow: inset 0 0 0 2px var(--gold); }
+.calEv.live .txt b::after { content: ' · on now'; color: var(--mint); font-size: 12px; }
+.calEv.done .txt b::after { content: ' · done'; color: var(--ink-3); }
+
+/* ---------- dog journal ---------- */
+.jCover { display: flex; gap: 14px; align-items: center; padding: 6px 2px 10px; }
+.jCover .portrait { width: 84px; height: 84px; border-radius: 26px; background: rgba(255, 246, 228, 0.92); image-rendering: pixelated; box-shadow: 0 8px 18px -10px rgba(30, 20, 60, 0.5); transform: rotate(-3deg); }
+.jCover h3 { margin: 0 0 2px; font-size: 22px; }
+.jCover small { display: block; color: var(--ink-2); font-size: 12.5px; }
+.jTraits { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.jFavs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.jFav { background: var(--g-card); border-radius: 16px; padding: 8px 8px 7px; box-shadow: inset 0 0 0 1px var(--g-line); display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.jFav .i { font-size: 18px; color: var(--accent-ink); }
+.jFav small { font-size: 10.5px; color: var(--ink-2); font-weight: 700; }
+.jFav b { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jNums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0 2px; text-align: center; }
+.jNums b { display: block; font-size: 19px; }
+.jNums small { font-size: 10.5px; color: var(--ink-2); line-height: 1.15; display: block; }
+.jPhotos { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; }
+.jPhotos img { height: 110px; border-radius: 10px; border: 4px solid #fff; box-shadow: 0 6px 14px -8px rgba(30, 20, 60, 0.5); }
+.jPhotos img:nth-child(odd) { transform: rotate(-2deg); }
+.jPhotos img:nth-child(even) { transform: rotate(2deg); }
+.jMonth { margin: 12px 0 4px; font-size: 12px; font-weight: 800; color: var(--accent-ink); }
+.jEntry { display: flex; gap: 10px; align-items: flex-start; padding: 7px 2px; box-shadow: 0 1px 0 var(--g-line); }
+.jEntry .th { width: 34px; height: 34px; }
+.jEntry div { display: flex; flex-direction: column; min-width: 0; }
+.jEntry small { font-size: 11px; color: var(--ink-3); font-weight: 700; }
+.jEntry span { font-size: 13.5px; line-height: 1.35; }
+.jPhoto { width: 150px; border-radius: 8px; border: 3px solid #fff; margin-top: 6px; }
+
+/* ---------- while you were away ---------- */
+.awaySheet { max-width: 400px; text-align: left; }
+.awaySheet h2 { margin: 0 0 2px; }
+.awayRow { display: flex; gap: 10px; align-items: center; padding: 8px 0; box-shadow: 0 1px 0 var(--g-line); }
+.awayRow:last-child { box-shadow: none; }
+.awayRow .portrait { width: 40px; height: 40px; border-radius: 14px; background: rgba(255, 246, 228, 0.92); image-rendering: pixelated; flex: 0 0 auto; }
+.awayRow .portrait.two { margin-left: -22px; transform: rotate(6deg); }
+.awayRow span { font-size: 14px; line-height: 1.35; }
+
+/* ---------- what's new & what now ---------- */
+.inboxRow.unread .txt b::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 1px; }
+.wnRow .txt small { font-size: 13.5px; color: var(--ink); line-height: 1.35; }
+.wnRow .soft { flex: 0 0 auto; padding: 8px 12px; }
+.wnRow .ic img.th, .calEv .ic img.th { width: 40px; height: 40px; image-rendering: pixelated; border-radius: 12px; }
+
+/* ---------- bigger buttons (Settings) ---------- */
+body.bigui .dock button { width: 76px; flex-basis: 76px; height: 70px; }
+body.bigui .dock .dIc { font-size: 29px; }
+body.bigui button small { font-size: 12px; }
+body.bigui .mini { padding: 10px 13px; font-size: 14px; }
+body.bigui .soft { padding: 13px 16px; font-size: 15.5px; }
+body.bigui .tile { min-height: 112px; }
+body.bigui .tile b { font-size: 17px; }
+body.bigui .x { width: 46px; height: 46px; }
+body.bigui .row .txt b { font-size: 16.5px; }
+body.bigui .row .txt small { font-size: 13.5px; }
+body.bigui .seg { padding: 10px 14px; font-size: 15px; }
