@@ -403,7 +403,7 @@
       return new Intl.DateTimeFormat('en-GB', { timeZone: CONFIG.TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
     } catch (_) { return null; }
   })();
-  let timeOverride = null, weatherOverride = null;
+  let timeOverride = null, weatherOverride = null, gdOverride = null;
   const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   function berlinNow() {
     let p = {};
@@ -415,12 +415,21 @@
     }
     const realHour = (+p.hour % 24) + +p.minute / 60 + +p.second / 3600;
     // every real hour is one game day, counted from a fixed start
-    const gameDay = Math.floor(Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24) / 3600000);
+    const gameDay = gdOverride !== null ? gdOverride : Math.floor(Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24) / 3600000);
     let hour = ((+p.minute + +p.second / 60) / 60) * 24;
     if (timeOverride !== null) hour = timeOverride;
     const hh = Math.floor(hour), mm = Math.floor((hour - hh) * 60);
-    return { dateKey: `${p.year}-${p.month}-${p.day}`, month: +p.month, hour, realHour, gameDay, weekday: WEEKDAYS[((gameDay % 7) + 7) % 7], hm: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` };
+    // the in-game calendar: 24 days a month, so seasons come and go every few real days
+    const cal = calOf(gameDay);
+    return { dateKey: `${p.year}-${p.month}-${p.day}`, month: cal.month, day: cal.day, year: cal.year, realMonth: +p.month, hour, realHour, gameDay, weekday: WEEKDAYS[((gameDay % 7) + 7) % 7], hm: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` };
   }
+  const CALD = D.CAL.monthDays, CALY = D.CAL.monthDays * 12;
+  const CAL_BASE = Math.floor(Date.UTC(2026, 9, 1) / 3600000 / (D.CAL.monthDays * 12)) - 1;
+  function calOf(gd) {
+    const doy = ((gd % CALY) + CALY) % CALY;
+    return { month: Math.floor(doy / CALD) + 1, day: (doy % CALD) + 1, year: Math.floor(gd / CALY) - CAL_BASE };
+  }
+  const gdOf = (y, m, d) => (y + CAL_BASE) * CALY + (m - 1) * CALD + (d - 1);
   const seasonOf = (m) => (m === 12 || m <= 2 ? 'winter' : m <= 5 ? 'spring' : m <= 8 ? 'summer' : 'autumn');
   // weather for one half day: slot = gameDay * 2 (+1 for the night half, from 18:00)
   function slotOf(now) { const h = now.hour; return now.gameDay * 2 + (h >= 18 ? 1 : 0) - (h < 6 ? 1 : 0); }
@@ -1183,7 +1192,7 @@
       sfx('find');
       gainXP(D.XP_MISC.secret || 60);
       addMastery(loc, 40);
-      dogs.forEach((d) => { d.happy = Math.min(100, d.happy + 8); });
+      dogs.forEach((d) => { d.happy = Math.min(100, d.happy + 8); journalAdd(d, 'hid:' + loc + ':' + sec.id, '🔍', `Discovered ${sec.name.replace(/^The /, 'the ')} in ${LOC().name}`); });
       if (mmFog) mmFog.delete(loc);
       save();
     }
@@ -1510,6 +1519,11 @@
       this.lastToys = Array.isArray(data.lastToys) ? data.lastToys.slice(-3) : [];
       this.rest = Object.assign({}, data.rest);
       this.favSpot = data.favSpot || null;
+      // the journal and little life counters (walks per place, meals, fetches, finds)
+      this.journal = Array.isArray(data.journal) ? data.journal.filter((e) => e && typeof e.tx === 'string').slice(-140) : [];
+      const life = data.life && typeof data.life === 'object' ? data.life : {};
+      this.life = { walks: Object.assign({}, life.walks), meals: Object.assign({}, life.meals), fetches: +life.fetches || 0, finds: +life.finds || 0 };
+      if (!this.journal.length && !data.npc && !String(this.id).startsWith('n:')) this.journal.push({ k: 'home', t: this.born || Date.now(), gd: Math.floor((this.born || Date.now()) / 3600000), ic: '🏠', tx: 'Came home with you' });
       this.acc = {};
       for (const [slot, id] of Object.entries(data.acc || {})) if (D.ACCESSORIES[id] && D.ACCESSORIES[id].slot === slot) this.acc[slot] = id;
       this.accParts = [];
@@ -1584,6 +1598,7 @@
         favToy: this.favToy, favLast: this.favLast, othersSince: this.othersSince, toyPlays: this.toyPlays, recentPlays: this.recentPlays,
         lastToys: this.lastToys, rest: this.rest, favSpot: this.favSpot, tricks: this.tricks, acc: this.acc,
         bondDay: this.bondDay, bondToday: this.bondToday, bondSeen: this.bondSeen, badges: this.badges, examDay: this.examDay, spec: this.spec, specPts: Math.round(this.specPts),
+        journal: this.journal, life: this.life,
       };
     }
 
@@ -1637,6 +1652,7 @@
       this.head.scale.setScalar(lerp(1.35, 1, g));
       if (!this.grown && g >= 1) {
         this.grown = true;
+        journalAdd(this, 'grown', '🎉', 'Grew up from a puppy into a big dog');
         if (this.ui) {
           toast(`🎉 ${this.name} is all grown up!`);
           confetti(this.root.position.clone().add(new V3(0, 1, 0)));
@@ -2459,6 +2475,9 @@
         resetBall();
         this.path = null;
         const joy = snow ? 16 : this.playedWith(type);
+        this.life.fetches++;
+        journalAdd(this, 'fetch1', '🎾', 'Brought the ball back for the very first time');
+        haptic();
         if (snow) addDirt(this, 'frost', 2);
         this.happy = Math.min(this.missing() ? CONFIG.MISS_CAP : 100, this.happy + joy);
         this.energy = Math.max(0, this.energy - 4);
@@ -2479,7 +2498,10 @@
       sfx(Math.random() < 0.5 ? 'bark' : 'pet');
       this.happy = Math.min(this.missing() ? CONFIG.MISS_CAP : 100, this.happy + 12 * this.mod('petJoy'));
       this.addBond(1);
+      treatDog = this;
+      haptic();
       progress('pet');
+      treatDog = null;
       this.faceTo(player.root.position);
       this.setState('happy', 1.5);
       for (let i = 0; i < 3; i++) setTimeout(() => spawnEmoji('❤️', this.headWorld(0.35), { size: 0.4 }), i * 180);
@@ -2705,6 +2727,8 @@
     state.friends[k] = Math.round(v * 10) / 10;
     if (before < D.FRIEND_LEVEL && v >= D.FRIEND_LEVEL) {
       toast(`💕 ${a.name} and ${b.name} are friends now!`);
+      if (!a.npc) journalAdd(a, 'friend:' + b.id, '💕', `Became friends with ${b.name}`);
+      if (!b.npc) journalAdd(b, 'friend:' + a.id, '💕', `Became friends with ${a.name}`);
       for (const d of [a, b]) if (d.ui) refreshCardStatic(d);
     }
   }
@@ -2867,7 +2891,10 @@
     const must = want.find((N) => { const C = storyOf(N.owner) && storyChapter(N.owner); return C && C.task.kind === 'at' && C.task.loc === loc; });
     const lead = must || (want.length && Math.random() < 0.75 ? pick(want) : null);
     if (lead) { order.splice(order.indexOf(lead), 1); order.unshift(lead); }
-    for (const info of order.slice(0, Math.max(count, lead ? 1 : 0))) {
+    // a neighbor who invited you here is always out
+    const meet = meetupLive(), mo = meet && meet.loc === loc ? order.find((N) => N.owner === meet.owner) : null;
+    if (mo) { order.splice(order.indexOf(mo), 1); order.unshift(mo); }
+    for (const info of order.slice(0, Math.max(count, lead ? 1 : 0) + (mo ? 1 : 0))) {
       const parts = ART.buildPlayer({ shirt: info.shirt, hair: info.hair });
       parkRoot.add(parts.root);
       const w = { info, parts, t: rand(0, loopLength()), dir: pick([1, -1]), speed: rand(0.9, 1.3), pause: 0, met: false, phase: 0 };
@@ -3213,6 +3240,8 @@
     const fx = { speak: '💬', shake: '💦', howl: '🌕', dance: '🎶', chase: '🌀', dead: '💫' }[id];
     if (fx) spawnEmoji(fx, head, { size: 0.45, life: 1.4 });
     if (after >= 1 && !state.learned.includes(id)) state.learned.push(id);
+    if (after > before) journalAdd(d, after === 1 ? 'trick:' + id : null, T.icon, after === 1 ? `Learned a new trick: ${T.name}` : `Got better at ${T.name} (level ${after})`);
+    haptic();
     progress('trick');
     progress('trick:' + id);
     sfx('trick');
@@ -3284,6 +3313,7 @@
       news({ title: `${d.name}: ${D.BOND.names[k]}`, text: k === 2 && !unlockedFeat('specialties') ? `${D.BOND.perks[k]} once you reach Trainer rank ${featRank('specialties')}.` : D.BOND.perks[k] + '.', th: `<span class="heartBadge">${k}</span>` });
       if (k === 1) state.coins += 30;
       gainXP(D.BOND.xp[k]);
+      journalAdd(d, 'heart' + k, '💕', `Became ${D.BOND.names[k]} with you`);
       try { spawnEmoji('💕', d.headWorld(0.5), { size: 0.5, life: 1.6 }); } catch (_) { /* fine */ }
     }
     d.bondSeen = h;
@@ -3393,6 +3423,7 @@
     $('trickMode').classList.remove('exam');
     if (pass) {
       d.badges.push(B.id);
+      journalAdd(d, 'badge:' + B.id, '🏅', `Passed the ${B.name} exam`);
       state.coins += B.coins;
       gainXP(B.xp);
       sfx('unlock');
@@ -3954,7 +3985,7 @@
         '<div class="chips"></div>' +
         D.STATS.map((s) => `<div class="bar ${s.k}"><span class="bic">${IC(STAT_IC[s.k])}<i class="badge">!</i></span><div class="track"><div class="fill ${s.k}"></div></div></div>`).join('') +
         '<div class="favs"></div>' +
-        `<div class="cardBtns"><button class="mini" data-dact="tricks">${IC('cap')}Tricks</button><button class="mini" data-dact="treat">${IC('treat')}Treat</button><button class="mini" data-dact="style">${IC('hat')}Style</button><button class="mini" data-dact="bath">${IC('bath')}Bath</button><button class="mini" data-dact="towel">${IC('towel')}Towel</button></div>` +
+        `<div class="cardBtns"><button class="mini" data-dact="tricks">${IC('cap')}Tricks</button><button class="mini" data-dact="treat">${IC('treat')}Treat</button><button class="mini" data-dact="style">${IC('hat')}Style</button><button class="mini" data-dact="bath">${IC('bath')}Bath</button><button class="mini" data-dact="towel">${IC('towel')}Towel</button><button class="mini" data-dact="journal">${IC('book')}Journal</button></div>` +
       '</div>';
     el.querySelector('.pName').textContent = d.name;
     d.ui = {
@@ -3976,6 +4007,7 @@
       if (btn) {
         if (btn.dataset.dact === 'profile') openDogSheet(d);
         else if (btn.dataset.dact === 'towel') startTowel(d);
+        else if (btn.dataset.dact === 'journal') openJournal(d);
         else if (btn.dataset.dact === 'tricks') { d.ui.open = false; el.classList.remove('open'); enterTrickMode(d); }
         else if (btn.dataset.dact === 'treat') { if (needRank('kitchen')) openMeals(d); }
         else if (btn.dataset.dact === 'style') { if (needRank('boutique')) openWardrobe(d); }
@@ -4921,7 +4953,11 @@
     const E = R.effect;
     if (E.hunger) d.hunger = E.hunger >= 100 ? 100 : Math.min(100, d.hunger + E.hunger * q);
     if (E.messy) addDirt(d, E.messy, 6);
+    treatDog = d;
+    d.life.meals[m.id] = (d.life.meals[m.id] || 0) + 1;
+    journalAdd(d, 'meal:' + m.id, R.icon || '🍖', `Tasted ${R.name} for the first time`);
     progress('treat');
+    treatDog = null;
     if (E.thirst) d.thirst = Math.min(100, d.thirst + E.thirst * q);
     if (E.energy) d.energy = Math.min(100, d.energy + E.energy * q);
     if (E.clean) d.clean = Math.min(100, d.clean + E.clean * q);
@@ -5181,6 +5217,7 @@
 
   function throwBall() {
     if (ball.active) { toast('A toy is already out!'); return; }
+    haptic();
     let dog = selected && canPlay(selected) ? selected : null;
     if (!dog) {
       const pp = player.root.position;
@@ -5282,8 +5319,697 @@
     shortWalk = walkTotal < 20;
     progress('walk');
     progress('walk:' + wasAt);
+    if (!shortWalk) {
+      for (const d of dogs) {
+        d.life.walks[wasAt] = (d.life.walks[wasAt] || 0) + 1;
+        const nm = D.LOCATIONS[wasAt] ? D.LOCATIONS[wasAt].name : 'the park';
+        if (!journalAdd(d, 'walk1', '🐾', `Went on a very first walk, in ${nm}`)) journalAdd(d, 'walk:' + wasAt, '🗺️', `First walk in ${nm}`);
+      }
+      calWalkDone(wasAt, walkInfo);
+    }
     shortWalk = false;
   }
+  // =====================================================================
+  // Seasonal events on the in-game calendar
+  // =====================================================================
+  const calState = () => {
+    if (!state.cal || typeof state.cal !== 'object') state.cal = {};
+    const C = state.cal;
+    for (const k of ['done', 'prog', 'hunt', 'ann', 'night']) if (!C[k] || typeof C[k] !== 'object') C[k] = {};
+    for (const k of ['seen', 'first']) if (!Array.isArray(C[k])) C[k] = [];
+    return C;
+  };
+  const seasonNow = () => D.SEASON_NAMES[seasonOf(clockNow.month)];
+  const calDate = (m, d) => `${D.MONTHS[m]} ${d}`;
+  function bornCal(d) { return calOf(Math.floor((d.born || Date.now()) / 3600000)); }
+  function dogAge(d) {
+    const days = clockNow.gameDay - Math.floor((d.born || Date.now()) / 3600000);
+    const y = Math.floor(days / CALY), m = Math.floor((days % CALY) / CALD);
+    return y >= 1 ? `${y} year${y > 1 ? 's' : ''}${m ? `, ${m} month${m > 1 ? 's' : ''}` : ''}` : m >= 1 ? `${m} month${m > 1 ? 's' : ''}` : `${Math.max(1, days)} day${days > 1 ? 's' : ''}`;
+  }
+  function birthdayEvents() {
+    return dogs.map((d) => {
+      const c = bornCal(d);
+      return { id: 'bday:' + d.id, bday: d.id, name: `${d.name}’s birthday`, icon: '🎂', m: c.month, d0: c.day, d1: c.day, loc: 'home',
+        text: `${d.name} was born on this day.`, task: { kind: 'progress', ev: 'pet', n: 3, how: `Give ${d.name} 3 birthday cuddles` }, reward: { coins: 40, xp: 40 } };
+    });
+  }
+  const calEvents = () => D.CAL_EVENTS.filter((e) => !e.need || locUnlocked(e.need)).concat(birthdayEvents());
+  const evKnown = (e) => !!e.bday || calState().seen.includes(e.id);
+  const evRange = (e, y) => [gdOf(y, e.m, e.d0), gdOf(y, e.m, e.d1) + 1];
+  function evActive(e) { const [a, b] = evRange(e, clockNow.year); return clockNow.gameDay >= a && clockNow.gameDay < b; }
+  const evDone = (e) => calState().done[e.id] === clockNow.year;
+  const evKey = (e) => e.id + '@' + clockNow.year;
+  const activeEvents = () => calEvents().filter(evActive);
+  // when an event comes round next: { a, b, now } in game days
+  function evNext(e) {
+    for (let y = clockNow.year; y <= clockNow.year + 1; y++) { const [a, b] = evRange(e, y); if (b > clockNow.gameDay) return { y, a, b, now: clockNow.gameDay >= a }; }
+    return null;
+  }
+  const hoursUntil = (gd) => gd - clockNow.gameDay - clockNow.hour / 24;
+  function inHours(h) {
+    if (h <= 0) return 'now';
+    if (h < 1) return `in ${Math.max(1, Math.round(h * 60))} min`;
+    if (h < 36) return `in about ${Math.round(h)} hour${Math.round(h) === 1 ? '' : 's'}`;
+    return `in about ${Math.round(h / 24)} days`;
+  }
+  const evHere = (e) => e.loc === 'home' || (place === 'park' && loc === e.loc);
+  function evProgressText(e) {
+    const C = calState(), k = evKey(e), T = e.task;
+    if (evDone(e)) return 'Done this year';
+    if (T.kind === 'hunt') return `${(C.hunt[k] || []).length} of ${T.n} found`;
+    if (T.kind === 'progress') return `${C.prog[k] || 0} of ${T.n}`;
+    return '';
+  }
+  // reveal an event in the calendar (the first time you are around while it happens, or when its place opens up)
+  function revealEvent(e, quiet) {
+    const C = calState();
+    if (e.bday || C.seen.includes(e.id)) return false;
+    C.seen.push(e.id);
+    if (!quiet) inboxAdd({ title: 'New in your calendar', text: `${e.name} · ${calDate(e.m, e.d0)}`, th: TH('pic', e.icon) });
+    return true;
+  }
+  function revealPlaceEvents(id) {
+    const list = D.CAL_EVENTS.filter((e) => e.need === id && revealEvent(e, true));
+    if (list.length) news({ title: 'New in your calendar', text: list.map((e) => e.name).join(', '), th: TH('pic', list[0].icon) });
+  }
+  let calT = 0;
+  function calTick(dt) {
+    calT -= dt;
+    if (calT > 0 || visit || title || !dogs.length) return;
+    calT = 2;
+    // a meetup invite now and then
+    if (unlockedFeat('meetups')) maybeInvite();
+    if (!unlockedFeat('calendar')) return;
+    const C = calState();
+    for (const e of activeEvents()) {
+      revealEvent(e, true);
+      if (C.ann[e.id] === clockNow.year || evDone(e)) continue;
+      C.ann[e.id] = clockNow.year;
+      news({ title: e.bday ? `It’s ${e.name.replace('’s birthday', '')}’s birthday!` : `${e.name} has begun`, text: e.task.how, th: TH('pic', e.icon) });
+      save();
+    }
+  }
+  let treatDog = null;
+  function calProgress(ev, amt) {
+    if (visit || !dogs.length || !unlockedFeat('calendar')) return;
+    const C = calState();
+    for (const e of activeEvents()) {
+      const T = e.task;
+      if (T.kind !== 'progress' || T.ev !== ev || evDone(e) || !evHere(e)) continue;
+      if (e.bday && (!treatDog || treatDog.id !== e.bday)) continue;
+      const k = evKey(e);
+      C.prog[k] = Math.min(T.n, (C.prog[k] || 0) + amt);
+      if (C.prog[k] >= T.n) completeEvent(e);
+      else toast(`${e.icon} ${e.name}: ${C.prog[k]} of ${T.n}`);
+    }
+  }
+  function calWalkDone(wasAt, info) {
+    for (const e of activeEvents()) {
+      if (e.task.kind !== 'visit' || e.loc !== wasAt || evDone(e)) continue;
+      if (e.task.cond === 'rain' && !(info && info.rain) && curWeather().precip !== 'rain') { toast(`${e.icon} ${e.name}: come back when it rains`); continue; }
+      completeEvent(e);
+    }
+  }
+  function completeEvent(e) {
+    const C = calState();
+    if (evDone(e)) return;
+    C.done[e.id] = clockNow.year;
+    revealEvent(e, true);
+    const first = !C.first.includes(e.id);
+    if (first) C.first.push(e.id);
+    const at = player.root.position.clone().add(new V3(0, 1.2, 0));
+    const R = e.reward || {};
+    addCoins(R.coins || 0, player.root.position);
+    gainXP(R.xp || 0);
+    confetti(at, 6);
+    sfx('find');
+    haptic('strong');
+    state.keepsakes = state.keepsakes || {};
+    let extra = '';
+    if (e.keepsake) {
+      const [k, nm] = e.keepsake;
+      if (!state.keepsakes[k]) extra = ` · new keepsake: ${nm}`;
+      state.keepsakes[k] = (state.keepsakes[k] || 0) + 1;
+    }
+    news({ title: first ? `You took part in ${e.name}!` : `${e.name}: done again`, text: `🪙 ${R.coins || 0}${extra}`, th: TH('pic', e.keepsake ? e.keepsake[2] : e.icon) });
+    if (e.bday) {
+      const d = dogs.find((x) => x.id === e.bday);
+      if (d) { d.happy = 100; journalAdd(d, null, '🎂', `Had a birthday, ${dogAge(d)} old, with lots of cuddles`); }
+    } else {
+      for (const d of withYou()) journalAdd(d, first ? 'ev:' + e.id : null, e.icon, first ? `Took part in ${e.name} for the first time` : `Took part in ${e.name} again`);
+    }
+    save();
+  }
+  const withYou = () => dogs;
+  // night events: stay a little while after dark
+  function calNight(dt) {
+    const C = calState();
+    for (const e of activeEvents()) {
+      if (e.task.kind !== 'night' || evDone(e) || !evHere(e)) continue;
+      if (!isNight()) { if (!quirk.calNightHint) { quirk.calNightHint = true; toast(`${e.icon} ${e.name} happens after dark`); } continue; }
+      const k = evKey(e);
+      C.night[k] = (C.night[k] || 0) + dt;
+      if (!quirk.calNightOn) { quirk.calNightOn = true; toast(`${e.icon} Stay a little and enjoy ${e.name}`); }
+      if (C.night[k] > 25) completeEvent(e);
+    }
+  }
+  // ----- hunts: things to find on a walk -----
+  let hunt = [];
+  function huntPoints(e, n) {
+    const r = ART.mulberry32(hashStr(evKey(e) + '|' + state.uid));
+    const b = S.bbox || { x0: -19, x1: 19, z0: -19, z1: 19 }, out = [];
+    for (let k = 0; k < 4000 && out.length < n; k++) {
+      const x = b.x0 + 1 + r() * (b.x1 - b.x0 - 2), z = b.z0 + 1 + r() * (b.z1 - b.z0 - 2);
+      if (z > 15 && Math.abs(x) < 4) continue;
+      if (!inBounds(x, z, 0.6) || isSolid(x, z) || isSolid(x + 0.5, z) || isSolid(x - 0.5, z) || isSolid(x, z + 0.5) || isSolid(x, z - 0.5) || inPond(x, z, 0.8)) continue;
+      if (S.roofs && S.roofs.some((rf) => rf.test.some((t) => inRectXZ(t, x, z)))) continue;
+      if (out.some((p) => Math.hypot(p.x - x, p.z - z) < 4.5)) continue;
+      out.push(new V3(x, groundAt(x, z), z));
+    }
+    return out;
+  }
+  function startHunts() {
+    clearHunts();
+    const C = calState();
+    for (const e of activeEvents()) {
+      if (e.task.kind !== 'hunt' || e.loc !== loc || evDone(e)) continue;
+      const got = C.hunt[evKey(e)] || [];
+      huntPoints(e, e.task.n).forEach((p, i) => {
+        if (got.includes(i)) return;
+        const g = ART.huntItem(e.task.item);
+        g.scale.setScalar(1.45);
+        // a little glint so you can spot them from a distance
+        const gl = emojiSprite('✨', 0.32);
+        gl.position.y = 0.85;
+        g.add(gl);
+        g.userData.glint = gl;
+        g.position.copy(p);
+        g.rotation.y = rand(0, TAU);
+        parkRoot.add(g);
+        hunt.push({ e, i, g, pos: p, t: rand(0, 6) });
+      });
+      if (e.task.night && !isNight()) toast(`${e.icon} ${e.name}: come back after dark to find them`);
+      else toast(`${e.icon} ${e.name}: ${e.task.how.toLowerCase()}`);
+    }
+  }
+  function clearHunts() { for (const h of hunt) parkRoot.remove(h.g); hunt = []; }
+  function updateHunts(dt) {
+    if (!hunt.length) return;
+    const pp = player.root.position, C = calState();
+    for (const h of [...hunt]) {
+      const show = !h.e.task.night || isNight();
+      h.g.visible = show;
+      if (!show) continue;
+      h.t += dt;
+      h.g.position.y = h.pos.y + (h.g.userData.bob ? 0.12 + Math.sin(h.t * 2.4) * 0.08 : 0);
+      if (h.g.userData.glint) h.g.userData.glint.material.opacity = 0.35 + 0.65 * Math.abs(Math.sin(h.t * 1.7));
+      if (h.g.userData.spin) h.g.rotation.y += dt * 0.8;
+      const me = flatDist(pp, h.pos) < 1.1 && Math.abs(pp.y - h.pos.y) < 0.6;
+      const by = me ? null : dogs.find((d) => flatDist(d.root.position, h.pos) < 0.9 && Math.abs(d.root.position.y - h.pos.y) < 0.6);
+      if (!me && !by) continue;
+      // found one
+      parkRoot.remove(h.g);
+      hunt.splice(hunt.indexOf(h), 1);
+      const k = evKey(h.e);
+      C.hunt[k] = (C.hunt[k] || []).concat(h.i);
+      const n = C.hunt[k].length, N = h.e.task.n;
+      spawnEmoji(h.g.userData.emoji || h.e.icon, h.pos.clone().add(new V3(0, 0.9, 0)), { size: 0.5, life: 1.2, vy: 0.8 });
+      sfx('find');
+      haptic();
+      if (by) { by.happy = Math.min(100, by.happy + 4); spawnEmoji('💛', by.headWorld(0.3), { size: 0.35 }); }
+      if (n >= N) completeEvent(h.e);
+      else toast(`${h.e.icon} ${n} of ${N}${by ? ` · ${by.name} found one!` : ''}`);
+      save();
+    }
+  }
+  // ----- event decorations and sky effects on walks -----
+  let calDecor = null;
+  function startCalDecor() {
+    if (calDecor) { parkRoot.remove(calDecor); calDecor = null; }
+    const kinds = activeEvents().filter((e) => e.decor && e.loc === loc).map((e) => e.decor);
+    if (!kinds.length || !S.loop) return;
+    calDecor = new THREE.Group();
+    const L = S.loop, pts = [];
+    for (let t = -L.x; t <= L.x; t += 5.5) pts.push([t, L.z0 - 2.1], [t, L.z1 + 2.1]);
+    for (let t = L.z0 + 3; t <= L.z1 - 3; t += 5.5) pts.push([-L.x - 2.1, t], [L.x + 2.1, t]);
+    let k = 0;
+    for (const [x, z] of pts) {
+      if (isSolid(x, z) || inPond(x, z, 0.6) || (z > 15 && Math.abs(x) < 3)) continue;
+      const g = ART.eventProp(kinds[k++ % kinds.length], k);
+      g.position.set(x, groundAt(x, z), z);
+      g.rotation.y = Math.atan2(-x, -z);
+      calDecor.add(g);
+    }
+    parkRoot.add(calDecor);
+  }
+  function endCalDecor() { if (calDecor) { parkRoot.remove(calDecor); calDecor = null; } clearHunts(); clearSkyFX(); }
+  const skyFX = [];
+  let skyT = 0;
+  function clearSkyFX() { for (const p of skyFX) world.remove(p.m); skyFX.length = 0; }
+  function updateSkyFX(dt) {
+    const fx = isNight() && place === 'park' ? activeEvents().find((e) => e.fx && e.loc === loc) : null;
+    skyT -= dt;
+    if (fx && skyT <= 0) {
+      const pp = player.root.position;
+      if (fx.fx === 'fireworks') {
+        skyT = rand(0.7, 1.6);
+        const c = new V3(pp.x + rand(-6, 6), pp.y + rand(4.5, 6.5), pp.z + rand(-7, -1));
+        const col = pick(['#ff5252', '#ffd740', '#69f0ae', '#40c4ff', '#e040fb', '#ffffff']);
+        for (let k = 0; k < 18; k++) {
+          const a = (k / 18) * TAU, up = rand(-0.6, 0.9);
+          const m = new THREE.Mesh(fxGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, fog: false }));
+          m.position.copy(c);
+          world.add(m);
+          skyFX.push({ m, v: new V3(Math.cos(a) * 3.2, up * 3, Math.sin(a) * 3.2), life: 1.5, g: 2 });
+        }
+        sfx('bounce');
+      } else if (fx.fx === 'meteors') {
+        skyT = rand(0.8, 2.2);
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1.6), new THREE.MeshBasicMaterial({ color: '#fffde7', transparent: true, fog: false }));
+        m.position.set(pp.x + rand(-8, 8), pp.y + rand(6, 8), pp.z + rand(-9, -3));
+        m.rotation.y = 0.8; m.rotation.x = 0.5;
+        world.add(m);
+        skyFX.push({ m, v: new V3(-7, -3.5, 5), life: 0.9, g: 0 });
+      }
+    }
+    for (const p of [...skyFX]) {
+      p.life -= dt;
+      p.v.y -= p.g * dt;
+      p.m.position.set(p.m.position.x + p.v.x * dt, p.m.position.y + p.v.y * dt, p.m.position.z + p.v.z * dt);
+      p.m.material.opacity = Math.max(0, Math.min(1, p.life / 0.6));
+      if (p.life <= 0) { world.remove(p.m); skyFX.splice(skyFX.indexOf(p), 1); }
+    }
+  }
+  const fxGeo = new THREE.BoxGeometry(0.16, 0.16, 0.16);
+  // ----- seasons you can see: falling leaves in autumn, blossom petals in spring -----
+  const seasonFX = (() => {
+    const N = 46, mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.03, 0.09), new THREE.MeshLambertMaterial({ color: '#ffffff' }), N);
+    mesh.frustumCulled = false;
+    mesh.visible = false;
+    world.add(mesh);
+    const P = [], m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), ax = new V3(0.6, 0.8, 0.2).normalize(), s4 = new V3(1, 1, 1), c4 = new THREE.Color(), p4 = new V3();
+    for (let k = 0; k < N; k++) P.push({ x: rand(-12, 12), y: rand(0, 7), z: rand(-12, 12), s: rand(0.4, 0.9), r: rand(0, TAU), w: rand(0.5, 1.5) });
+    let kind = null;
+    return {
+      update(dt) {
+        const sea = seasonOf(clockNow.month);
+        const want = place === 'park' && !(S && S.env && (S.env.noWeather || S.env.dark)) && !curWeather().precip ? (sea === 'autumn' ? 'leaves' : sea === 'spring' ? 'petals' : null) : null;
+        mesh.visible = !!want;
+        if (!want) return;
+        if (kind !== want) {
+          kind = want;
+          const cols = want === 'leaves' ? ['#e65100', '#f9a825', '#c62828', '#ef6c00', '#8d6e63'] : ['#f8bbd0', '#ffffff', '#f48fb1', '#fce4ec'];
+          for (let k = 0; k < N; k++) mesh.setColorAt(k, c4.set(cols[k % cols.length]));
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        }
+        const c = camLook;
+        P.forEach((p, k) => {
+          p.y -= dt * p.s;
+          p.r += dt * p.w;
+          p.x += Math.sin(p.r) * dt * 0.6 + dt * 0.3;
+          if (p.y < 0) { p.y = rand(5, 8); p.x = rand(-12, 12); p.z = rand(-12, 12); }
+          q4.setFromAxisAngle(ax, p.r);
+          m4.compose(p4.set(c.x + p.x, groundAt(c.x + p.x, c.z + p.z) + p.y, c.z + p.z), q4, s4);
+          mesh.setMatrixAt(k, m4);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+      },
+    };
+  })();
+  // ----- the calendar page (from the weather) -----
+  let calView = null;
+  function openCalendar() {
+    calView = { y: clockNow.year, m: clockNow.month, sel: clockNow.day };
+    renderCalendar();
+  }
+  function renderCalendar() {
+    const V = calView, today = V.y === clockNow.year && V.m === clockNow.month;
+    const evs = calEvents().filter(evKnown);
+    const on = (d) => evs.filter((e) => e.m === V.m && d >= e.d0 && d <= e.d1);
+    const meet = state.meetup && !state.meetup.met ? state.meetup : null;
+    const meetOn = (d) => meet && (() => { const gd = gdOf(V.y, V.m, d); return gd >= meet.from && gd < meet.until; })();
+    let grid = '';
+    for (let d = 1; d <= CALD; d++) {
+      const list = on(d), past = V.y < clockNow.year || (today && d < clockNow.day);
+      grid += `<button class="calDay${today && d === clockNow.day ? ' today' : ''}${past ? ' past' : ''}${V.sel === d ? ' sel' : ''}" data-cday="${d}"><small>${d}</small><span>${list.slice(0, 2).map((e) => TH('pic', e.icon)).join('')}${meetOn(d) ? IC('wave') : ''}</span></button>`;
+    }
+    const sel = on(V.sel);
+    const selHTML = sel.length || meetOn(V.sel) ? sel.map((e) => calEventRow(e)).join('') + (meetOn(V.sel) ? meetRow() : '') : `<p class="sub">Nothing on ${calDate(V.m, V.sel)} yet.</p>`;
+    // what's coming up
+    const soon = evs.map((e) => ({ e, n: evNext(e) })).filter((x) => x.n && !(x.n.now && evDone(x.e))).sort((a, b) => a.n.a - b.n.a).slice(0, 4);
+    $('calView').innerHTML =
+      `<div class="calHead"><button class="soft calNav" data-cnav="-1" aria-label="Previous month">${IC('left')}</button>` +
+      `<div><b>${D.MONTHS[V.m]}</b><small>${D.SEASON_NAMES[seasonOf(V.m)]} · year ${V.y}</small></div>` +
+      `<button class="soft calNav" data-cnav="1" aria-label="Next month">${IC('right')}</button></div>` +
+      `<p class="sub small">Today is ${calDate(clockNow.month, clockNow.day)}. A game day lasts an hour, so a month goes by in a day.</p>` +
+      `<div class="calGrid">${grid}</div>` +
+      `<div class="section">${calDate(V.m, V.sel)}</div>${selHTML}` +
+      `<div class="section">${IC('star')}Coming up</div>${soon.map((x) => calEventRow(x.e, x.n)).join('') || '<p class="sub">Nothing yet.</p>'}` +
+      `<p class="sub small">More events appear in your calendar as you explore new places and take part.</p>`;
+  }
+  function calEventRow(e, n) {
+    n = n || evNext(e);
+    const when = !n ? '' : n.now ? `On now · ends ${inHours(hoursUntil(n.b))}` : `${calDate(e.m, e.d0)}${e.d1 > e.d0 ? `–${e.d1}` : ''} · starts ${inHours(hoursUntil(n.a))}`;
+    const where = e.loc === 'home' ? 'Anywhere' : D.LOCATIONS[e.loc] ? D.LOCATIONS[e.loc].name : '';
+    const prog = n && n.now ? evProgressText(e) : '';
+    return `<div class="row calEv${n && n.now ? ' live' : ''}${evDone(e) && n && n.now ? ' done' : ''}"><div class="ic">${TH('pic', e.icon)}</div><div class="txt"><b>${esc(e.name)}</b><small>${esc(when)} · ${esc(where)}</small><small>${esc(e.task.how)}${prog ? ` · ${esc(prog)}` : ''}</small></div></div>`;
+  }
+  function meetRow() {
+    const M = state.meetup;
+    return `<div class="row calEv live"><div class="ic"><img class="th" src="${ART.personPortraitURL(neighborInfo(M.owner))}" alt=""></div><div class="txt"><b>Meet ${esc(M.owner)}</b><small>${esc(M.spot[0])} · ${esc(D.LOCATIONS[M.loc].name)}</small><small>Waiting for you, for ${inHours(hoursUntil(M.until)).replace(/^in (about )?/, 'about ')} more</small></div></div>`;
+  }
+  $('weather').addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-wxtab]');
+    if (tab) { setWxTab(tab.dataset.wxtab); return; }
+    const nav = e.target.closest('[data-cnav]');
+    if (nav && calView) {
+      calView.m += +nav.dataset.cnav;
+      if (calView.m < 1) { calView.m = 12; calView.y--; }
+      if (calView.m > 12) { calView.m = 1; calView.y++; }
+      calView.sel = calView.y === clockNow.year && calView.m === clockNow.month ? clockNow.day : 1;
+      renderCalendar();
+      return;
+    }
+    const day = e.target.closest('[data-cday]');
+    if (day && calView) { calView.sel = +day.dataset.cday; renderCalendar(); }
+  });
+  function setWxTab(t) {
+    document.querySelectorAll('#weather [data-wxtab]').forEach((b) => b.classList.toggle('sel', b.dataset.wxtab === t));
+    $('wxPage').classList.toggle('hidden', t !== 'weather');
+    $('calView').classList.toggle('hidden', t !== 'cal');
+    if (t === 'cal') openCalendar();
+  }
+
+  // =====================================================================
+  // Neighbor meetups: any neighbor may ask you to meet them somewhere, now and then
+  // =====================================================================
+  const neighborInfo = (owner) => D.NEIGHBORS.find((N) => N.owner === owner) || D.NEIGHBORS[0];
+  function meetupLive() {
+    const M = state.meetup;
+    if (!M) return null;
+    if (clockNow.gameDay >= M.until || !D.LOCATIONS[M.loc]) { state.meetup = null; return null; }
+    return M.met ? null : M;
+  }
+  function maybeInvite(force) {
+    if (visit || title || !dogs.length || (!unlockedFeat('meetups') && !force)) return;
+    if (meetupLive()) return;
+    // the first invite comes a little while after meetups open up
+    if (!state.lastInvite && !force) { state.lastInvite = clockNow.gameDay; return; }
+    const last = state.lastInvite || 0;
+    if (!force && clockNow.gameDay - last < 6) return;
+    state.lastInvite = clockNow.gameDay;
+    if (!force && Math.random() > 0.45) return;
+    const found = (l, id) => hiddenOf(l).includes(id);
+    const places = Object.keys(D.MEET_SPOTS).filter((l) => locUnlocked(l));
+    const l = pick(places);
+    const spots = D.MEET_SPOTS[l].filter((sp) => !sp[3] || found(l, sp[3]));
+    const N = pick(D.NEIGHBORS), sp = pick(spots);
+    state.meetup = { owner: N.owner, loc: l, spot: sp.slice(0, 3), from: clockNow.gameDay, until: clockNow.gameDay + 4, met: false };
+    const line = pick(D.MEET_INVITES).replace(/\{ndog\}/g, N.dog.name).replace(/\{dog\}/g, pick(dogs).name).replace(/\{spot\}/g, sp[0]).replace(/\{place\}/g, D.LOCATIONS[l].name);
+    news({ title: `${N.owner} invites you`, text: `“${line}”`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
+    save();
+  }
+  // on a walk to the right place, the neighbor waits at the spot
+  function placeMeetup() {
+    const M = meetupLive();
+    if (!M || M.loc !== loc) return;
+    const w = walkers.find((x) => x.info.owner === M.owner);
+    if (!w) return;
+    const [, x, z] = M.spot;
+    w.meet = true;
+    w.pause = 1e9;
+    w.parts.root.position.set(x, groundAt(x, z), z);
+    w.dog.root.position.set(x + 0.9, groundAt(x + 0.9, z + 0.6), z + 0.6);
+    w.label.visible = true;
+    toast(`${M.owner} is waiting at ${M.spot[0]}`);
+  }
+  function finishMeetup(w) {
+    const M = state.meetup;
+    if (!M || M.met || !w.meet) return null;
+    M.met = true;
+    const N = w.info;
+    const coins = 25 + Math.floor(Math.random() * 20);
+    addCoins(coins, w.parts.root.position);
+    gainXP(30);
+    for (const d of withYou()) {
+      d.happy = Math.min(100, d.happy + 15);
+      addFriendship(d, w.dog, 3);
+      journalAdd(d, null, '👋', `Met ${N.dog.name} and ${N.owner} at ${M.spot[0]} in ${D.LOCATIONS[M.loc].name}`);
+    }
+    state.meetups = (state.meetups || 0) + 1;
+    confetti(w.parts.root.position.clone().add(new V3(0, 1.4, 0)), 4);
+    haptic();
+    save();
+    return pick(D.MEET_LINES).replace(/\{ndog\}/g, N.dog.name).replace(/\{dog\}/g, pick(dogs).name);
+  }
+
+  // =====================================================================
+  // Dog journals: a scrapbook for every dog
+  // =====================================================================
+  // k = a key for things that only happen once (first walk, first trick...); entries keep the in-game date
+  function journalAdd(d, k, ic, tx) {
+    if (!d || visit) return false;
+    d.journal = d.journal || [];
+    if (k && d.journal.some((e) => e.k === k)) return false;
+    d.journal.push({ k: k || undefined, t: Date.now(), gd: clockNow.gameDay, ic, tx });
+    if (d.journal.length > 140) {
+      const i = d.journal.findIndex((e, n) => n > 0 && !e.k && !e.ph);
+      d.journal.splice(i > 0 ? i : 1, 1);
+    }
+    return true;
+  }
+  const journalFirst = (d, k, ic, tx) => journalAdd(d, k, ic, tx);
+  function favOf(obj) { let best = null, bv = 0; for (const [k, v] of Object.entries(obj || {})) if (v > bv) { bv = v; best = k; } return best; }
+  function bestDogFriend(d) {
+    let best = null, bv = 0;
+    for (const o of dogs) { if (o === d) continue; const v = friendship(d.id, o.id); if (v > bv) { bv = v; best = o.name; } }
+    for (const N of D.NEIGHBORS) { const v = friendship(d.id, 'n:' + N.dog.name); if (v > bv) { bv = v; best = N.dog.name; } }
+    return best;
+  }
+  let journalDog = null;
+  function openJournal(d) {
+    journalDog = d;
+    renderJournal();
+    $('journal').classList.remove('hidden');
+  }
+  function renderJournal() {
+    const d = journalDog;
+    if (!d) return;
+    const B = D.BREEDS[d.breed], C = ART.coatOf(d.breed, d.coat), bc = bornCal(d), L = d.life;
+    const toy = d.favToy && D.TOYS[d.favToy] ? D.TOYS[d.favToy] : null;
+    const placeK = favOf(L.walks), meal = favOf(L.meals), friend = bestDogFriend(d), spot = d.favSpot;
+    const fav = (ic, label, val) => `<div class="jFav">${ic}<small>${label}</small><b>${esc(val || 'Not yet')}</b></div>`;
+    const tricksKnown = Object.keys(ALL_TRICKS).filter((id) => d.trickLvl(id) >= 1).length;
+    const photos = (state.photos || []).filter((p) => p.dogs.includes(d.id)).slice(-6).reverse();
+    const entries = [...(d.journal || [])].reverse();
+    let lastMonth = '';
+    const story = entries.map((e) => {
+      const c = calOf(e.gd != null ? e.gd : Math.floor(e.t / 3600000));
+      const head = `${D.MONTHS[c.month]}, year ${c.year}`;
+      const h = head !== lastMonth ? `<div class="jMonth">${head}</div>` : '';
+      lastMonth = head;
+      return `${h}<div class="jEntry">${TH('pic', e.ic || '🐾')}<div><small>${D.MONTHS[c.month]} ${c.day}</small><span>${esc(plain(e.tx))}</span>${e.ph ? `<img class="jPhoto" src="${e.ph}" alt="">` : ''}</div></div>`;
+    }).join('');
+    $('jBody').innerHTML =
+      `<div class="jCover"><img class="portrait" src="${ART.portraitURL(d.breed, d.coat)}" alt=""><div><h3>${esc(d.name)}</h3>` +
+      `<small>${esc(C.name)} ${esc(B ? B.name : '')}${d.grown ? '' : ' puppy'}</small><small>Born ${D.MONTHS[bc.month]} ${bc.day} · ${esc(dogAge(d))} old</small>` +
+      `<div class="jTraits">${d.revealed ? d.traits.map((t) => `<span class="chip">${esc(D.TRAITS[t].name)}</span>`).join('') : '<span class="chip">Personality still a mystery</span>'}</div></div></div>` +
+      `<div class="section">${IC('heart')}Favourites</div><div class="jFavs">` +
+      fav(IC('ball'), 'Toy', toy && toy.name) + fav(IC('map'), 'Place', placeK && D.LOCATIONS[placeK] && D.LOCATIONS[placeK].name) +
+      fav(IC('treat'), 'Treat', meal && D.RECIPES[meal] && D.RECIPES[meal].name) + fav(IC('dog'), 'Friend', friend) +
+      fav(IC('home'), 'Spot at home', spot && D.ITEMS[spot] ? D.ITEMS[spot].name : spot ? 'By the window' : null) + fav(IC('cap'), 'Tricks', tricksKnown ? `${tricksKnown} known` : null) + `</div>` +
+      `<div class="jNums"><span><b>${Object.values(L.walks).reduce((a, b) => a + b, 0)}</b><small>walks</small></span><span><b>${L.fetches || 0}</b><small>fetches</small></span><span><b>${L.finds || 0}</b><small>things sniffed out</small></span><span><b>${d.hearts()}</b><small>hearts</small></span></div>` +
+      (photos.length ? `<div class="section">${IC('camera')}Photos</div><div class="jPhotos">${photos.map((p) => `<img src="${p.url}" alt="">`).join('')}</div>` : '') +
+      `<div class="section">${IC('book')}Story so far</div>${story || '<p class="sub">The story starts here.</p>'}`;
+  }
+  $('journal').addEventListener('click', (e) => { if (e.target.id === 'journal' || e.target.closest('[data-act="closeJournal"]')) $('journal').classList.add('hidden'); });
+
+  // =====================================================================
+  // While you were away: a little summary when you come back
+  // =====================================================================
+  function awayLines() {
+    const A = D.AWAY, used = new Set(state.awayUsed || []), out = [];
+    const take = (pool, key) => {
+      const all = pool.map((t, i) => [t, key + i]);
+      const fresh = all.filter(([, id]) => !used.has(id));
+      const [t, id] = pick(fresh.length ? fresh : all);
+      used.add(id);
+      return t;
+    };
+    const furn = [...new Set(state.furniture.map((f) => f.type))].filter((t) => A.furn[t]);
+    const nb = pick(D.NEIGHBORS);
+    const fill = (t, d, o) => t.replace(/\{dog\}/g, d.name).replace(/\{other\}/g, o ? o.name : '').replace(/\{toy\}/g, d.favToy && D.TOYS[d.favToy] ? D.TOYS[d.favToy].name.toLowerCase() : 'ball')
+      .replace(/\{neighbor\}/g, nb.owner).replace(/\{ndog\}/g, nb.dog.name).replace(/\{furn\}/g, furn.length ? D.ITEMS[pick(furn)].name.toLowerCase() : 'rug');
+    for (const d of shuffle(dogs).slice(0, 3)) {
+      const opts = [];
+      if (d.revealed) d.traits.forEach((t) => { if (A.trait[t]) opts.push([A.trait[t], 'tr:' + t, 3]); });
+      if (A.breed[d.breed]) opts.push([A.breed[d.breed], 'br:' + d.breed, 1.2]);
+      for (const t of furn) opts.push([A.furn[t], 'fu:' + t, 2.4 / furn.length]);
+      if (d.favToy) opts.push([A.toy, 'toy', 1.2]);
+      if (!d.grown) opts.push([A.puppy, 'pup', 3]);
+      if (d.hunger < 45) opts.push([A.hungry, 'hun', 2.5]);
+      if (awayHours > 20) opts.push([A.long, 'long', 1.4]);
+      opts.push([A.general, 'gen', 1.6]);
+      let r = Math.random() * opts.reduce((s, o) => s + o[2], 0), ch = opts[opts.length - 1];
+      for (const o of opts) { r -= o[2]; if (r <= 0) { ch = o; break; } }
+      out.push({ d, tx: fill(take(ch[0], ch[1]), d) });
+    }
+    if (dogs.length >= 2) {
+      const [a, b] = shuffle(dogs);
+      out.push({ d: a, d2: b, tx: fill(take(A.pair, 'pair'), a, b) });
+    }
+    const wk = curWeather().lightning ? 'storm' : curWeather().precip || (curWeather().fog ? 'fog' : weatherId === 'sun' ? 'sun' : null);
+    if (wk && A.weather[wk] && Math.random() < 0.6) { const d = pick(dogs); out.push({ d, tx: fill(take(A.weather[wk], 'wx:' + wk), d) }); }
+    else if (Math.random() < 0.3) { const d = pick(dogs); out.push({ d, tx: fill(take(A.night, 'night'), d) }); }
+    state.awayUsed = [...used].slice(-80);
+    return out.slice(0, 5);
+  }
+  function showAway() {
+    if (visit || !dogs.length || awayHours < 0.75) return false;
+    if (state.awayDay === clockNow.dateKey && awayHours < 4) return false;
+    state.awayDay = clockNow.dateKey;
+    const lines = awayLines();
+    const h = awayHours;
+    $('awaySub').textContent = h >= 48 ? `You were away for ${Math.round(h / 24)} days.` : h >= 1.5 ? `You were away for ${Math.round(h)} hours.` : 'You were away for a little while.';
+    $('awayList').innerHTML = lines.map((l) => `<div class="awayRow"><img class="portrait" src="${ART.portraitURL(l.d.breed, l.d.coat)}" alt="">${l.d2 ? `<img class="portrait two" src="${ART.portraitURL(l.d2.breed, l.d2.coat)}" alt="">` : ''}<span>${esc(l.tx)}</span></div>`).join('');
+    $('away').classList.remove('hidden');
+    // the nicest line goes into the journal too
+    const keep = lines[0];
+    if (keep) journalAdd(keep.d, null, '🏠', keep.tx);
+    save();
+    return true;
+  }
+  $('away').addEventListener('click', (e) => { if (e.target.id === 'away' || e.target.closest('[data-act="closeAway"]')) { $('away').classList.add('hidden'); pumpTips(); } });
+
+  // =====================================================================
+  // What's new: when lots of news arrive at once, the rest wait here (Menu → What's new)
+  // =====================================================================
+  function inboxAdd(o) {
+    state.inbox = state.inbox || [];
+    state.inbox.unshift({ title: o.title || '', text: o.text || '', th: o.th || '', icon: o.icon || '', at: Date.now(), read: false });
+    state.inbox = state.inbox.filter((x) => Date.now() - x.at < 7 * 86400000).slice(0, 40);
+    renderInboxTile();
+  }
+  const inboxUnread = () => (state.inbox || []).filter((x) => !x.read).length;
+  function renderInboxTile() {
+    const n = inboxUnread(), t = $('tileInbox');
+    if (!t) return;
+    t.classList.toggle('hidden', !n);
+    $('inboxBadge').textContent = String(n);
+  }
+  function openInbox() {
+    const list = state.inbox || [];
+    $('inboxList').innerHTML = list.map((x) => `<div class="row inboxRow${x.read ? '' : ' unread'}"><div class="ic">${x.th || IC(x.icon || 'sparkle')}</div><div class="txt"><b>${esc(plain(x.title))}</b><small>${esc(plain(x.text))}</small></div></div>`).join('') || '<p class="sub">Nothing new.</p>';
+    list.forEach((x) => { x.read = true; });
+    $('inbox').classList.remove('hidden');
+    renderInboxTile();
+    save();
+  }
+  $('inbox').addEventListener('click', (e) => { if (e.target.id === 'inbox' || e.target.closest('[data-act="closeInbox"]')) $('inbox').classList.add('hidden'); });
+
+  // =====================================================================
+  // What now? A few good next steps (in the You menu)
+  // =====================================================================
+  function whatNow() {
+    const out = [];
+    const add = (ic, text, go, label = 'Go') => out.push({ ic, text, go, label });
+    const home = place === 'home';
+    const thirsty = dogs.filter((d) => d.thirst < 40 || d.hunger < 40);
+    if (thirsty.length) add(IC('food'), `${thirsty.map((d) => d.name).join(' and ')} could do with food and water.`, home ? 'bowls' : 'home', home ? 'Fill bowls' : 'Go home');
+    const dirty = dogs.filter((d) => d.clean < 35);
+    if (dirty.length && unlockedFeat('bath')) add(IC('bath'), `${dirty[0].name} is quite dirty. A bath would help.`, 'bath:' + dirty[0].id, 'Bath');
+    const tired = dogs.filter((d) => d.energy < 20);
+    if (tired.length && !home) add(IC('bolt'), `${tired[0].name} is tired. Time to head home for a nap.`, 'home', 'Go home');
+    if (unlockedFeat('calendar')) {
+      for (const e of activeEvents().filter((x) => evKnown(x) && !evDone(x))) add(TH('pic', e.icon), `${e.name}: ${e.task.how}.${e.task.kind === 'hunt' ? ` ${evProgressText(e)}.` : ''}`, e.loc === 'home' ? '' : 'walk:' + e.loc, e.loc === 'home' ? '' : 'Go');
+    }
+    const M = meetupLive();
+    if (M) add(`<img class="th" src="${ART.personPortraitURL(neighborInfo(M.owner))}" alt="">`, `${M.owner} is waiting for you at ${M.spot[0]} in ${D.LOCATIONS[M.loc].name}.`, 'walk:' + M.loc, 'Go');
+    if (state.daily && unlockedFeat('daily')) { const left = state.daily.items.filter((c) => !c.done).length; if (left) add(IC('list'), `${left} of today’s challenges still to do.`, 'daily', 'See them'); }
+    if (unlockedFeat('stories')) { const w = Object.keys(D.STORIES).filter((o) => storyOf(o) && storyChapter(o) && storyReady(o)); if (w.length) add(IC('wave'), `${w[0]} has something to tell you. Look out for them on a walk.`, 'people', 'Neighbors'); }
+    const next = Object.keys(D.LOCATIONS).find((id) => !locUnlocked(id) && locNext(id));
+    if (next) { const open = reqsOf(next).filter((U) => { const [a, b] = reqProgress(U); return a < b; }); if (open.length) add(IC('lock'), `Next place: ${plain(reqText(open[0]))}.`, 'map', 'Map'); }
+    for (const id of Object.keys(D.LOCATIONS)) { const t = hiddenTotal(id), f = hiddenOf(id).length; if (locUnlocked(id) && t && f < t && (state.locWalks || {})[id]) { add(IC('search'), `${t - f} hidden spot${t - f > 1 ? 's' : ''} still to find in ${D.LOCATIONS[id].name}.`, 'walk:' + id, 'Go'); break; } }
+    if (inboxUnread()) add(IC('sparkle'), `${inboxUnread()} new thing${inboxUnread() > 1 ? 's' : ''} in What’s new.`, 'inbox', 'Read');
+    if (out.length < 3) add(IC('walk'), `Take ${pick(dogs).name} for a walk. There’s always something to sniff.`, 'map', 'Map');
+    return out.slice(0, 6);
+  }
+  function renderWhatNow() {
+    const list = whatNow();
+    $('crNow').innerHTML = `<p class="sub">A few ideas for what to do next.</p>` + list.map((x, i) => `<div class="row wnRow"><div class="ic">${x.ic}</div><div class="txt"><small>${esc(plain(x.text))}</small></div>${x.go ? `<button class="soft" data-wn="${i}">${esc(x.label)}</button>` : ''}</div>`).join('');
+    $('crNow').dataset.list = JSON.stringify(list.map((x) => x.go));
+  }
+  $('crNow').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-wn]');
+    if (!b) return;
+    const go = JSON.parse($('crNow').dataset.list || '[]')[+b.dataset.wn];
+    closeCreator();
+    if (go === 'bowls') fillAll();
+    else if (go === 'home') { if (place === 'park') goHome(); }
+    else if (go === 'map') openMap();
+    else if (go === 'daily') openDaily();
+    else if (go === 'people') openPeople();
+    else if (go === 'inbox') openInbox();
+    else if (go.startsWith('bath:')) { const d = dogs.find((x) => x.id === go.slice(5)); if (place !== 'home') toast('Baths happen at home 🛁'); else if (d) openBath(d); }
+    else if (go.startsWith('walk:')) { if (place === 'park' && loc === go.slice(5)) toast('You are already here!'); else openMap(); }
+  });
+
+  // =====================================================================
+  // Little buzzes (off by default; Settings). iPhones have no vibration API, but a switch toggle buzzes.
+  // =====================================================================
+  const hapticEl = (() => {
+    const l = document.createElement('label');
+    l.style.cssText = 'position:fixed;left:-99px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+    l.innerHTML = '<input type="checkbox" switch>';
+    document.body.appendChild(l);
+    return l;
+  })();
+  let hapticLast = 0;
+  function haptic(kind) {
+    if (!prefs.haptics) return;
+    const now = performance.now();
+    if (now - hapticLast < 60) return;
+    hapticLast = now;
+    try {
+      if (navigator.vibrate) navigator.vibrate(kind === 'strong' ? [18, 40, 18] : 12);
+      else hapticEl.click();
+    } catch (_) { /* no buzz on this phone */ }
+  }
+  function applyBigUI() { document.body.classList.toggle('bigui', !!prefs.bigui); }
+
+  // =====================================================================
+  // New furniture: the dogs come and check it out
+  // =====================================================================
+  let furnNew = [];
+  function reactToFurniture() {
+    const list = furnNew;
+    furnNew = [];
+    if (place !== 'home' || !dogs.length) return;
+    const seen = new Set();
+    let delay = 0.6;
+    for (const f of list) {
+      if (seen.has(f.type) || !state.furniture.includes(f)) continue;
+      seen.add(f.type);
+      const free = dogs.filter((d) => ['idle', 'sit', 'wander'].includes(d.state) || d.state === 'follow');
+      const d = pick(free.length ? free : dogs);
+      const R = D.FURN_REACT[f.type] || ['sniffs it all over', '🤔'];
+      const it = D.ITEMS[f.type];
+      setTimeout(() => {
+        const to = frontOf(f) || new V3(f.i + 0.5, 0, f.j + 1.5);
+        d.goTo(to, 2.6, () => {
+          d.faceTo(new V3(f.i + 0.5, 0, f.j + 0.5));
+          d.setState('happy', 1.4);
+          spawnEmoji(R[1], d.headWorld(0.35), { size: 0.45, life: 1.6 });
+          toast(`${d.name} ${R[0]}`);
+          if (journalAdd(d, 'furn:' + f.type, it.icon, `Checked out the new ${it.name.toLowerCase()}: ${R[0]}`)) save();
+        }, 0.5);
+      }, delay * 1000);
+      delay += 1.6;
+      if (seen.size >= 3) break;
+    }
+  }
+
   const SHAPE_TIPS = {
     park: 'There is more to explore now: a hill with a view, a sunken pond and a meadow to the east. Not every corner is easy to find.',
     beach: 'There is more to explore now: dunes, a boardwalk and a rocky headland with stairs up to the lighthouse. Some places only show at the right tide.',
@@ -5333,6 +6059,8 @@
     spawnParkLoot();
     spawnWalkers();
     startQuirks();
+    if (unlockedFeat('calendar')) { startHunts(); startCalDecor(); }
+    placeMeetup();
     refreshLeashBtn();
     refreshUI();
     applyEnvironment();
@@ -5445,6 +6173,8 @@
       toast(`Another ${F.icon} ${F.name} — traded it for 🪙 ${D.FIND_DUPLICATE_COINS}`);
     } else {
       news({ title: 'New for your book', text: F.name, th: thumbOf.find(id) });
+      if (finder) { if (!journalAdd(finder, 'find1', F.icon, `Sniffed out a first treasure: ${F.name}`) && F.secret) journalAdd(finder, null, F.icon, `Sniffed out something rare: ${F.name}`); }
+      haptic();
       tip('book', { title: 'Collectibles', text: 'Everything you find goes into your book: Menu → Collectibles. Finishing a page unlocks an outfit.', icon: 'book' });
       if (at) confetti(at, 4);
     }
@@ -5455,7 +6185,11 @@
     if (!had) { checkSets(); checkSeasons(); }
     save();
   }
+  let finder = null;
   function walkLoot(d, spot) {
+    finder = d;
+    d.life.finds++;
+    setTimeout(() => { finder = null; }, 0);
     const pos = d.root.position;
     const kind = spot && spot.kind;
     if (spot && spot.golden) { spot.golden = false; if (spot.sparkle) ART.setScentGold(spot.sparkle, false); addCoins(eventOn('golden').coins, pos); confetti(pos.clone().add(new V3(0, 1, 0)), 6); toast(`${d.name} sniffed out the golden spot! 🪙 ${eventOn('golden').coins}`); sfx('find'); return; }
@@ -5589,6 +6323,7 @@
   }
   function endQuirks() {
     quirk = {};
+    endCalDecor();
     $('locChip').classList.add('hidden');
   }
   function updateLocChip() {
@@ -5732,7 +6467,8 @@
     $('talkPic').src = ART.personPortraitURL(w.info);
     $('talkName').textContent = w.info.owner;
     $('talkSub').textContent = `with ${w.info.dog.name}`;
-    showTalkLine(chatLine(w, true));
+    const meetLine = finishMeetup(w);
+    showTalkLine(meetLine || chatLine(w, true));
     $('talk').classList.remove('hidden');
     sfx('tip');
     tip('chat', { title: 'Neighbors', text: 'Stop and chat with the neighbors on your walks. They know a thing or two, and sometimes they have something for you.', icon: 'person' });
@@ -6558,6 +7294,7 @@
         if (locUnlocked(id) || !locReady(id)) continue;
         state.unlocked.push(id);
         fresh.push(id);
+        setTimeout(() => revealPlaceEvents(id), 3000);
         again = true;
       }
     }
@@ -6701,6 +7438,7 @@
   }
   function progress(ev, amt = 1) {
     if (visit) return;
+    calProgress(ev, amt);
     if (CRITTER_EV[ev] && place === 'park') spotCritter(CRITTER_EV[ev], null);
     if (!shortWalk) {
       if (D.XP[ev]) earn(ev, amt);
@@ -6776,7 +7514,7 @@
   const BOOK_PAGES = [['toys', ['toy', 'tennis'], 'Toys'], ['park', null, 'Park'], ['oldtown', null, 'Old Town'], ['forest', null, 'Forest'], ['beach', null, 'Beach'],
     ['alpine', null, 'Alpine'], ['caves', null, 'Caves'], ['snowy', null, 'Snowy'], ['carnival', null, 'Carnival'], ['fairy', null, 'Fairy'], ['moon', null, 'Moon'],
     ['season', ['pic', '🍂'], 'Seasons'], ['sets', ['pic', '🧩'], 'Sets'], ['critters', ['pic', '🐾'], 'Critters'],
-    ['rare', ['item', 'goldstatue'], 'Rare'], ['tricks', ['pic', '🎓'], 'Tricks'], ['breeds', ['dog', 'retriever|golden'], 'Breeds'], ['records', ['pic', '🏆'], 'Records']];
+    ['events', ['pic', '🎆'], 'Events'], ['rare', ['item', 'goldstatue'], 'Rare'], ['tricks', ['pic', '🎓'], 'Tricks'], ['breeds', ['dog', 'retriever|golden'], 'Breeds'], ['records', ['pic', '🏆'], 'Records']];
   const WHEN_TEXT = { night: 'Only at night', rain: 'Only in the rain', snow: 'Only when it snows', sun: 'Only on sunny days', day: 'Only by day', december: 'Only in December' };
   function recordValue(stat) {
     const st = state.stats;
@@ -6807,6 +7545,8 @@
       for (const S of D.SETS) E.push({ set: S, name: S.name, got: (state.setsDone || []).includes(S.id), secret: false });
     } else if (id === 'critters') {
       for (const [k, C] of Object.entries(D.CRITTERS)) E.push({ thk: ['pic', C.icon], name: C.name, got: !!(state.critters || {})[k], secret: false, sub: (state.critters || {})[k] ? critterWhere(C) : locUnlocked(C.loc) ? critterWhere(C) : 'Somewhere you haven’t been' });
+    } else if (id === 'events') {
+      for (const e of D.CAL_EVENTS) { const [k, nm, ic] = e.keepsake; const got = !!(state.keepsakes || {})[k]; E.push({ thk: ['pic', ic], name: got || evKnown(e) ? nm : '???', got, secret: !evKnown(e), sub: evKnown(e) ? `${e.name} · ${D.MONTHS[e.m]}` : 'An event you haven’t seen yet' }); }
     } else if (id === 'rare') {
       for (const [k, it] of Object.entries(D.ITEMS)) if (it.rare) E.push({ thk: ['item', k], name: it.name, got: state.seen.rares.includes(k), secret: false, sub: 'Found or gifted' });
     } else if (id === 'tricks') {
@@ -6819,7 +7559,7 @@
     return { entries: E, done: E.filter((e) => e.got).length, total: E.length };
   }
   let albumPage = 'toys';
-  const bookPages = () => BOOK_PAGES.filter(([id]) => id !== 'critters' || unlockedFeat('critters'));
+  const bookPages = () => BOOK_PAGES.filter(([id]) => (id !== 'critters' || unlockedFeat('critters')) && (id !== 'events' || unlockedFeat('calendar')));
   function openAlbum() {
     renderAlbum();
     $('album').classList.remove('hidden');
@@ -6944,7 +7684,7 @@
   // the joystick stays out of the way: faint from the start, nearly gone after a moment of steady walking
   let joyAng = null, joyFadeT = null;
   const joyWake = () => { joyBase.classList.remove('fade'); clearTimeout(joyFadeT); joyFadeT = setTimeout(() => joyBase.classList.add('fade'), 1100); };
-  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull'];
+  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox'];
   // sheets: a soft sound when they open and close; tips step aside while one is open
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
@@ -7140,6 +7880,7 @@
     mode = 'normal';
     refreshUI();
     save();
+    reactToFurniture();
   }
   function renderInv() {
     const list = $('invList');
@@ -7209,6 +7950,7 @@
       return;
     }
     state.furniture.push({ type: selectedInv, i, j, rot: placeRot, filled: false });
+    furnNew.push(state.furniture[state.furniture.length - 1]);
     state.inventory[selectedInv]--;
     if (state.inventory[selectedInv] <= 0) selectedInv = firstInv();
     afterFurnitureChange();
@@ -7778,11 +8520,15 @@
     $('verInfo').textContent = `PixelPups · save format v${CONFIG.SAVE_VERSION} · ${dogs.length} dog${dogs.length === 1 ? '' : 's'} · 🪙 ${state.coins}`;
     $('optSfx').checked = prefs.sfx;
     $('optMusic').checked = prefs.music;
+    $('optHaptics').checked = !!prefs.haptics;
+    $('optBig').checked = !!prefs.bigui;
     $('replayTut').disabled = !dogs.length;
     $('settings').classList.remove('hidden');
   }
   $('optSfx').addEventListener('change', (e) => { prefs.sfx = e.target.checked; savePrefs(); wakeAudio(); sfx('tip'); });
   $('optMusic').addEventListener('change', (e) => { prefs.music = e.target.checked; savePrefs(); wakeAudio(); });
+  $('optHaptics').addEventListener('change', (e) => { prefs.haptics = e.target.checked; savePrefs(); haptic(); });
+  $('optBig').addEventListener('change', (e) => { prefs.bigui = e.target.checked; savePrefs(); applyBigUI(); });
   // ----- Updates: phones sometimes keep running an old copy of the game -----
   const GAME_FILES = ['style.css', 'data.js', 'art.js', 'game.js'];
   const upd = { busy: false, found: false, boot: null };
@@ -7992,6 +8738,7 @@
     $('hint').classList.add('gone');
   }
   function refreshUI() {
+    renderInboxTile();
     document.body.classList.toggle('visiting', !!visit);
     $('hud').classList.toggle('hidden', mode === 'trick' || !!visit);
     $('actions').classList.toggle('hidden', !(place === 'home' && mode === 'normal'));
@@ -8023,7 +8770,7 @@
     setIcon($('clockIc'), night ? 'moon' : WX_ICON[weatherId] || 'sun');
     $('clockTime').textContent = clockNow.hm;
     $('clockWx').textContent = night ? 'Clear night' : W.name;
-    if (!$('weather').classList.contains('hidden') && Math.floor(clockNow.hour * 4) !== updateHud.wxq) { updateHud.wxq = Math.floor(clockNow.hour * 4); openWeather(); }
+    if (!$('weather').classList.contains('hidden') && Math.floor(clockNow.hour * 4) !== updateHud.wxq) { updateHud.wxq = Math.floor(clockNow.hour * 4); if (!$('wxPage').classList.contains('hidden')) openWeather(true); }
     updatePack();
   }
 
@@ -8111,6 +8858,7 @@
     if (act === 'menu') openHub();
     else if (act === 'photo') { if (needRank('photo')) enterPhoto(); }
     else if (act === 'me') openCreator('edit');
+    else if (act === 'inbox') openInbox();
     else if (act === 'event') { const def = eventDef(); if (def) news({ title: `Today: ${def.title}`, text: eventText(), th: TH('pic', def.icon) }); }
     else if (act === 'bowls') fillAll();
     else if (act === 'feed') fillBowls('food');
@@ -8424,6 +9172,12 @@
     // shaped places: hidden spots you found, and the parts of each map you have explored
     st.hiddenFound = obj(st.hiddenFound);
     for (const k of Object.keys(st.hiddenFound)) if (!D.LOCATIONS[k] || !Array.isArray(st.hiddenFound[k])) delete st.hiddenFound[k]; else st.hiddenFound[k] = st.hiddenFound[k].filter((x) => typeof x === 'string');
+    // calendar, keepsakes, news you missed, journal photos, meetups
+    st.cal = obj(st.cal);
+    st.keepsakes = obj(st.keepsakes);
+    st.inbox = Array.isArray(st.inbox) ? st.inbox.filter((x) => x && typeof x.title === 'string').slice(0, 40) : [];
+    st.photos = Array.isArray(st.photos) ? st.photos.filter((p) => p && typeof p.url === 'string' && p.url.startsWith('data:image') && Array.isArray(p.dogs)).slice(-12) : [];
+    if (st.meetup && !(typeof st.meetup === 'object' && D.LOCATIONS[st.meetup.loc] && Array.isArray(st.meetup.spot) && D.NEIGHBORS.some((N) => N.owner === st.meetup.owner))) st.meetup = null;
     st.explored = obj(st.explored);
     for (const k of Object.keys(st.explored)) if (!D.LOCATIONS[k] || !Array.isArray(st.explored[k])) delete st.explored[k]; else st.explored[k] = st.explored[k].map((n) => (+n >>> 0) || 0);
     for (const k of Object.keys(st.mastery)) if (!D.LOCATIONS[k] || !(+st.mastery[k] >= 0)) delete st.mastery[k]; else st.mastery[k] = +st.mastery[k];
@@ -8518,8 +9272,20 @@
     $('tips').dataset.last = `${($('tips').dataset.last || '').slice(-300)} | ${o.title || ''} ${o.text || ''}`;
     pumpTips();
   }
+  // at most two cards in a row: anything after that waits in Menu → What's new
+  let tipStreak = 0, tipIdleAt = 0;
   function pumpTips() {
     if (tipNow || tut || !tipQ.length) return;
+    if (!$('away').classList.contains('hidden')) return;
+    if (performance.now() - tipIdleAt > 6000) tipStreak = 0;
+    if (tipStreak >= 2) {
+      const n = tipQ.length;
+      while (tipQ.length) inboxAdd(tipQ.shift());
+      toast(`${n} more in Menu → What’s new`);
+      save();
+      return;
+    }
+    tipStreak++;
     tipNow = tipQ.shift();
     const o = tipNow;
     const el = document.createElement('div');
@@ -8542,6 +9308,7 @@
     const el = $('tips').querySelector('.tipCard:not(.tutCard)');
     if (el) { el.classList.add('out'); setTimeout(() => { el.remove(); placeToast(); }, 260); }
     tipNow = null;
+    tipIdleAt = performance.now();
     setTimeout(pumpTips, 300);
     save();
   }
@@ -8697,7 +9464,7 @@
     eventDone();
   }
   // the clock panel: time of day and the forecast for the next in-game week
-  function openWeather() {
+  function openWeather(refresh) {
     const now = clockNow, W = curWeather(), night = isNight();
     const toNext = (target) => { const left = ((target - now.hour + 24) % 24) / 24 * 60; return left < 1 ? 'now' : `in ${Math.round(left)} min`; };
     $('wxNow').innerHTML = `<span class="wxBig">${IC(night && weatherId === 'sun' ? 'moon' : WX_ICON[weatherId] || 'sun')}</span>
@@ -8707,6 +9474,8 @@
       const a = D.WEATHER[f.day], b = D.WEATHER[f.night];
       return `<div class="wxRow"><b>${f.name}</b><span class="wxCell">${IC(WX_ICON[f.day] || 'sun')}<small>${esc(a.name)}</small></span><span class="wxCell night">${IC(f.night === 'sun' ? 'moon' : WX_ICON[f.night] || 'moon')}<small>${esc(f.night === 'sun' ? 'Clear' : b.name)}</small></span></div>`;
     }).join('');
+    $('wxTabs').classList.toggle('hidden', !unlockedFeat('calendar'));
+    if (!refresh) setWxTab('weather');
     $('weather').classList.remove('hidden');
   }
   $('weather').addEventListener('click', (e) => { if (e.target.id === 'weather' || e.target.closest('[data-act="closeWeather"]')) $('weather').classList.add('hidden'); });
@@ -8792,7 +9561,7 @@
   // Sound: little synthesized effects and jukebox music, no sound files needed
   // =====================================================================
   const PREFS_KEY = 'voxelpaws-prefs';
-  const prefs = (() => { try { return Object.assign({ sfx: true, music: true }, JSON.parse(localStorage.getItem(PREFS_KEY)) || {}); } catch (_) { return { sfx: true, music: true }; } })();
+  const prefs = (() => { try { return Object.assign({ sfx: true, music: true, haptics: false, bigui: false }, JSON.parse(localStorage.getItem(PREFS_KEY)) || {}); } catch (_) { return { sfx: true, music: true, haptics: false, bigui: false }; } })();
   const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (_) { /* fine */ } };
   let actx = null, master = null, musicBus = null, noiseBuf = null;
   function audio() {
@@ -9128,6 +9897,24 @@
   $('photoExit').addEventListener('click', exitPhoto);
   $('photoMe').addEventListener('click', () => { player.root.visible = !player.root.visible; $('photoMe').classList.toggle('off', !player.root.visible); });
   $('photoDone').addEventListener('click', () => $('photoPreview').classList.add('hidden'));
+  $('photoJournal').addEventListener('click', () => {
+    if (!photoURL) return;
+    // a small copy for the journals of the dogs in the picture
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas'), w = 240, h = Math.round((img.height / img.width) * 240);
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      const url = c.toDataURL('image/jpeg', 0.72);
+      const inPic = dogs.filter((d) => d.root.visible && (place === 'home' || !d.lost));
+      state.photos = (state.photos || []).concat({ t: Date.now(), url, dogs: inPic.map((d) => d.id) }).slice(-12);
+      for (const d of inPic) { journalAdd(d, null, '📷', 'Posed for a photo'); const e = d.journal[d.journal.length - 1]; if (e && e.tx === 'Posed for a photo') e.ph = url; }
+      save();
+      toast(`Added to ${inPic.length > 1 ? 'the journals' : `${inPic[0] ? inPic[0].name + '’s' : 'the'} journal`} 📒`);
+      $('photoPreview').classList.add('hidden');
+    };
+    img.src = photoURL;
+  });
   $('photoPreview').addEventListener('click', (e) => { if (e.target.id === 'photoPreview') $('photoPreview').classList.add('hidden'); });
   $('photoShare').addEventListener('click', async () => {
     try {
@@ -9313,7 +10100,7 @@
   let crMode = 'edit', crTab = 'look';
   function openCreator(mode = 'edit') {
     crMode = mode;
-    crTab = 'look';
+    crTab = mode === 'new' ? 'look' : 'now';
     $('crTitle').textContent = mode === 'new' ? 'Make your character' : 'You';
     $('crClose').classList.toggle('hidden', mode === 'new');
     $('crTabs').classList.toggle('hidden', mode === 'new');
@@ -9334,6 +10121,9 @@
     $('crTabs').querySelectorAll('.seg').forEach((b) => b.classList.toggle('sel', b.dataset.tab === crTab));
     $('crLook').classList.toggle('hidden', crTab !== 'look');
     $('crClothes').classList.toggle('hidden', crTab !== 'clothes');
+    $('crNow').classList.toggle('hidden', crTab !== 'now');
+    document.querySelector('#creator .crPreview').classList.toggle('hidden', crTab === 'now');
+    if (crTab === 'now') { renderWhatNow(); return; }
     if (crTab === 'look') {
       const variant = (patch) => lookKey(Object.assign({}, L, patch));
       $('crLook').innerHTML =
@@ -9428,12 +10218,15 @@
       updateParkLoot(dt);
       updateQuirks(dt);
       updateTerrain(dt);
+      if (unlockedFeat('calendar')) { updateHunts(dt); calNight(dt); updateSkyFX(dt); }
       updateVendorTask();
       if (!tiredWarned && dogs.some((d) => d.energy < CRITICAL)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
     } else {
       for (const r of furnRT.values()) if (r.group.userData.anim) r.group.userData.anim(animT);
     }
     for (const d of dogs) d.updateLeash();
+    calTick(dt);
+    seasonFX.update(dt);
     updateParticles(dt);
     updateWallet(dt);
     pumpThumbs();
@@ -9532,6 +10325,7 @@
       setTimeout(() => toast("That visit link seems broken — showing your own home"), 600);
     }
     const hadSave = load();
+    applyBigUI();
     {
       const q = new URLSearchParams(location.search);
       if (q.has('u')) { q.delete('u'); const qs = q.toString(); history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash); }
@@ -9581,7 +10375,7 @@
     else if (notes.has('v7')) toast('New: new places to discover, and a fresh new look!');
     else if (notes.has('v9')) { toast('New: make your own character, plus clothes to collect! Menu → You'); setTimeout(() => tip('youTile', { title: 'Make it you', text: 'Pick your body, hair and colors in Menu → You. Clothes are in the shop, at vendors on walks, and some are earned.', icon: 'person' }), 1500); }
     else if (notes.has('v8')) toast('New: a title screen, tips, daily events, sounds, a mini-map and photo mode!');
-    else if (!notes.has('v10')) toast(awayHours > 8 ? `Welcome back! A neighbor looked after ${dogs[0].name} while you were away` : `Welcome back! ${dogs[0].name} missed you 🐾`);
+    else if (!notes.has('v10') && !showAway()) toast(awayHours > 8 ? `Welcome back! A neighbor looked after ${dogs[0].name} while you were away` : `Welcome back! ${dogs[0].name} missed you 🐾`);
     const sw = state.setsWelcome;
     if (sw && sw.length) setTimeout(() => news({ title: 'Collection sets!', text: `You had already finished: ${sw.join(', ')}. Your prizes are in.`, th: TH('pic', '🧩') }), 2500);
     delete state.setsWelcome;
@@ -9615,6 +10409,9 @@
       openDogSheet, renderDogSheet, startExam, examTry, examEnd, badgeRows, addSpec, heartsOfBond, get sheetDog() { return sheetDog; },
       rank, rankInfo, xpAtRank, gainXP, earn, addMastery, starsOf, unlockedFeat, needRank, refreshGates, openRanks, renderShop, fillAll, recordWalk, get notes() { return [...notes]; },
       groundAt, moveWithCollision, findPath, lineClear, updateTerrain, get roofOver() { return roofOver; }, atLookout, hiddenOf, hiddenTotal, exploredShare, markExplored, mmBackground, mmFogLayer, updateMinimap, locNote,
+      calEvents, activeEvents, completeEvent, calState, startHunts, get hunt() { return hunt; }, openCalendar, setWxTab, maybeInvite, meetupLive, finishMeetup, placeMeetup,
+      openJournal, journalAdd, showAway, awayLines, inboxAdd, openInbox, whatNow, haptic, reactToFurniture, get furnNew() { return furnNew; }, calOf, gdOf, evKnown, revealPlaceEvents,
+      setGameDay(gd) { gdOverride = gd; tickClock(); }, calNight, calProgress, get clockNowRaw() { return clockNow; }, exitDecorate, enterDecorate, set awayHours(v) { awayHours = v; }, updateHunts,
       doEcho, startSled, useRocket, usePortal, rideWheel, carnivalTrick, turnStatue, catchFloater, craterDig, travel, canVisitNow, ctxAction, get ctxKind() { return ctxKind; },
     };
   }
