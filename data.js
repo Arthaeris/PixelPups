@@ -1016,6 +1016,8 @@ window.VP_DATA = (function () {
     house:    { rank: 7, name: 'Home upgrades', text: 'Grow your home from a cozy flat to a dream estate' },
     gifts:    { rank: 9, name: 'Gift boxes', text: 'Visit links and gifts for friends' },
     gardens:  { rank: 10, name: 'Gardens', text: 'Turn rooms into gardens' },
+    calendar: { rank: 3, name: 'Seasonal events', say: 'the calendar', text: 'Events through the year, in a calendar next to the weather' },
+    meetups:  { rank: 5, name: 'Meetups', text: 'Neighbors invite you to meet them somewhere' },
     luxury:   { rank: 12, name: 'Luxury furniture', text: 'The fanciest pieces in the shop' },
   };
   // XP and place-mastery points for things you do. cap = how often it counts per game day.
@@ -1321,6 +1323,275 @@ window.VP_DATA = (function () {
 
   const MASTERY_PERKS = ['', 'A first star', 'Sniff spots here recover 30% faster', 'Vendors here are 10% cheaper', 'Secret finds here are twice as likely', 'Master of this place: 300 coins and 200 XP'];
 
+  // ===================================================================
+  // The in-game calendar. One game day lasts an hour, a month has 24 days, so a game year takes 12 real days.
+  // Seasons, monthly finds and seasonal events follow this calendar.
+  // ===================================================================
+  const CAL = { monthDays: 24 };
+  const SEASON_NAMES = { winter: 'Winter', spring: 'Spring', summer: 'Summer', autumn: 'Autumn' };
+  // Seasonal events. m = month, d0..d1 = days (inclusive). loc = where it happens ('home' = anywhere, at home or out).
+  // need = the place you must have unlocked to take part. task: hunt (find n things), night (be there after dark),
+  // visit (finish a walk there, optionally in rain), progress (do something n times).
+  // keepsake goes into the Events page of your book the first time you take part.
+  const CAL_EVENTS = [
+    { id: 'newyear', name: 'New Year Sparkle', icon: '🎆', m: 1, d0: 1, d1: 2, loc: 'park', fx: 'fireworks',
+      text: 'Fireworks over the park to welcome the new year.', task: { kind: 'night', how: 'Be in the park after dark' }, keepsake: ['k_sparkler', 'Sparkler', '🎇'], reward: { coins: 60, xp: 60 } },
+    { id: 'mittens', name: 'Lost Mittens', icon: '🧤', m: 1, d0: 9, d1: 12, loc: 'snowy', need: 'snowy',
+      text: 'The children of the Snowy Village lost their mittens in the snow again.', task: { kind: 'hunt', item: 'mitten', n: 6, how: 'Find 6 lost mittens in the Snowy Village' }, keepsake: ['k_mittens', 'Pair of mittens', '🧤'], reward: { coins: 70, xp: 70 } },
+    { id: 'snowday', name: 'Snow Day', icon: '⛄', m: 1, d0: 18, d1: 20, loc: 'snowy', need: 'snowy', decor: 'snowmen',
+      text: 'School is out and everyone is on the sled hill.', task: { kind: 'progress', ev: 'sled', n: 3, how: 'Go sledding 3 times' }, keepsake: ['k_sledbell', 'Sled bell', '🔔'], reward: { coins: 70, xp: 70 } },
+    { id: 'puppylove', name: 'Puppy Love Days', icon: '💌', m: 2, d0: 12, d1: 15, loc: 'oldtown', need: 'oldtown', decor: 'hearts',
+      text: 'Old Town is full of hearts. Say something nice to the neighbors.', task: { kind: 'progress', ev: 'chat', n: 3, how: 'Chat with 3 neighbors in Old Town' }, keepsake: ['k_heartcookie', 'Heart cookie', '🍪'], reward: { coins: 60, xp: 60 } },
+    { id: 'pancake', name: 'Pancake Day', icon: '🥞', m: 2, d0: 20, d1: 21, loc: 'home',
+      text: 'The whole street smells of pancakes.', task: { kind: 'progress', ev: 'cook', n: 1, how: 'Cook something at home' }, keepsake: ['k_pancake', 'Tiny pancake', '🥞'], reward: { coins: 50, xp: 50 } },
+    { id: 'springclean', name: 'Spring Cleaning', icon: '🧹', m: 3, d0: 3, d1: 5, loc: 'home',
+      text: 'Out with the dust, in with the sunshine.', task: { kind: 'progress', ev: 'tidy', n: 3, how: 'Tidy up 3 things at home' }, keepsake: ['k_broom', 'Little broom', '🧹'], reward: { coins: 50, xp: 50 } },
+    { id: 'kites', name: 'Kite Days', icon: '🪁', m: 3, d0: 14, d1: 17, loc: 'alpine', need: 'alpine', decor: 'kites',
+      text: 'The spring wind is perfect for kites on the meadow.', task: { kind: 'visit', how: 'Go for a walk on the Alpine Meadow' }, keepsake: ['k_kite', 'Paper kite', '🪁'], reward: { coins: 60, xp: 60 } },
+    { id: 'egghunt', name: 'Egg Hunt', icon: '🥚', m: 4, d0: 4, d1: 8, loc: 'park', decor: 'flowers',
+      text: 'Someone hid painted eggs all over the park.', task: { kind: 'hunt', item: 'egg', n: 10, how: 'Find 10 painted eggs in the park' }, keepsake: ['k_egg', 'Painted egg', '🥚'], reward: { coins: 80, xp: 80 } },
+    { id: 'puddles', name: 'Puddle Week', icon: '☔', m: 4, d0: 15, d1: 19, loc: 'forest', need: 'forest',
+      text: 'April showers make the best puddles in the forest.', task: { kind: 'visit', cond: 'rain', how: 'Go for a walk in the forest while it rains' }, keepsake: ['k_boots', 'Little rain boots', '👢'], reward: { coins: 70, xp: 70 } },
+    { id: 'blossom', name: 'Blossom Festival', icon: '🌸', m: 5, d0: 3, d1: 7, loc: 'fairy', need: 'fairy', decor: 'flowers',
+      text: 'The Fairy Realm is in full bloom, and petals drift on the wind.', task: { kind: 'hunt', item: 'petal', n: 8, how: 'Catch 8 drifting petals in the Fairy Realm' }, keepsake: ['k_blossom', 'Pressed blossom', '🌸'], reward: { coins: 80, xp: 80 } },
+    { id: 'dogshow', name: 'Spring Dog Show', icon: '🏅', m: 5, d0: 16, d1: 18, loc: 'park', decor: 'bunting',
+      text: 'Show off what your dogs can do. Everyone wins a rosette.', task: { kind: 'progress', ev: 'trick', n: 5, how: 'Do 5 tricks in the park' }, keepsake: ['k_rosette', 'Show rosette', '🏵️'], reward: { coins: 80, xp: 90 } },
+    { id: 'beachday', name: 'Beach Day', icon: '🐚', m: 6, d0: 5, d1: 9, loc: 'beach', need: 'beach', decor: 'bunting',
+      text: 'The first warm days. Pretty shells wash up everywhere.', task: { kind: 'hunt', item: 'shell', n: 8, how: 'Find 8 pretty shells on the beach' }, keepsake: ['k_bucket', 'Sand bucket', '🪣'], reward: { coins: 80, xp: 80 } },
+    { id: 'fairycourt', name: 'Fairy Court', icon: '👑', m: 6, d0: 12, d1: 14, loc: 'fairy', need: 'fairy',
+      text: 'The fairies hold court, and the stone dogs want to face the orb.', task: { kind: 'progress', ev: 'statue', n: 1, how: 'Solve the stone dog puzzle in the Fairy Realm' }, keepsake: ['k_crown', 'Tiny crown', '👑'], reward: { coins: 90, xp: 90 } },
+    { id: 'midsummer', name: 'Midsummer Night', icon: '🔥', m: 6, d0: 20, d1: 22, loc: 'alpine', need: 'alpine', decor: 'bonfire',
+      text: 'The shortest night of the year, with a bonfire on the meadow.', task: { kind: 'night', how: 'Be on the Alpine Meadow after dark' }, keepsake: ['k_firefly', 'Firefly jar', '🫙'], reward: { coins: 70, xp: 70 } },
+    { id: 'picnic', name: 'Big Picnic', icon: '🧺', m: 7, d0: 4, d1: 6, loc: 'park', decor: 'picnic',
+      text: 'Blankets and baskets all over the lawn.', task: { kind: 'visit', how: 'Go for a walk in the park' }, keepsake: ['k_basket', 'Picnic basket', '🧺'], reward: { coins: 50, xp: 50 } },
+    { id: 'sandcastle', name: 'Sandcastle Contest', icon: '🏰', m: 7, d0: 12, d1: 15, loc: 'beach', need: 'beach', decor: 'bunting',
+      text: 'Who builds the best castle? The dogs mostly dig.', task: { kind: 'progress', ev: 'beachdig', n: 3, how: 'Dig 3 times on the beach' }, keepsake: ['k_castleflag', 'Castle flag', '🚩'], reward: { coins: 70, xp: 70 } },
+    { id: 'moonday', name: 'Moon Landing Day', icon: '🚀', m: 7, d0: 20, d1: 21, loc: 'moon', need: 'moon',
+      text: 'The day the first dog bounced on the moon.', task: { kind: 'hunt', item: 'moonrock', n: 6, how: 'Collect 6 shiny moon rocks' }, keepsake: ['k_moonrock', 'Moon rock', '🌑'], reward: { coins: 100, xp: 100 } },
+    { id: 'stars', name: 'Shooting Star Nights', icon: '🌠', m: 8, d0: 10, d1: 13, loc: 'alpine', need: 'alpine', fx: 'meteors',
+      text: 'Shooting stars fall over the mountain, and some land in the grass.', task: { kind: 'hunt', item: 'star', n: 6, night: true, how: 'Find 6 fallen stars on the Alpine Meadow at night' }, keepsake: ['k_stardust', 'Stardust', '✨'], reward: { coins: 90, xp: 90 } },
+    { id: 'summerfair', name: 'Summer Carnival Week', icon: '🎡', m: 8, d0: 18, d1: 23, loc: 'carnival', need: 'carnival', decor: 'bunting',
+      text: 'The carnival’s busiest week. Every booth is open.', task: { kind: 'progress', ev: 'tickets', n: 6, how: 'Win 6 tickets at the game booths' }, keepsake: ['k_ticketstub', 'Golden ticket stub', '🎫'], reward: { coins: 90, xp: 90 } },
+    { id: 'harvest', name: 'Harvest Market', icon: '🍎', m: 9, d0: 6, d1: 9, loc: 'oldtown', need: 'oldtown', decor: 'crates',
+      text: 'Apples everywhere in Old Town. Some rolled off the carts.', task: { kind: 'hunt', item: 'apple', n: 8, how: 'Pick up 8 runaway apples in Old Town' }, keepsake: ['k_apple', 'Shiny apple', '🍏'], reward: { coins: 70, xp: 70 } },
+    { id: 'mushrooms', name: 'Mushroom Season', icon: '🍄', m: 9, d0: 17, d1: 21, loc: 'forest', need: 'forest',
+      text: 'After the rain, the forest floor is full of mushrooms.', task: { kind: 'hunt', item: 'mushroom', n: 8, how: 'Find 8 mushrooms in the forest' }, keepsake: ['k_mushroom', 'Mushroom basket', '🍄'], reward: { coins: 70, xp: 70 } },
+    { id: 'leaves', name: 'Leaf Pile Days', icon: '🍂', m: 10, d0: 3, d1: 6, loc: 'park',
+      text: 'The park keeper raked big piles of leaves. Dogs can’t resist.', task: { kind: 'hunt', item: 'leafpile', n: 8, how: 'Jump into 8 leaf piles in the park' }, keepsake: ['k_goldleaf', 'Golden leaf', '🍁'], reward: { coins: 70, xp: 70 } },
+    { id: 'spooky', name: 'Spooky Night', icon: '🎃', m: 10, d0: 20, d1: 24, loc: 'forest', need: 'forest', decor: 'pumpkins',
+      text: 'Glowing pumpkins hide in the dark forest.', task: { kind: 'hunt', item: 'pumpkin', n: 8, night: true, how: 'Find 8 glowing pumpkins in the forest at night' }, keepsake: ['k_pumpkin', 'Pumpkin lantern', '🎃'], reward: { coins: 90, xp: 90 } },
+    { id: 'crystalnight', name: 'Crystal Night', icon: '🔮', m: 11, d0: 3, d1: 5, loc: 'caves', need: 'caves',
+      text: 'Once a year the crystals hum. Listen for them.', task: { kind: 'progress', ev: 'crystal', n: 3, how: 'Light up 3 crystals in the caves' }, keepsake: ['k_glowshard', 'Humming shard', '🔮'], reward: { coins: 90, xp: 90 } },
+    { id: 'lanternwalk', name: 'Lantern Walk', icon: '🏮', m: 11, d0: 9, d1: 11, loc: 'oldtown', need: 'oldtown',
+      text: 'Paper lanterns wait to be lit all over Old Town.', task: { kind: 'hunt', item: 'lantern', n: 8, night: true, how: 'Light 8 lanterns in Old Town at night' }, keepsake: ['k_lantern', 'Paper lantern', '🏮'], reward: { coins: 80, xp: 80 } },
+    { id: 'cozy', name: 'Cozy Week', icon: '🧣', m: 11, d0: 17, d1: 21, loc: 'home',
+      text: 'Grey days outside, warm cuddles inside.', task: { kind: 'progress', ev: 'pet', n: 10, how: 'Give your dogs 10 cuddles' }, keepsake: ['k_blanket', 'Knitted blanket', '🧶'], reward: { coins: 50, xp: 50 } },
+    { id: 'wintermarket', name: 'Winter Market', icon: '🎄', m: 12, d0: 4, d1: 9, loc: 'snowy', need: 'snowy', decor: 'lights',
+      text: 'Stalls, lights and warm cocoa in the Snowy Village.', task: { kind: 'visit', how: 'Go for a walk in the Snowy Village' }, keepsake: ['k_ornament', 'Glass ornament', '🎄'], reward: { coins: 70, xp: 70 } },
+    { id: 'cookies', name: 'Cookie Baking Day', icon: '⭐', m: 12, d0: 14, d1: 15, loc: 'home',
+      text: 'Flour on every paw.', task: { kind: 'progress', ev: 'cook', n: 2, how: 'Cook 2 things at home' }, keepsake: ['k_starcookie', 'Star cookie', '⭐'], reward: { coins: 60, xp: 60 } },
+    { id: 'yearsend', name: 'Last Night of the Year', icon: '🎉', m: 12, d0: 24, d1: 24, loc: 'park', fx: 'fireworks',
+      text: 'One last walk under the fireworks.', task: { kind: 'night', how: 'Be in the park after dark' }, keepsake: ['k_popper', 'Confetti popper', '🎉'], reward: { coins: 60, xp: 60 } },
+  ];
+
+  // ===================================================================
+  // Meetups: now and then a neighbor asks you to meet them somewhere. [name, x, z, hidden spot that must be found first]
+  // ===================================================================
+  const MEET_SPOTS = {
+    park: [['the lookout on the hill', 36, -14.5], ['the pond steps', -0.6, -4], ['the bench by the gate', 4, 14], ['the east meadow', 33, -3.5], ['the rose garden', -24.5, -4, 'roses']],
+    oldtown: [['the fountain', 0, 7.6], ['the canal steps', 21, -13], ['the café tables', -11.8, 9.4], ['the courtyard', 9.6, -21.5, 'courtyard']],
+    forest: [['the west glade', -15.6, 2], ['the bench on the terrace', 24, -17.6], ['the pond', -5, -2.4], ['the hollow tree', -25.5, -1, 'hollowtree']],
+    beach: [['the lighthouse', 28.5, -8], ['the boardwalk', 0, 9.2], ['the ice cream kiosk', -12, 5], ['the dunes', -8, 15.6]],
+    alpine: [['the summit', -1.5, -24.6], ['the little lake', -5, -1.8], ['checkpoint 3', 12.2, 13.6], ['the secret meadow', -26, 10, 'meadow']],
+    caves: [['the spring', 2.6, -0.4], ['the old mine cart', -15.5, -4.4], ['the lake cavern', -29, -2, 'lake']],
+    snowy: [['the big tree', 0, 4.8], ['the sled hill', 15.8, -6.4], ['the frozen pond', -27, -3.5], ['the ridge bench', 24.5, 0.4]],
+    carnival: [['the Ferris wheel', 0, -12.2], ['the boardwalk', 24, 6.6], ['the carousel', 4.2, 5.2]],
+    fairy: [['the glowing orb', 0, 2.4], ['the hilltop', 3.5, -23.4], ['the glowing pond', -7.2, -5.8]],
+    moon: [['the rocket', 6, 14.4], ['the big crater', 22, -1], ['the domes', -1, -13.6]],
+  };
+  const MEET_INVITES = [
+    '{ndog} and I will be at {spot} in {place} over the next few days. Come and say hi!',
+    'Fancy a walk together? We’ll be hanging around {spot} in {place} for a few days.',
+    '{ndog} keeps asking about {dog}. Meet us at {spot} in {place}?',
+    'I found the nicest spot: {spot} in {place}. We’ll be there the next few days, join us!',
+    'Want to let the dogs play? We’ll wait for you at {spot} in {place}.',
+    '{ndog} is bored of me. Help! We’re at {spot} in {place} for a while.',
+    'I’m trying a new route with {ndog}. Meet us at {spot} in {place}?',
+    'There’s something I want to show you at {spot} in {place}. We’ll be there the next few days.',
+  ];
+  const MEET_LINES = [
+    'You came! {ndog} has been waiting by the path all morning.',
+    'Look at them go. {dog} and {ndog} are best friends already.',
+    'I love this spot. It’s quiet, and the dogs can just be dogs.',
+    'I brought something for {dog}. Don’t tell {ndog}, it was the last one.',
+    'Do you ever just stand and watch them play? I could do this all day.',
+    '{ndog} found a stick twice as long as itself. We’re very proud.',
+    'Thanks for coming. Walks are more fun with company.',
+    'Same time next week? {ndog} will never forgive me otherwise.',
+    'I told everyone at home about {dog}. They want a photo.',
+    'You know, I nearly didn’t come out today. Glad I did.',
+  ];
+
+  // ===================================================================
+  // The welcome back summary: what the dogs got up to while you were away.
+  // {dog} {other} {toy} {furn} {neighbor} {ndog} {place} are filled in. Lines are picked to fit each dog.
+  // ===================================================================
+  const AWAY = {
+    general: [
+      '{dog} watched the door for a long time, just in case.',
+      '{dog} had a long, twitchy dream about chasing something.',
+      '{dog} found a sunny patch on the floor and followed it around the room.',
+      '{dog} sneezed at a dust bunny and then looked very offended.',
+      '{dog} practised looking cute in front of the treat cupboard.',
+      '{dog} counted all the toys. Twice. One is missing, apparently.',
+      '{dog} had a staring contest with a fly. The fly won.',
+      '{dog} rolled on the rug until it was exactly right.',
+      '{dog} sniffed your shoes thoroughly. They passed inspection.',
+      '{dog} heard the postman and gave a very important bark.',
+      '{dog} curled up in your favourite spot to keep it warm for you.',
+      '{dog} chased its tail for a while, then gave up and napped.',
+      '{dog} tried to catch a reflection on the wall.',
+      '{dog} carried a sock from room to room, for reasons.',
+      '{dog} snored so loudly the windows hummed.',
+      '{dog} wagged at every sound outside, just in case it was you.',
+    ],
+    long: [
+      '{dog} has missed you a lot. There may be a little extra wiggle today.',
+      'A neighbor dropped in and played with {dog}, but it wasn’t the same.',
+      '{dog} kept checking your spot on the sofa, every hour or so.',
+      '{dog} has been saving up all the cuddles for you.',
+    ],
+    puppy: [
+      '{dog} discovered stairs. Going up: great. Going down: a work in progress.',
+      '{dog} tried to carry a toy bigger than its head. Nearly made it.',
+      '{dog} fell asleep mid-play, right in the middle of the room.',
+      '{dog} met its own tail today and was not impressed.',
+      '{dog} chewed something it shouldn’t have. We won’t say what.',
+    ],
+    hungry: [
+      '{dog} sat by the food bowl and sighed, very loudly.',
+      '{dog} has been thinking about dinner for quite a while now.',
+    ],
+    toy: [
+      '{dog} dragged the {toy} to the door and waited there with it.',
+      '{dog} gave the {toy} a long, serious chew.',
+      '{dog} tossed the {toy} in the air and caught it. Mostly.',
+      '{dog} guarded the {toy} from absolutely nobody.',
+      '{dog} hid the {toy} somewhere safe. Nobody knows where.',
+    ],
+    trait: {
+      zoomies: [
+        '{dog} did six laps of the house at full speed. Nobody knows why.',
+        '{dog} had a sudden burst of zoomies and skidded across the floor.',
+        '{dog} raced from window to window, chasing nothing at all.',
+        '{dog} sprinted in circles, flopped down, then sprinted again.',
+      ],
+      couch: [
+        '{dog} perfected the art of doing nothing. Very impressive.',
+        '{dog} napped, then napped some more, then had a little nap.',
+        '{dog} found the softest cushion in the house and claimed it forever.',
+        '{dog} moved a total of three steps all day. A personal best.',
+      ],
+      foodie: [
+        '{dog} sniffed the kitchen very carefully, in case a crumb had appeared.',
+        '{dog} stared at the fridge, hoping it would open by itself.',
+        '{dog} licked the empty bowl until it sparkled.',
+        '{dog} smelled something delicious from next door and sighed deeply.',
+      ],
+      water: [
+        '{dog} tipped over the water bowl and splashed about in it.',
+        '{dog} sat by the window watching the rain like it was television.',
+        '{dog} got its paws wet in the water bowl, on purpose, several times.',
+      ],
+      pampered: [
+        '{dog} spent ages licking its paws clean and looking pleased about it.',
+        '{dog} refused to lie anywhere that wasn’t perfectly soft.',
+        '{dog} posed by the mirror. Gorgeous, as usual.',
+      ],
+      shy: [
+        '{dog} hid under the table when the wind rattled the window.',
+        '{dog} waited by the door, quietly, until it heard your step.',
+        '{dog} curled up with something that smells like you.',
+      ],
+      social: [
+        '{dog} barked hello at every dog passing by the window.',
+        '{dog} heard {ndog} outside and wanted very much to go play.',
+        '{dog} tried to make friends with a pigeon on the windowsill.',
+      ],
+      brainiac: [
+        '{dog} figured out how to open the toy box. Uh oh.',
+        '{dog} stared at a puzzle toy for an hour, then solved it in a second.',
+        '{dog} rearranged the toys in some kind of order. Only {dog} knows.',
+      ],
+      digger: [
+        '{dog} tried to dig a hole in the rug. The rug held on.',
+        '{dog} buried a treat in the sofa cushions for later.',
+        '{dog} dug a little hole and then forgot what it was for.',
+      ],
+    },
+    breed: {
+      corgi: ['{dog} herded a toy into the corner. Mission complete.', '{dog} did the corgi sploot and stayed like that for an hour.'],
+      husky: ['{dog} had a long, loud conversation with nobody in particular.', '{dog} howled along to a siren far away.'],
+      poodle: ['{dog} practised a little dance on its back legs.', '{dog} pranced around the room like it owned the place.'],
+      dachshund: ['{dog} burrowed under a blanket until only the tail showed.', '{dog} stretched out into an extra long sausage in the sun.'],
+      retriever: ['{dog} brought you a present. It is a shoe.', '{dog} carried a toy around very gently, like it was treasure.'],
+    },
+    furn: {
+      bed: ['{dog} turned around nine times before lying down in the bed.', '{dog} dragged a toy into the bed and fell asleep on it.'],
+      sofa: ['{dog} took over the sofa. Yes, the whole sofa.', '{dog} napped on the sofa with its legs in the air.'],
+      fireplace: ['{dog} warmed its belly by the fireplace.', '{dog} watched the fire crackle, very slowly blinking.'],
+      tv: ['{dog} watched a nature programme and barked at a squirrel on screen.', '{dog} sat in front of the TV, waiting for dogs to appear.'],
+      piano: ['{dog} stepped on the piano and scared itself.', '{dog} sat by the piano, hoping someone would play.'],
+      jukebox: ['{dog} sat by the jukebox and tilted its head at the songs.'],
+      aquarium: ['{dog} watched the fish swim round and round. And round.'],
+      toybox: ['{dog} emptied the whole toy box onto the floor. A great success.'],
+      kennel: ['{dog} retreated into the dog house for some quiet time.'],
+      bathtub: ['{dog} gave the bathtub a suspicious look and walked the long way round.'],
+      plant: ['{dog} sniffed the plant, sneezed, and sniffed it again.'],
+      gardenpond: ['{dog} watched the garden pond for frogs.'],
+      digpit: ['{dog} dug in the sand pit and came back with a sandy nose.'],
+      flowerbed: ['{dog} smelled every single flower in the garden.'],
+      gardentree: ['{dog} napped in the shade of the apple tree.'],
+      rainbowrug: ['{dog} lay on the rainbow rug and looked very colourful.'],
+      cloudbed: ['{dog} sank into the cloud bed and didn’t move for hours.'],
+      heatedbed: ['{dog} melted into the heated bed like butter.'],
+    },
+    weather: {
+      rain: ['{dog} listened to the rain on the roof and fell asleep.', '{dog} watched the raindrops race down the window.'],
+      storm: ['{dog} didn’t like the thunder and hid under a blanket.', 'The storm rattled the house, and {dog} stayed close to the bed.'],
+      snow: ['{dog} watched the snowflakes and tried to catch them through the glass.', '{dog} pressed its nose to the frosty window.'],
+      sun: ['{dog} lay in a square of sunshine and turned like a little roast.', '{dog} watched the birds in the sunny garden.'],
+      fog: ['{dog} stared into the fog, very suspicious of it.'],
+    },
+    night: ['{dog} kept watch through the night, then dozed off at dawn.', '{dog} gave a sleepy little woof at the moon.'],
+    pair: [
+      '{dog} and {other} played tug of war. It was a draw.',
+      '{dog} and {other} napped back to back.',
+      '{dog} stole {other}’s favourite spot, and {other} pretended not to care.',
+      '{dog} and {other} had a very long play bow standoff.',
+      '{dog} chased {other} around the table until both fell over.',
+      '{dog} groomed {other}’s ear. {other} allowed it.',
+      '{dog} and {other} shared the sunny spot by the window.',
+      '{dog} and {other} barked at the same leaf, together, for a while.',
+      '{other} brought {dog} a toy, and {dog} brought {other} a sock.',
+    ],
+  };
+
+  // ===================================================================
+  // Dogs react to new furniture: what they make of it
+  // ===================================================================
+  const FURN_REACT = {
+    bed: ['tries it out straight away', '🥰'], cushion: ['flops down on it', '🥰'], heatedbed: ['melts into it', '😌'], cloudbed: ['sinks in and sighs', '😌'],
+    sofa: ['hops up and claims it', '😎'], armchair: ['curls up on it', '😌'], beanbag: ['jumps into it with a flump', '😆'],
+    tv: ['stares at it, waiting for dogs', '🤔'], fireplace: ['lies down in front of it', '😌'], piano: ['taps a key and jumps back', '😮'],
+    plant: ['sniffs it and sneezes', '🤧'], cactus: ['sniffs it very carefully', '😬'], sunflower: ['looks up at it, impressed', '🌻'],
+    aquarium: ['watches the fish go round', '👀'], clock: ['tilts its head at the ticking', '🤔'], toybox: ['digs in for toys', '🎾'],
+    kennel: ['checks out the new house', '🏠'], hurdle: ['jumps over it, very proud', '🙌'], bathtub: ['gives it a suspicious look', '😒'],
+    bowl: ['checks it for food', '👀'], water: ['has a sip', '💧'], lamp: ['sniffs the light', '💡'], rug: ['rolls on it', '😆'],
+    jukebox: ['tilts its head at the music', '🎶'], fridge: ['waits hopefully in front of it', '🥺'], stove: ['smells something good', '😋'],
+    gardenpond: ['looks for frogs', '🐸'], digpit: ['digs straight in', '⛏️'], flowerbed: ['smells every flower', '🌷'],
+  };
+
   return {
     CONFIG, NEEDS, STATS, TRAITS, BREEDS, LEGACY_COATS, ITEMS, CATS, TOYS, WALLS, FLOORS, DEFAULT_ROOM, WEATHER, WEATHER_ODDS, DAYLIGHT, DOG_NAMES,
     TRICKS, SECRET_TRICKS, TRICK_XP, TRICK_LEVELS, TRICK_SUCCESS, TRICK_SNAP, TRICK_FOCUS, COMPAT, FRIEND_LEVEL, NEIGHBORS, GIFTS, GIFT_CHANCE, GIFT_FRIEND_BONUS, RECALL,
@@ -1332,5 +1603,6 @@ window.VP_DATA = (function () {
     EVENTS, LOOK, DEFAULT_LOOK, OUTFITS,
     RANK_MAX, rankNeed, RANK_TITLES, RANK_UNLOCKS, XP, XP_MISC, MASTERY_STARS, MASTERY_PERKS,
     GLOW, GADGETS, CHAT, BADGES, BOND, SPECIALTIES, SPEC_LEVELS, SPEC_CHANGE, STORIES, HOUSE_TIERS, SEASONS, MONTHS, SETS, CRITTERS, CRITTER_CHANCE, CRITTER_REWARD,
+    CAL, SEASON_NAMES, CAL_EVENTS, MEET_SPOTS, MEET_INVITES, MEET_LINES, AWAY, FURN_REACT,
   };
 })();
