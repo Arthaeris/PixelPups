@@ -3667,6 +3667,51 @@ window.VP_ART = (function () {
     return new THREE.MeshLambertMaterial({ map: t });
   }
 
+
+  // ===================================================================
+  // Seasonal events: things to find on a hunt, and decorations along the paths
+  // ===================================================================
+  function huntItem(kind) {
+    const g = new THREE.Group();
+    const ud = (o) => Object.assign(g.userData, o);
+    const glow = (c, i = 0.6) => new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: i });
+    switch (kind) {
+      case 'egg': { const c = pick3(['#f48fb1', '#81d4fa', '#fff176', '#a5d6a7', '#ce93d8']); box(g, 0.26, 0.32, 0.26, c, 0, 0.16, 0); box(g, 0.2, 0.08, 0.2, c, 0, 0.36, 0); box(g, 0.27, 0.05, 0.27, '#ffffff', 0, 0.18, 0); ud({ emoji: '🥚' }); break; }
+      case 'mitten': { const c = pick3(['#e53935', '#1e88e5', '#43a047', '#fdd835']); box(g, 0.28, 0.34, 0.1, c, 0, 0.18, 0); box(g, 0.1, 0.14, 0.1, c, 0.17, 0.2, 0); box(g, 0.3, 0.07, 0.11, '#ffffff', 0, 0.03, 0); g.rotation.x = -1.2; ud({ emoji: '🧤' }); break; }
+      case 'petal': { box(g, 0.24, 0.05, 0.18, '#f8bbd0', 0, 0, 0); box(g, 0.12, 0.05, 0.12, '#f48fb1', 0.05, 0.02, 0.02); ud({ emoji: '🌸', bob: true, spin: true }); g.position.y = 0.5; break; }
+      case 'shell': { box(g, 0.3, 0.1, 0.24, '#ffccbc', 0, 0.05, 0); box(g, 0.22, 0.08, 0.18, '#ffab91', 0, 0.12, 0); for (const x of [-0.08, 0, 0.08]) box(g, 0.03, 0.03, 0.25, '#ffffff', x, 0.17, 0); ud({ emoji: '🐚' }); break; }
+      case 'moonrock': { box(g, 0.3, 0.22, 0.26, glow('#b3e5fc', 0.4), 0, 0.11, 0); box(g, 0.16, 0.12, 0.14, glow('#e1f5fe', 0.6), 0.05, 0.27, 0); ud({ emoji: '🌑', spin: true }); break; }
+      case 'star': { const m = glow('#fff59d', 0.9); box(g, 0.34, 0.1, 0.1, m, 0, 0.12, 0); box(g, 0.1, 0.1, 0.34, m, 0, 0.12, 0); box(g, 0.14, 0.14, 0.14, m, 0, 0.12, 0); ud({ emoji: '⭐', bob: true, spin: true }); break; }
+      case 'apple': { box(g, 0.26, 0.24, 0.26, '#e53935', 0, 0.12, 0); box(g, 0.04, 0.08, 0.04, '#6d4c41', 0, 0.28, 0); box(g, 0.1, 0.03, 0.06, '#66bb6a', 0.06, 0.29, 0); ud({ emoji: '🍎' }); break; }
+      case 'mushroom': { box(g, 0.1, 0.2, 0.1, '#f5ecd9', 0, 0.1, 0); box(g, 0.34, 0.12, 0.34, '#e53935', 0, 0.24, 0); box(g, 0.22, 0.06, 0.22, '#ef5350', 0, 0.32, 0); box(g, 0.06, 0.03, 0.06, '#ffffff', 0.08, 0.31, 0.06); ud({ emoji: '🍄' }); break; }
+      case 'leafpile': { const cs = ['#e65100', '#f9a825', '#c62828', '#ef6c00']; for (let k = 0; k < 9; k++) box(g, 0.34, 0.12, 0.3, cs[k % 4], Math.sin(k * 2.1) * 0.25, 0.06 + (k % 3) * 0.09, Math.cos(k * 1.7) * 0.25); ud({ emoji: '🍂' }); break; }
+      case 'pumpkin': { box(g, 0.44, 0.32, 0.44, glow('#ff8f00', 0.35), 0, 0.16, 0); for (const x of [-0.12, 0.12]) box(g, 0.03, 0.3, 0.45, '#ef6c00', x, 0.16, 0); box(g, 0.06, 0.12, 0.06, '#5d4037', 0, 0.38, 0); box(g, 0.08, 0.06, 0.02, glow('#fff176', 1), -0.08, 0.2, 0.225); box(g, 0.08, 0.06, 0.02, glow('#fff176', 1), 0.08, 0.2, 0.225); ud({ emoji: '🎃' }); break; }
+      case 'lantern': { box(g, 0.06, 0.9, 0.06, '#5d4037', 0, 0.45, 0); box(g, 0.32, 0.36, 0.32, glow('#ff7043', 0.25), 0, 1.0, 0); box(g, 0.34, 0.05, 0.34, '#3e2723', 0, 1.2, 0); box(g, 0.34, 0.05, 0.34, '#3e2723', 0, 0.8, 0); ud({ emoji: '🏮' }); break; }
+      default: box(g, 0.3, 0.3, 0.3, '#ffd54f', 0, 0.15, 0);
+    }
+    return g;
+  }
+  let pickN = 0;
+  const pick3 = (a) => a[(pickN++) % a.length];
+  function eventProp(kind, k = 0) {
+    const g = new THREE.Group();
+    const glow = (c, i = 0.6) => new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: i });
+    switch (kind) {
+      case 'snowmen': box(g, 0.7, 0.6, 0.7, '#ffffff', 0, 0.3, 0); box(g, 0.5, 0.45, 0.5, '#ffffff', 0, 0.82, 0); box(g, 0.36, 0.34, 0.36, '#ffffff', 0, 1.2, 0); box(g, 0.06, 0.06, 0.2, '#ff9800', 0, 1.2, 0.26); box(g, 0.4, 0.06, 0.4, ['#e53935', '#1e88e5', '#43a047'][k % 3], 0, 1.02, 0); break;
+      case 'hearts': box(g, 0.08, 1.5, 0.08, '#8d6e63', 0, 0.75, 0); for (const [x, y] of [[-0.12, 1.75], [0.12, 1.75], [0, 1.6], [-0.2, 1.66], [0.2, 1.66]]) box(g, 0.18, 0.18, 0.08, glow(k % 2 ? '#ff4081' : '#f48fb1', 0.3), x, y, 0); break;
+      case 'kites': box(g, 0.06, 2.6, 0.06, '#8d6e63', 0, 1.3, 0); { const kc = ['#e53935', '#1e88e5', '#fdd835', '#43a047'][k % 4]; const kb = box(g, 0.6, 0.6, 0.04, kc, 0.5, 2.9, 0); kb.rotation.z = 0.78; for (let t = 0; t < 4; t++) box(g, 0.1, 0.06, 0.04, '#ffffff', 0.5 - t * 0.12, 2.4 - t * 0.2, 0); } break;
+      case 'flowers': box(g, 0.6, 0.3, 0.6, '#8d6e4c', 0, 0.15, 0); for (const [x, z, c] of [[-0.15, -0.15, '#f48fb1'], [0.15, -0.1, '#fff176'], [0, 0.15, '#ce93d8'], [0.18, 0.18, '#ffffff']]) { box(g, 0.04, 0.25, 0.04, '#66bb6a', x, 0.42, z); box(g, 0.14, 0.12, 0.14, c, x, 0.58, z); } break;
+      case 'bunting': { for (const x of [-1.2, 1.2]) box(g, 0.08, 2.2, 0.08, '#8d6e63', x, 1.1, 0); const cols = ['#e53935', '#fdd835', '#1e88e5', '#43a047', '#ff7043']; for (let t = 0; t < 7; t++) { const x = -1.05 + t * 0.35, y = 2.05 - Math.sin((t / 6) * Math.PI) * 0.25; box(g, 0.24, 0.24, 0.03, cols[t % 5], x, y - 0.14, 0).rotation.z = 0.78; } break; }
+      case 'bonfire': if (k % 3 === 0) { for (let t = 0; t < 6; t++) { const a = (t / 6) * Math.PI * 2; box(g, 0.5, 0.14, 0.14, '#6d4c41', Math.sin(a) * 0.3, 0.07, Math.cos(a) * 0.3).rotation.y = a; } box(g, 0.4, 0.5, 0.4, M.fire, 0, 0.4, 0); box(g, 0.24, 0.4, 0.24, M.fire2, 0, 0.75, 0); box(g, 0.2, 0.2, 0.2, M.lamp, 0, 0.5, 0); } else { box(g, 1.2, 0.3, 0.4, '#8d6e4c', 0, 0.15, 0); } break;
+      case 'picnic': box(g, 1.4, 0.03, 1.1, k % 2 ? '#e57373' : '#64b5f6', 0, 0.02, 0); for (let t = 0; t < 4; t++) box(g, 1.41, 0.035, 0.12, '#ffffff', 0, 0.025, -0.4 + t * 0.27); box(g, 0.4, 0.28, 0.3, '#a1785a', 0.3, 0.16, 0.1); box(g, 0.42, 0.04, 0.04, '#6d4c41', 0.3, 0.38, 0.1); break;
+      case 'crates': box(g, 0.6, 0.45, 0.5, '#a1785a', 0, 0.22, 0); for (let t = 0; t < 4; t++) box(g, 0.13, 0.13, 0.13, k % 2 ? '#e53935' : '#7cb342', -0.2 + t * 0.13, 0.5, (t % 2) * 0.1 - 0.05); box(g, 0.5, 0.4, 0.45, '#8d6e4c', 0.6, 0.2, 0.2); break;
+      case 'pumpkins': box(g, 0.44, 0.32, 0.44, glow('#ff8f00', 0.3), 0, 0.16, 0); box(g, 0.06, 0.12, 0.06, '#5d4037', 0, 0.38, 0); box(g, 0.08, 0.06, 0.02, glow('#fff176', 1), -0.08, 0.2, 0.225); box(g, 0.08, 0.06, 0.02, glow('#fff176', 1), 0.08, 0.2, 0.225); box(g, 0.3, 0.22, 0.3, '#ff8f00', 0.45, 0.11, 0.2); break;
+      case 'lights': box(g, 0.1, 2.2, 0.1, '#5d4037', 0, 1.1, 0); for (let t = 0; t < 6; t++) box(g, 0.12, 0.12, 0.12, M.bulbs[(t + k) % 5], Math.sin(t) * 0.1, 0.5 + t * 0.3, Math.cos(t) * 0.1); box(g, 0.2, 0.2, 0.2, M.gold, 0, 2.3, 0); break;
+      default: box(g, 0.3, 0.3, 0.3, '#ffd54f', 0, 0.15, 0);
+    }
+    return g;
+  }
+
   function buildLocation(id, root) {
     curT = null;
     try { return buildLocationRaw(id, root); } finally { curT = null; }
@@ -4165,7 +4210,7 @@ window.VP_ART = (function () {
 
   return {
     mulberry32, geo, mat, box, pivot, blob, emojiTexture, emojiSprite, textSprite, setSpriteText, M,
-    buildItem, buildToy, buildDog, coatOf, portraitURL, personPortraitURL, buildPlayer, buildAccessory, gardenFloorMaterial, buildHole,
+    buildItem, buildToy, buildDog, coatOf, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
     icon, thumbURL, hasThumb, scentFX, setScentGold,
