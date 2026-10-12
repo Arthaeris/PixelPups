@@ -125,6 +125,7 @@
       <div class="btnRow center">
         <button class="soft" id="photoShare"><i data-i="share"></i> Share</button>
         <a class="soft" id="photoSave" download="pixelpups.jpg"><i data-i="save"></i> Save</a>
+        <button class="soft" id="photoJournal"><i data-i="book"></i> To journal</button>
         <button class="soft" id="photoDone">Done</button>
       </div>
     </div>
@@ -170,6 +171,7 @@
           <button class="tile" data-act="people"><i data-i="wave"></i><b>Neighbors</b><small id="tilePeopleSub">Their stories</small></button>
           <button class="tile" data-act="photo"><i data-i="camera"></i><b>Photo</b><small>Snap a picture of your pack</small></button>
           <button class="tile" data-act="settings"><i data-i="gear"></i><b>Settings</b><small>Sound, backups, sharing</small></button>
+          <button class="tile hidden" data-act="inbox" id="tileInbox"><i data-i="sparkle"></i><b>What’s new</b><small>News you missed</small><i class="badge" id="inboxBadge">0</i></button>
         </div>
       </div>
     </div>
@@ -177,12 +179,17 @@
 
   <div id="weather" class="modal hidden">
     <div class="sheet">
-      <div class="sheetHead"><h2>Weather</h2><button class="x" data-act="closeWeather" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetHead"><h2 id="wxTitle">Weather</h2><button class="x" data-act="closeWeather" aria-label="Close"><i data-i="x"></i></button>
+        <div id="wxTabs" class="headRow segs hidden"><button class="seg sel" data-wxtab="weather">Weather</button><button class="seg" data-wxtab="cal">Calendar</button></div>
+      </div>
       <div class="sheetBody">
-        <div id="wxNow"></div>
-        <div class="section"><i data-i="cloud"></i>This week</div>
-        <div class="wxHead"><span></span><small>Day</small><small>Night</small></div>
-        <div id="wxList"></div>
+        <div id="wxPage">
+          <div id="wxNow"></div>
+          <div class="section"><i data-i="cloud"></i>This week</div>
+          <div class="wxHead"><span></span><small>Day</small><small>Night</small></div>
+          <div id="wxList"></div>
+        </div>
+        <div id="calView" class="hidden"></div>
       </div>
     </div>
   </div>
@@ -192,9 +199,10 @@
       <div class="sheetHead">
         <h2 id="crTitle">You</h2>
         <button class="x" id="crClose" data-act="closeCreator" aria-label="Close"><i data-i="x"></i></button>
-        <div id="crTabs" class="headRow segs"><button class="seg sel" data-tab="look">Look</button><button class="seg" data-tab="clothes">Clothes</button></div>
+        <div id="crTabs" class="headRow segs"><button class="seg sel" data-tab="now">What now?</button><button class="seg" data-tab="look">Look</button><button class="seg" data-tab="clothes">Clothes</button></div>
       </div>
       <div class="sheetBody">
+        <div id="crNow" class="hidden"></div>
         <div class="crPreview"><img id="crImg" alt="Your character"></div>
         <div id="crLook"></div>
         <div id="crClothes" class="hidden"></div>
@@ -309,6 +317,29 @@
         <div class="section"><i data-i="star"></i>Badges</div>
         <div id="dsBadges"></div>
       </div>
+    </div>
+  </div>
+
+  <div id="journal" class="modal hidden">
+    <div class="sheet tall">
+      <div class="sheetHead"><h2>Journal</h2><button class="x" data-act="closeJournal" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="jBody"></div>
+    </div>
+  </div>
+
+  <div id="away" class="modal center hidden">
+    <div class="sheet awaySheet">
+      <h2>While you were away</h2>
+      <p class="sub" id="awaySub"></p>
+      <div id="awayList"></div>
+      <button class="primary" data-act="closeAway">Hello again!</button>
+    </div>
+  </div>
+
+  <div id="inbox" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>What’s new</h2><button class="x" data-act="closeInbox" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="inboxList"></div>
     </div>
   </div>
 
@@ -451,6 +482,11 @@
         <label class="toggle"><span>Sound effects</span><input type="checkbox" id="optSfx"><i></i></label>
         <label class="toggle"><span>Jukebox music</span><input type="checkbox" id="optMusic"><i></i></label>
         <p class="sub small">Music plays at home while a Jukebox is switched on.</p>
+        <div class="section"><i data-i="hand"></i>Comfort</div>
+        <label class="toggle"><span>Little buzzes</span><input type="checkbox" id="optHaptics"><i></i></label>
+        <p class="sub small">A short buzz when you throw, catch, pet and find things, on phones that can do it.</p>
+        <label class="toggle"><span>Bigger buttons</span><input type="checkbox" id="optBig"><i></i></label>
+        <p class="sub small">Larger buttons and text, easier to tap.</p>
         <div class="section"><i data-i="question"></i>Help</div>
         <div class="btnRow">
           <button class="soft" id="replayTut">Replay the tutorial</button>
