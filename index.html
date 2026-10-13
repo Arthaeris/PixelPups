@@ -162,6 +162,7 @@
 
   <div id="visitBar" class="panel glass hidden">
     <div><b id="visitName">Visiting</b><div class="sub" id="visitHint"></div></div>
+    <div id="visitReact" class="hidden"><button class="soft small" data-emo="💕">💕</button><button class="soft small" data-emo="🐾">🐾</button><button class="soft small" data-emo="🌟">🌟</button><button class="soft small" data-emo="😄">😄</button></div>
     <button class="soft" id="visitLeave"><i data-i="home"></i> Go home</button>
   </div>
 
@@ -186,6 +187,7 @@
           <button class="tile" data-act="me"><i data-i="person"></i><b>You</b><small>Your look and clothes</small></button>
           <button class="tile" data-act="house"><i data-i="home"></i><b>Home</b><small id="tileHouseSub">Upgrade your home</small></button>
           <button class="tile" data-act="people"><i data-i="wave"></i><b>Neighbors</b><small id="tilePeopleSub">Their stories</small></button>
+          <button class="tile" data-act="friends"><i data-i="person"></i><b>Friends</b><small>Play with friends online</small><i class="badge hidden" id="friendBadge">0</i></button>
           <button class="tile" data-act="photo"><i data-i="camera"></i><b>Photo</b><small>Snap a picture of your pack</small></button>
           <button class="tile" data-act="settings"><i data-i="gear"></i><b>Settings</b><small>Sound, backups, sharing</small></button>
           <button class="tile hidden" data-act="inbox" id="tileInbox"><i data-i="sparkle"></i><b>What’s new</b><small>News you missed</small><i class="badge" id="inboxBadge">0</i></button>
@@ -442,6 +444,13 @@
     <div class="sheet tall gazetteSheet">
       <div class="sheetHead"><h2>The Gazette</h2><button class="x" data-act="closeGazette" aria-label="Close"><i data-i="x"></i></button></div>
       <div class="sheetBody" id="gazetteBody"></div>
+    </div>
+  </div>
+
+  <div id="friends" class="modal hidden">
+    <div class="sheet tall">
+      <div class="sheetHead"><h2>Friends</h2><button class="x" data-act="closeFriends" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="friendsBody"></div>
     </div>
   </div>
 
