@@ -5650,28 +5650,14 @@
   function b64enc(str) { return btoa(unescape(encodeURIComponent(str))); }
   function b64dec(str) { return decodeURIComponent(escape(atob(str))); }
   function makeVisitCode() {
-    const name = dogs[0] ? dogs[0].name : 'A friend';
-    const payload = {
-      k: 1, uid: state.uid, name: `${name}${dogs.length > 1 ? ' & friends' : ''}`,
-      chunks: state.chunks, gardens: Object.keys(state.gardens), rooms: state.rooms, walls: state.walls, stairs: state.stairs,
-      f: state.furniture.map((f) => [f.type, f.i, f.j, f.rot || 0, f.on ? 1 : 0, f.gift || 0]),
-      dogs: dogs.map((d) => [d.name, d.breed, d.coat, d.acc]),
-    };
-    const b = b64enc(JSON.stringify(payload));
+    const b = b64enc(JSON.stringify(visitPayload()));
     return 'VPV:' + b + '.' + hashStr(b).toString(36);
   }
   function parseVisitCode(code) {
     let c = decodeURIComponent(String(code || '').trim());
     const m = c.match(/VPV:([A-Za-z0-9+/=]+)\.([a-z0-9]+)/);
     if (!m || hashStr(m[1]).toString(36) !== m[2]) return null;
-    const p = JSON.parse(b64dec(m[1]));
-    if (!p || p.k !== 1 || !Array.isArray(p.chunks)) return null;
-    return {
-      uid: p.uid, name: p.name, build: null, clutter: [],
-      chunks: p.chunks, rooms: p.rooms || {}, gardens: Object.fromEntries((p.gardens || []).map((k) => [k, true])), walls: p.walls || {}, stairs: p.stairs || null,
-      furniture: (p.f || []).filter((x) => D.ITEMS[x[0]]).map(([type, i, j, rot, on, gift]) => ({ type, i, j, rot, on: !!on, gift: gift || null, filled: true })),
-      dogs: (p.dogs || []).map(([name, breed, coat, acc]) => ({ name, breed, coat, acc })),
-    };
+    return visitFromPayload(JSON.parse(b64dec(m[1])));
   }
   function visitLink() {
     return location.origin + location.pathname + '#visit=' + encodeURIComponent(makeVisitCode());
@@ -8283,7 +8269,7 @@
   // the joystick stays out of the way: faint from the start, nearly gone after a moment of steady walking
   let joyAng = null, joyFadeT = null;
   const joyWake = () => { joyBase.classList.remove('fade'); clearTimeout(joyFadeT); joyFadeT = setTimeout(() => joyBase.classList.add('fade'), 1100); };
-  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet', 'bedSheet', 'courseSheet', 'tourney', 'paint', 'mail', 'tmapSheet', 'nameAsk', 'bake', 'stall', 'museum', 'critters', 'gazette'];
+  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet', 'bedSheet', 'courseSheet', 'tourney', 'paint', 'mail', 'tmapSheet', 'nameAsk', 'bake', 'stall', 'museum', 'critters', 'gazette', 'friends'];
   // sheets: a soft sound when they open and close; tips step aside while one is open
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
@@ -9968,6 +9954,7 @@
     else if (act === 'ctx') ctxAction();
     else if (act === 'tmap') { $('bag').classList.add('hidden'); openTreasureMap(); }
     else if (act === 'critters') { $('bag').classList.add('hidden'); openCritters(); }
+    else if (act === 'friends') { $('hub').classList.add('hidden'); openFriends(); }
     else if (act === 'locinfo') locChipInfo();
     else if (act === 'home') goHome();
     else if (act === 'decorate') enterDecorate();
@@ -10256,6 +10243,7 @@
     st.snowmen = (Array.isArray(st.snowmen) ? st.snowmen : []).filter((x) => x && Number.isFinite(x.x) && Number.isFinite(x.z));
     st.fishCaught = Object.fromEntries(Object.entries(obj3(st.fishCaught)).filter(([k, v]) => D.FISH[k] && v && v.n > 0));
     st.rivals = obj3(st.rivals);
+    if (st.online && typeof st.online === 'object') { for (const k of ['friends', 'requests', 'blocked']) st.online[k] = obj3(st.online[k]); } else delete st.online;
     st.favorsFrom = obj3(st.favorsFrom);
     if (st.museum && (typeof st.museum !== 'object' || !st.museum.halls)) st.museum = null;
     if (st.museum) for (const [k, h] of Object.entries(st.museum.halls)) if (!h || !Array.isArray(h.slots)) delete st.museum.halls[k];
@@ -11519,6 +11507,20 @@
   }
   window.addEventListener('hashchange', () => location.reload());
   function init() {
+    // visiting a friend's home (picked in Friends)
+    if (location.hash === '#visit=friend') {
+      let fv = null;
+      try { fv = JSON.parse(sessionStorage.getItem('vp-visit')); } catch (_) { fv = null; }
+      const v = fv && visitFromPayload(fv.p);
+      if (v) {
+        v.friendUid = fv.uid;
+        v.name = fv.name;
+        initVisit(v);
+        if (state.online && state.online.on) { $('visitReact').classList.remove('hidden'); goOnline(true); }
+        return;
+      }
+      history.replaceState(null, '', location.pathname + location.search);
+    }
     const vm = location.hash.match(/^#visit=(.+)$/);
     if (vm) {
       let v = null;
@@ -11560,6 +11562,8 @@
     refreshUI();
     tickClock();
     applyEnvironment();
+    if (onl().on) setTimeout(() => goOnline(true).then(updateFriendBadge), 1200);
+    updateFriendBadge();
     const skipTitle = /[?&]notitle\b/.test(location.search);
     if (!skipTitle) startTitle();
     else if (!dogs.length) { if (!state.lookDone) openCreator('new'); else openStart(); }
@@ -14055,7 +14059,8 @@
     mail().inbox.unshift(Object.assign({ id: newId(), gd: clockNow.gameDay, read: false }, o));
     state.mail.inbox = state.mail.inbox.slice(0, 30);
     const N = D.NEIGHBORS.find((x) => x.owner === o.from);
-    if (o.gazette) news({ title: `📰 ${o.gazette.name}, issue ${o.gazette.no}`, text: `“${o.gazette.head[0]}” and your week in numbers. ${hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it.'}`, th: IC('paper') });
+    if (o.real) news({ title: o.title || `📬 A letter from ${o.from}`, text: hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it (Shop → Decor).', th: o.dg ? TH('dog', o.dg) : TH('pic', '💌') });
+    else if (o.gazette) news({ title: `📰 ${o.gazette.name}, issue ${o.gazette.no}`, text: `“${o.gazette.head[0]}” and your week in numbers. ${hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it.'}`, th: IC('paper') });
     else news({ title: `📬 A letter from ${o.from}`, text: hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it (Shop → Decor).', th: N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : TH('pic', '💌') });
     mailFlags();
   }
@@ -14067,6 +14072,9 @@
     for (const [k, n] of Object.entries(g.seeds || {})) parts.push(`${n} × ${D.SEEDS[k].icon} ${D.SEEDS[k].name.toLowerCase()}`);
     for (const [k, n] of Object.entries(g.pantry || {})) parts.push(`${n} × ${D.INGREDIENTS[k].icon} ${D.INGREDIENTS[k].name.toLowerCase()}`);
     if (g.find) parts.push(`${D.FINDS[g.find].icon} ${D.FINDS[g.find].name}`);
+    for (const [k, n] of Object.entries(g.items || {})) if (D.ITEMS[k]) parts.push(`${n} × ${D.ITEMS[k].icon} ${D.ITEMS[k].name}`);
+    for (const [k, n] of Object.entries(g.treats || {})) if (D.BAKES[k]) parts.push(`${n} × ${D.BAKES[k].icon} ${D.BAKES[k].name.toLowerCase()}`);
+    if (g.bouquets) parts.push(`${g.bouquets} × 💐 bouquet`);
     return parts.join(', ');
   }
   function claimGift(g) {
@@ -14075,6 +14083,9 @@
     for (const [k, n] of Object.entries(g.seeds || {})) state.seeds[k] = (state.seeds[k] || 0) + n;
     for (const [k, n] of Object.entries(g.pantry || {})) state.pantry[k] = (state.pantry[k] || 0) + n;
     if (g.find) grantFind(g.find, null);
+    for (const [k, n] of Object.entries(g.items || {})) if (D.ITEMS[k]) state.inventory[k] = (state.inventory[k] || 0) + n;
+    for (const [k, n] of Object.entries(g.treats || {})) if (D.BAKES[k]) { state.treats = state.treats || {}; state.treats[k] = (state.treats[k] || 0) + n; }
+    if (g.bouquets) state.bouquets = (state.bouquets || 0) + g.bouquets;
   }
   // replies come the next in-game day; now and then a neighbor writes first
   function mailTick() {
@@ -14147,7 +14158,7 @@
         if (m.gazette) return `<div class="row letter gz${m.read ? '' : ' unread'}" data-ml="${m.id}"><div class="ic">${IC('paper')}</div><div class="txt"><b>${esc(m.gazette.name)}</b><small>Issue ${m.gazette.no}: ${esc(m.gazette.head[0])}</small></div></div>`;
         const N = D.NEIGHBORS.find((x) => x.owner === m.from);
         const open = m.id === mailOpenId;
-        return `<div class="row letter${m.read ? '' : ' unread'}" data-ml="${m.id}">${N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : TH('pic', '💌')}<div class="txt"><b>${esc(m.from)}</b><small>${esc(open ? '' : m.text.split('\n')[1] || '')}</small>${open ? `<p class="letterTxt">${esc(m.text).replace(/\n/g, '<br>')}</p>${m.gift ? `<p class="sub">Enclosed: ${esc(giftText(m.gift))}${m.gotGift ? ' (collected)' : ''}</p>` : ''}${m.ask === 'sit' && !m.answered ? `<div class="btnRow"><button class="primary small" data-sit="yes" data-m="${m.id}">Yes, I’ll look after ${esc(N ? N.dog.name : 'the dog')}</button><button class="soft small" data-sit="no" data-m="${m.id}">Not this time</button></div>` : ''}` : ''}</div></div>`;
+        return `<div class="row letter${m.read ? '' : ' unread'}" data-ml="${m.id}">${N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : m.real && m.dg ? TH('dog', m.dg) : TH('pic', '💌')}<div class="txt"><b>${esc(m.from)}</b><small>${esc(open ? '' : m.text.split('\n')[1] || '')}</small>${open ? `<p class="letterTxt">${esc(m.text).replace(/\n/g, '<br>')}</p>${m.gift ? `<p class="sub">Enclosed: ${esc(giftText(m.gift))}${m.gotGift ? ' (collected)' : ''}</p>` : ''}${m.ask === 'sit' && !m.answered ? `<div class="btnRow"><button class="primary small" data-sit="yes" data-m="${m.id}">Yes, I’ll look after ${esc(N ? N.dog.name : 'the dog')}</button><button class="soft small" data-sit="no" data-m="${m.id}">Not this time</button></div>` : ''}` : ''}</div></div>`;
       }).join('');
       return;
     }
@@ -15927,7 +15938,11 @@
     state.gazetteNo = no;
     const score = Math.round((s.walk || 0) * 10 + (s.find || 0) * 6 + (s.trick || 0) + (s.fish || 0) * 4 + (s.catch || 0) * 4 + (s.baked || 0) * 2 + (s.sold || 0) * 3 + (s.visitors || 0) * 0.2 + (s.favor || 0) * 15 + (s.agility || 0) * 5 + (s.tourney || 0) * 20 + (s.discup || 0) * 20);
     const rr = ART.mulberry32(hashStr('gz' + W.k + (state.uid || '')));
-    const rivals = D.NEIGHBORS.slice().sort(() => rr() - 0.5).slice(0, 5).map((N) => ({ name: N.owner, dog: N.dog.name, score: Math.round(Math.max(20, score) * (0.45 + rr() * 0.9)) }));
+    state.lastWeekScore = { k: W.k, s: score };
+    // friends who played that week are in the ranking for real; neighbors fill the rest
+    const real = Object.values((state.online || {}).friends || {}).filter((F) => F.st === 'friend' && F.wk === W.k && F.ws > 0).slice(0, 5)
+      .map((F) => ({ name: F.name, dog: '', score: F.ws, friend: true }));
+    const rivals = real.concat(D.NEIGHBORS.slice().sort(() => rr() - 0.5).slice(0, 5 - real.length).map((N) => ({ name: N.owner, dog: N.dog.name, score: Math.round(Math.max(20, score) * (0.45 + rr() * 0.9)) })));
     const table = rivals.concat([{ name: youName() || 'You', dog: dogs[0] ? dogs[0].name : '', score, me: true }]).sort((a, b) => b.score - a.score);
     // the headline: the biggest thing you did this week
     const heads = [];
@@ -15967,7 +15982,7 @@
     $('gazetteBody').innerHTML = `<div class="gzMast"><b>${esc(I.name)}</b><small>Issue ${I.no} · ${esc(D.MONTHS[clockNow.month] || '')} edition · 1 coin</small></div>` +
       `<div class="gzHead"><h3>${esc(I.head[0])}</h3><p>${esc(I.head[1])}</p></div>` +
       (I.stats.length ? `<div class="gzBox"><div class="gzT">Your week in numbers</div><div class="gzStats">${I.stats.map(([ic, n, v]) => `<div><b>${v}</b><small>${ic} ${esc(n)}</small></div>`).join('')}</div></div>` : '') +
-      `<div class="gzBox"><div class="gzT">Dog owner of the week</div>${I.table.map((x, i) => `<div class="gzRow${x.me ? ' me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${esc(x.name)}${x.dog ? ` & ${esc(x.dog)}` : ''}</span><span class="bar"><i style="width:${Math.round((x.score / mx) * 100)}%"></i></span><b>${x.score}</b></div>`).join('')}</div>` +
+      `<div class="gzBox"><div class="gzT">Dog owner of the week</div>${I.table.map((x, i) => `<div class="gzRow${x.me ? ' me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${x.friend ? '◆ ' : ''}${esc(x.name)}${x.dog ? ` & ${esc(x.dog)}` : ''}</span><span class="bar"><i style="width:${Math.round((x.score / mx) * 100)}%"></i></span><b>${x.score}</b></div>`).join('')}</div>` +
       (I.museum && I.museum.length ? `<div class="gzBox"><div class="gzT">Museum visitors</div><div class="kChart small">${I.museum.map((v) => `<i style="height:${Math.round((v / mm) * 100)}%"><b>${v}</b></i>`).join('')}</div></div>` : '') +
       `<div class="gzCols"><div class="gzBox"><div class="gzT">Market tip</div><p>Everyone wants <b>${esc(goodName(I.hot))}</b> this week. It sells for more!</p></div><div class="gzBox"><div class="gzT">Gossip</div><p>${esc(I.gossip)}</p></div></div>` +
       (I.coming.length ? `<div class="gzBox"><div class="gzT">Coming up</div>${I.coming.map((x) => `<p>${esc(x)}</p>`).join('')}</div>` : '') +
@@ -16080,6 +16095,7 @@
     r3T = 2;
     if (visit || title) return;
     museumTick();
+    netTick();
     if (!state.week || state.week.k !== weekNo()) rollWeek();
     if (meltSnowmen()) renderSnow();
   }
@@ -16095,6 +16111,552 @@
     renderSnow();
     renderExhibits();
   }
+
+
+  // =====================================================================
+  // Playing with friends online (Firebase). Strictly opt-in: offline, the game works exactly as before
+  // and your save on this phone stays the main one. Friends only, by friend code; no free text anywhere.
+  // =====================================================================
+  const NET = { done: new Set(), loading: null, ready: false, uid: null, db: null, inbox: null, sendQ: Promise.resolve(), lastSend: 0, homeAt: 0, homeKey: '', backupAt: 0, profAt: 0, err: '', visitSent: false };
+  const onl = () => {
+    const O = state.online = state.online && typeof state.online === 'object' ? state.online : {};
+    for (const [k, v] of Object.entries({ on: false, code: '', friends: {}, requests: {}, blocked: {}, email: '' })) if (O[k] === undefined) O[k] = v;
+    return O;
+  };
+  const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const REACTIONS = ['💕', '🐾', '🌟', '😄'];
+  // names other players see: short, no markup, and nothing rude
+  const RUDE = /(fuck|shit|bitch|cunt|dick|cock|pussy|nigg|fag|nazi|hitler|arsch|fotze|hure|wichs|schwanz|scheiss|scheiß|nutte|missgeburt|spast)/i;
+  function safeName(n) {
+    const t = String(n || '').replace(/[<>{}\\"`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+    return !t || RUDE.test(t.replace(/[^a-zäöüß]/gi, '')) ? 'Player' : t;
+  }
+  function fbScript(src) {
+    return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.async = false; s.onload = res; s.onerror = () => rej(new Error('load')); document.head.appendChild(s); });
+  }
+  // the Firebase code is only fetched once you go online
+  function fbLoad() {
+    if (window.firebase && window.firebase.database) return Promise.resolve();
+    if (!NET.loading) {
+      const v = CONFIG.ONLINE.sdk;
+      NET.loading = ['app', 'auth', 'database'].reduce((p, m) => p.then(() => fbScript(`https://www.gstatic.com/firebasejs/${v}/firebase-${m}-compat.js`)), Promise.resolve())
+        .catch((e) => { NET.loading = null; throw e; });
+    }
+    return NET.loading;
+  }
+  const fbErr = (e) => String((e && (e.code || e.message)) || e || '');
+  function niceErr(e) {
+    const c = fbErr(e);
+    if (/load|network|unavailable|offline/i.test(c)) return 'Can’t reach the internet right now. Try again in a moment.';
+    if (/operation-not-allowed/.test(c)) return 'That sign-in method isn’t switched on in Firebase yet.';
+    if (/email-already-in-use|credential-already-in-use/.test(c)) return 'That email already has an account. Use “Sign in on this phone” instead.';
+    if (/invalid-email/.test(c)) return 'That email address doesn’t look right.';
+    if (/weak-password/.test(c)) return 'Please pick a password with at least 6 characters.';
+    if (/wrong-password|invalid-credential|user-not-found|invalid-login/.test(c)) return 'Email or password is wrong.';
+    if (/too-many-requests/.test(c)) return 'Too many tries. Wait a minute and try again.';
+    if (/PERMISSION_DENIED|permission/i.test(c)) return 'That isn’t allowed.';
+    return 'Something went wrong. Please try again.';
+  }
+  const ref = (p) => NET.db.ref(p);
+  const TS = () => window.firebase.database.ServerValue.TIMESTAMP;
+  // go online: sign in (invisibly), get a friend code, listen for messages, share your home
+  async function goOnline(quiet) {
+    if (visit && !quiet) return false;
+    try {
+      await fbLoad();
+      const fb = window.firebase;
+      if (!fb.apps.length) fb.initializeApp(CONFIG.ONLINE);
+      const auth = fb.auth();
+      const user = auth.currentUser || await new Promise((res) => { const un = auth.onAuthStateChanged((u) => { un(); res(u); }); });
+      const u = user || (await auth.signInAnonymously()).user;
+      NET.uid = u.uid;
+      NET.db = fb.database();
+      NET.ready = true;
+      NET.err = '';
+      if (visit) return true;
+      const O = onl();
+      O.on = true;
+      O.uid = u.uid;
+      if (u.email) O.email = u.email;
+      await ensureCode();
+      await pushProfile(true);
+      listenInbox();
+      refreshFriends();
+      setTimeout(() => { pushHome(true); pushBackup(false); }, 1500);
+      save();
+      return true;
+    } catch (e) {
+      NET.ready = false;
+      NET.err = niceErr(e);
+      if (!quiet) toast(NET.err);
+      return false;
+    }
+  }
+  function goOffline() {
+    if (NET.inbox) { NET.inbox.off('value'); NET.inbox = null; }
+    onl().on = false;
+    NET.ready = false;
+    save();
+  }
+  async function ensureCode() {
+    const O = onl();
+    if (O.code) {
+      const v = (await ref('codes/' + O.code).once('value')).val();
+      if (v === NET.uid) return;
+      if (!v) { try { await ref('codes/' + O.code).set(NET.uid); return; } catch (_) { /* taken: make a new one */ } }
+    }
+    // a profile from another phone (signed in with email) already has a code
+    const prof = (await ref(`users/${NET.uid}/profile`).once('value')).val();
+    if (prof && prof.code) { O.code = prof.code; return; }
+    for (let k = 0; k < 8; k++) {
+      let c = '';
+      for (let i = 0; i < 6; i++) c += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+      try { await ref('codes/' + c).set(NET.uid); O.code = c; return; } catch (_) { /* taken, try another */ }
+    }
+    throw new Error('code');
+  }
+  function myProfile() {
+    const lw = state.lastWeekScore || {};
+    return {
+      name: safeName(youName() || (dogs[0] ? `${dogs[0].name}’s human` : 'Player')), code: onl().code,
+      dogs: dogs.slice(0, 6).map((d) => [d.name, d.breed, d.coat].map((x) => String(x).replace(/[|,]/g, '')).join(',')).join('|').slice(0, 300),
+      rank: rank(), seen: TS(), wk: lw.k || 0, ws: lw.s || 0,
+    };
+  }
+  async function pushProfile(force) {
+    if (!NET.ready || visit) return;
+    if (!force && Date.now() - NET.profAt < 120000) return;
+    NET.profAt = Date.now();
+    try { await ref(`users/${NET.uid}/profile`).set(myProfile()); } catch (e) { NET.err = niceErr(e); }
+  }
+  // your home, for friends to visit (only friends can read it)
+  async function pushHome(force) {
+    if (!NET.ready || visit) return;
+    if (!force && Date.now() - NET.homeAt < 45000) return;
+    const data = JSON.stringify(visitPayload());
+    if (data === NET.homeKey || data.length > 150000) return;
+    NET.homeAt = Date.now();
+    try { await ref(`users/${NET.uid}/home`).set({ data, at: TS() }); NET.homeKey = data; } catch (e) { NET.err = niceErr(e); }
+  }
+  // the cloud backup: a copy of your save, only you can read it
+  async function pushBackup(force) {
+    if (!NET.ready || visit || !dogs.length) return false;
+    if (!force && Date.now() - NET.backupAt < 10 * 60000) return false;
+    NET.backupAt = Date.now();
+    const text = encodeSave(currentSaveObject());
+    if (text.length > 4500000) { if (force) toast('Your save is too big for the cloud backup'); return false; }
+    try {
+      await ref(`users/${NET.uid}/backup`).set({ save: text, at: TS(), n: dogs.length, c: state.coins | 0 });
+      onl().backupAt = Date.now();
+      return true;
+    } catch (e) { NET.err = niceErr(e); if (force) toast(NET.err); return false; }
+  }
+  async function fetchBackup(uid) {
+    const b = (await ref(`users/${uid || NET.uid}/backup`).once('value')).val();
+    return b && b.save ? b : null;
+  }
+  async function restoreBackup() {
+    if (!NET.ready) { toast('Go online first'); return; }
+    let b;
+    try { b = await fetchBackup(); } catch (e) { toast(niceErr(e)); return; }
+    if (!b) { toast('There’s no cloud backup yet'); return; }
+    let obj;
+    try { obj = decodeSave(b.save); } catch (_) { toast('That backup can’t be opened'); return; }
+    confirmBox('Restore the cloud backup?', `From ${new Date(b.at).toLocaleString()}: ${b.n} dog${b.n === 1 ? '' : 's'} and 🪙 ${b.c}. The game on this phone is kept as a local backup first (Settings → Restore).`, 'Restore and restart', true, () => replaceSave(obj));
+  }
+  // ----- sending: messages go to a friend's inbox, at most one every couple of seconds -----
+  function send(to, msg) {
+    const job = NET.sendQ.then(async () => {
+      if (!NET.ready) throw new Error('offline');
+      const wait = 1700 - (Date.now() - NET.lastSend);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      const key = ref('inbox/' + to).push().key;
+      const d0 = dogs[0];
+      const m = Object.assign({ from: NET.uid, at: TS(), name: safeName(youName() || (d0 ? `${d0.name}’s human` : 'Player')), dg: d0 ? `${d0.breed}|${d0.coat}` : '' }, msg);
+      await ref().update({ [`inbox/${to}/${key}`]: m, [`rate/${NET.uid}`]: TS() });
+      NET.lastSend = Date.now();
+    });
+    NET.sendQ = job.catch(() => {});
+    return job;
+  }
+  // ----- receiving -----
+  function listenInbox() {
+    if (NET.inbox) NET.inbox.off('value');
+    NET.inbox = ref('inbox/' + NET.uid);
+    NET.inbox.on('value', (snap) => {
+      const all = snap.val() || {};
+      const list = Object.entries(all).sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+      for (const [id, m] of list) {
+        // a message can show up twice before it's gone from the server: handle it once
+        if (NET.done.has(id)) continue;
+        NET.done.add(id);
+        try { handleMsg(m); } catch (e) { console.warn(e); }
+        ref(`inbox/${NET.uid}/${id}`).remove().catch(() => {});
+      }
+      if (list.length) { save(); renderFriendsIfOpen(); }
+    }, () => {});
+  }
+  const giftLine = (m) => {
+    if (!m.gk) return null;
+    const n = Math.max(1, Math.min(9, m.gn | 0));
+    if (m.gk === 'item' && D.ITEMS[m.gid]) return { items: { [m.gid]: n } };
+    if (m.gk === 'treat' && D.BAKES[m.gid]) return { treats: { [m.gid]: n } };
+    if (m.gk === 'ing' && D.INGREDIENTS[m.gid]) return { pantry: { [m.gid]: n } };
+    if (m.gk === 'bouquet') return { bouquets: n };
+    return null;
+  };
+  function handleMsg(m) {
+    const O = onl(), from = String(m.from || ''), name = safeName(m.name);
+    if (!from || O.blocked[from]) return;
+    const fr = O.friends[from];
+    switch (m.type) {
+      case 'friend':
+        if (fr && fr.st === 'friend') { send(from, { type: 'accept', code: O.code }).catch(() => {}); return; }
+        // they asked you too: you're friends straight away
+        if (fr && fr.st === 'sent') { acceptFriend(from, name, m.code, m.dg); return; }
+        O.requests[from] = { name, code: String(m.code || '').slice(0, 6), dg: m.dg || '', at: Date.now() };
+        news({ title: `${name} wants to be friends`, text: 'Menu → Friends to say yes or no.', th: m.dg ? TH('dog', m.dg) : IC('person') });
+        break;
+      case 'accept':
+        O.friends[from] = Object.assign(fr || {}, { name, code: String(m.code || (fr && fr.code) || '').slice(0, 6), dg: m.dg || '', st: 'friend' });
+        news({ title: `You and ${name} are friends now!`, text: 'Visit each other’s homes, send letters and gifts (Menu → Friends).', th: m.dg ? TH('dog', m.dg) : IC('person') });
+        break;
+      case 'gift':
+      case 'letter': {
+        if (!fr) return;
+        const L = D.LETTER_KINDS[m.lk];
+        const g = giftLine(m);
+        const body = m.type === 'letter' && L ? fill(L.text, { you: name, dog: (m.dog || 'the dog').toString().slice(0, 16) }) : 'Here’s a little something for you!';
+        receive({ from: name, real: from, dg: m.dg || '', text: `Dear ${youName() || 'friend'},\n${body}\n${name}`, gift: g, title: m.type === 'gift' ? `🎁 A gift from ${name}` : `💌 A letter from ${name}` });
+        state.stats.friendMail = (state.stats.friendMail || 0) + 1;
+        break;
+      }
+      case 'visit':
+        if (!fr) return;
+        news({ title: `${name} visited your home`, text: `…and left a ${REACTIONS.includes(m.emo) ? m.emo : '💕'} behind.`, th: m.dg ? TH('dog', m.dg) : IC('home') });
+        break;
+      default: break;
+    }
+  }
+  // ----- friends -----
+  async function addFriendByCode(raw) {
+    const code = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const O = onl();
+    if (code.length !== 6) { toast('Friend codes have 6 letters and numbers'); return false; }
+    if (code === O.code) { toast('That’s your own code 🙂'); return false; }
+    try {
+      const uid = (await ref('codes/' + code).once('value')).val();
+      if (!uid) { toast('Nobody has that code. Check it again?'); return false; }
+      if (O.friends[uid] && O.friends[uid].st === 'friend') { toast('You’re friends already'); return false; }
+      const p = (await ref(`users/${uid}/profile`).once('value')).val() || {};
+      if (O.requests[uid]) { await acceptFriend(uid, safeName(p.name), code, ''); return true; }
+      await ref(`users/${NET.uid}/friends/${uid}`).set(true);
+      O.friends[uid] = { name: safeName(p.name), code, st: 'sent', dg: firstDogOf(p) };
+      await send(uid, { type: 'friend', code: O.code });
+      toast(`Friend request sent to ${safeName(p.name)}`);
+      save();
+      return true;
+    } catch (e) { toast(niceErr(e)); return false; }
+  }
+  function firstDogOf(p) { const d = String((p && p.dogs) || '').split('|')[0].split(','); return d.length >= 3 ? `${d[1]}|${d[2]}` : ''; }
+  async function acceptFriend(uid, name, code, dg) {
+    const O = onl();
+    try {
+      await ref(`users/${NET.uid}/friends/${uid}`).set(true);
+      O.friends[uid] = { name: safeName(name), code: String(code || '').slice(0, 6), dg: dg || '', st: 'friend' };
+      delete O.requests[uid];
+      await send(uid, { type: 'accept', code: O.code });
+      toast(`You and ${safeName(name)} are friends now!`);
+      save();
+    } catch (e) { toast(niceErr(e)); }
+  }
+  async function removeFriend(uid, block) {
+    const O = onl(), nm = (O.friends[uid] || O.requests[uid] || {}).name || 'Player';
+    try {
+      await ref(`users/${NET.uid}/friends/${uid}`).remove();
+      if (block) { await ref(`users/${NET.uid}/blocked/${uid}`).set(true); O.blocked[uid] = nm; }
+    } catch (e) { toast(niceErr(e)); return; }
+    delete O.friends[uid];
+    delete O.requests[uid];
+    save();
+    toast(block ? `${nm} is blocked` : `${nm} isn’t on your friends list anymore`);
+  }
+  async function unblock(uid) {
+    try { await ref(`users/${NET.uid}/blocked/${uid}`).remove(); } catch (e) { toast(niceErr(e)); return; }
+    delete onl().blocked[uid];
+    save();
+  }
+  async function reportPlayer(uid, reason) {
+    try {
+      await ref('reports').push({ from: NET.uid, about: uid, reason: String(reason).slice(0, 60), name: safeName((onl().friends[uid] || onl().requests[uid] || {}).name), at: TS() });
+      toast('Thanks. We’ll have a look');
+    } catch (e) { toast(niceErr(e)); }
+  }
+  // names, last seen and weekly scores of your friends
+  async function refreshFriends() {
+    if (!NET.ready) return;
+    const O = onl();
+    await Promise.all(Object.keys(O.friends).map(async (uid) => {
+      try {
+        const p = (await ref(`users/${uid}/profile`).once('value')).val();
+        if (!p) return;
+        Object.assign(O.friends[uid], { name: safeName(p.name), seen: p.seen || 0, dg: firstDogOf(p) || O.friends[uid].dg, rank: p.rank | 0, wk: p.wk | 0, ws: p.ws | 0 });
+      } catch (_) { /* fine */ }
+    }));
+    renderFriendsIfOpen();
+  }
+  // ----- visiting a friend's home -----
+  async function visitFriend(uid) {
+    const F = onl().friends[uid];
+    if (!F) return;
+    try {
+      const h = (await ref(`users/${uid}/home`).once('value')).val();
+      if (!h || !h.data) { toast(`${F.name} hasn’t shared their home yet. They need to be online once`); return; }
+      const p = JSON.parse(h.data);
+      p.name = F.name;
+      sessionStorage.setItem('vp-visit', JSON.stringify({ p, uid, name: F.name, at: h.at }));
+      save();
+      location.hash = '#visit=friend';
+    } catch (e) { toast(niceErr(e)); }
+  }
+  async function leaveReaction(emo) {
+    if (!visit || !visit.friendUid || NET.visitSent) return;
+    if (!NET.ready && !(await goOnline(true))) { toast('Can’t reach the internet right now'); return; }
+    try {
+      await send(visit.friendUid, { type: 'visit', emo: REACTIONS.includes(emo) ? emo : '💕' });
+      NET.visitSent = true;
+      $('visitReact').classList.add('hidden');
+      spawnEmoji(emo, player.root.position.clone().add(new V3(0, 2.3, 0)), { size: 0.7, life: 1.6 });
+      toast(`You left a ${emo} for ${visit.name}`);
+    } catch (e) { toast(niceErr(e)); }
+  }
+  // ----- letters and gifts to friends (from the mailbox and the friends sheet) -----
+  function giftOptions() {
+    const out = [];
+    for (const [k, n] of Object.entries(state.inventory || {})) if (n > 0 && D.ITEMS[k] && k !== 'painting') out.push(['item', k, D.ITEMS[k].name, thumbOf.item(k), n]);
+    for (const [k, n] of Object.entries(state.treats || {})) if (n > 0 && D.BAKES[k]) out.push(['treat', k, D.BAKES[k].name, thumbOf.pic(D.BAKES[k].icon), n]);
+    if (state.bouquets > 0) out.push(['bouquet', 'bouquet', 'Bouquet', thumbOf.pic('💐'), state.bouquets]);
+    for (const [k, n] of Object.entries(state.pantry || {})) if (n > 0 && D.INGREDIENTS[k]) out.push(['ing', k, D.INGREDIENTS[k].name, thumbOf.ing(k), n]);
+    return out;
+  }
+  function takeGift(kind, key) {
+    if (kind === 'item' && state.inventory[key] > 0) { state.inventory[key]--; return true; }
+    if (kind === 'treat' && (state.treats || {})[key] > 0) { state.treats[key]--; return true; }
+    if (kind === 'bouquet' && state.bouquets > 0) { state.bouquets--; return true; }
+    if (kind === 'ing' && state.pantry[key] > 0) { state.pantry[key]--; return true; }
+    return false;
+  }
+  function giveBack(kind, key) {
+    if (kind === 'item') state.inventory[key] = (state.inventory[key] || 0) + 1;
+    else if (kind === 'treat') state.treats[key] = (state.treats[key] || 0) + 1;
+    else if (kind === 'bouquet') state.bouquets = (state.bouquets || 0) + 1;
+    else if (kind === 'ing') state.pantry[key] = (state.pantry[key] || 0) + 1;
+  }
+  async function sendToFriend(uid, o) {
+    const F = onl().friends[uid];
+    if (!F || F.st !== 'friend') { toast('You can write once they’ve said yes'); return false; }
+    let took = false;
+    if (o.gk) { took = takeGift(o.gk, o.gid); if (!took) { toast('You don’t have that anymore'); return false; } }
+    const msg = { type: o.lk ? 'letter' : 'gift' };
+    if (o.lk) { msg.lk = o.lk; msg.dog = dogs[0] ? dogs[0].name.slice(0, 16) : ''; }
+    if (took) { msg.gk = o.gk; msg.gid = o.gid; msg.gn = 1; }
+    try {
+      await send(uid, msg);
+      if (o.lk) progress('letter');
+      toast(o.lk ? `✉️ Your letter is on its way to ${F.name}` : `🎁 Sent to ${F.name}!`);
+      sfx('pay');
+      save();
+      return true;
+    } catch (e) {
+      if (took) giveBack(o.gk, o.gid);
+      toast(niceErr(e));
+      return false;
+    }
+  }
+  // ----- keeping your account on another phone: an email and a password -----
+  async function linkEmail(email, pw) {
+    try {
+      await goOnline(true);
+      const fb = window.firebase, u = fb.auth().currentUser;
+      if (!u) throw new Error('offline');
+      await u.linkWithCredential(fb.auth.EmailAuthProvider.credential(email.trim(), pw));
+      onl().email = email.trim();
+      save();
+      pushBackup(true);
+      toast('Account saved. You can sign in on another phone now');
+      return true;
+    } catch (e) { toast(niceErr(e)); return false; }
+  }
+  async function signInEmail(email, pw) {
+    try {
+      await fbLoad();
+      const fb = window.firebase;
+      if (!fb.apps.length) fb.initializeApp(CONFIG.ONLINE);
+      const cred = await fb.auth().signInWithEmailAndPassword(email.trim(), pw);
+      NET.uid = cred.user.uid;
+      NET.db = fb.database();
+      NET.ready = true;
+      const b = await fetchBackup(NET.uid);
+      if (b) {
+        let obj = null;
+        try { obj = decodeSave(b.save); } catch (_) { obj = null; }
+        if (obj) {
+          obj.online = Object.assign({}, obj.online || {}, { on: true, uid: NET.uid, email: email.trim() });
+          confirmBox('Load your game from the cloud?', `${b.n} dog${b.n === 1 ? '' : 's'} and 🪙 ${b.c}, saved ${new Date(b.at).toLocaleString()}. The game on this phone is kept as a local backup first.`, 'Load and restart', true, () => replaceSave(obj));
+          return true;
+        }
+      }
+      const O = onl();
+      O.on = true; O.uid = NET.uid; O.email = email.trim(); O.code = '';
+      await goOnline(true);
+      toast('Signed in. There was no cloud backup, so this phone’s game stays');
+      return true;
+    } catch (e) { toast(niceErr(e)); return false; }
+  }
+  async function resetPassword(email) {
+    try { await fbLoad(); const fb = window.firebase; if (!fb.apps.length) fb.initializeApp(CONFIG.ONLINE); await fb.auth().sendPasswordResetEmail(email.trim()); toast('Check your email for a link to set a new password'); }
+    catch (e) { toast(niceErr(e)); }
+  }
+  // what friends see when they visit (also used for visit links)
+  function visitPayload() {
+    const name = dogs[0] ? dogs[0].name : 'A friend';
+    return {
+      k: 1, uid: state.uid, name: `${name}${dogs.length > 1 ? ' & friends' : ''}`,
+      chunks: state.chunks, gardens: Object.keys(state.gardens), rooms: state.rooms, walls: state.walls, stairs: state.stairs,
+      f: state.furniture.map((f) => [f.type, f.i, f.j, f.rot || 0, f.on ? 1 : 0, f.gift || 0]),
+      dogs: dogs.map((d) => [d.name, d.breed, d.coat, d.acc]),
+      ex: state.exhibits || {},
+    };
+  }
+  function visitFromPayload(p) {
+    if (!p || p.k !== 1 || !Array.isArray(p.chunks)) return null;
+    return {
+      uid: p.uid, name: String(p.name || 'A friend').slice(0, 40), build: null, clutter: [],
+      chunks: p.chunks, rooms: p.rooms || {}, gardens: Object.fromEntries((p.gardens || []).map((k) => [k, true])), walls: p.walls || {}, stairs: p.stairs || null, exhibits: p.ex || {},
+      furniture: (p.f || []).filter((x) => D.ITEMS[x[0]]).map(([type, i, j, rot, on, gift]) => ({ type, i, j, rot, on: !!on, gift: gift || null, filled: true })),
+      dogs: (p.dogs || []).map(([name, breed, coat, acc]) => ({ name, breed, coat, acc })),
+    };
+  }
+  // every few seconds while online: keep your home and profile fresh, back up now and then
+  function netTick() {
+    if (!NET.ready || visit || title) return;
+    pushProfile(false);
+    pushHome(false);
+    pushBackup(false);
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden && NET.ready && !visit) { NET.backupAt = 0; pushBackup(false); pushHome(true); } });
+
+  // ----- the Friends sheet -----
+  let friendView = null;   // null = the list; { uid, mode: 'menu'|'gift'|'letter'|'report' }
+  function openFriends() {
+    friendView = null;
+    renderFriends();
+    $('friends').classList.remove('hidden');
+    if (NET.ready) refreshFriends();
+    else if (onl().on) goOnline(true).then(renderFriendsIfOpen);
+  }
+  const renderFriendsIfOpen = () => { if (!$('friends').classList.contains('hidden')) renderFriends(); updateFriendBadge(); };
+  function updateFriendBadge() {
+    const n = Object.keys(onl().requests).length;
+    const b = $('friendBadge');
+    if (b) { b.textContent = n; b.classList.toggle('hidden', !n); }
+  }
+  const seenText = (t) => {
+    if (!t) return '';
+    const m = Math.round((Date.now() - t) / 60000);
+    return m < 5 ? 'online now' : m < 60 ? `seen ${m} min ago` : m < 1440 ? `seen ${Math.round(m / 60)} h ago` : `seen ${Math.round(m / 1440)} days ago`;
+  };
+  const fThumb = (dg) => (dg && /^[a-z]+\|[a-z]+$/.test(dg) ? TH('dog', dg) : IC('person'));
+  function renderFriends() {
+    const B = $('friendsBody'), O = onl();
+    updateFriendBadge();
+    if (!O.on || !NET.ready) {
+      B.innerHTML = `<p class="sub">Play with friends and family: visit each other’s homes, send letters and gifts, and keep a backup of your game in the cloud.</p>` +
+        `<div class="netList"><p>${IC('check')} Only people you add with a friend code can visit you or write to you.</p><p>${IC('check')} No chat: letters and reactions are picked from a list.</p><p>${IC('check')} Offline, everything works like before. Your game on this phone stays the main one.</p></div>` +
+        (NET.err && O.on ? `<p class="sub warn">${esc(NET.err)}</p>` : '') +
+        `<button class="primary" data-fa="online">${O.on ? 'Connect again' : 'Go online'}</button>` +
+        `<div class="section">Already have an account?</div>` + accountForm('signin') +
+        (O.on ? '<button class="soft small" data-fa="offline">Stay offline</button>' : '');
+      return;
+    }
+    if (friendView) { renderFriendView(B); return; }
+    const fr = Object.entries(O.friends).filter(([, F]) => F.st === 'friend').sort((a, b) => (b[1].seen || 0) - (a[1].seen || 0));
+    const sent = Object.entries(O.friends).filter(([, F]) => F.st !== 'friend');
+    const req = Object.entries(O.requests);
+    let h = `<div class="codeCard"><small>Your friend code</small><b>${esc(O.code || '…')}</b><div class="btnRow"><button class="soft small" data-fa="copy">Copy</button>${navigator.share ? '<button class="soft small" data-fa="share">Share</button>' : ''}</div></div>` +
+      `<div class="addRow"><input id="friendCodeIn" class="nameField" maxlength="7" autocapitalize="characters" autocomplete="off" placeholder="A friend’s code"><button class="primary small" data-fa="add">Add</button></div>`;
+    if (req.length) h += '<div class="section">Want to be friends</div>' + req.map(([uid, R]) => `<div class="row"><div class="ic">${fThumb(R.dg)}</div><div class="txt"><b>${esc(R.name)}</b><small>Code ${esc(R.code || '?')}</small></div><div class="btnCol"><button class="small primary" data-fa="accept" data-uid="${uid}">Yes</button><button class="small soft" data-fa="decline" data-uid="${uid}">No</button></div></div>`).join('');
+    h += `<div class="section">Friends (${fr.length})</div>`;
+    h += fr.length ? fr.map(([uid, F]) => `<button class="row friendRow" data-fa="open" data-uid="${uid}"><div class="ic">${fThumb(F.dg)}</div><div class="txt"><b>${esc(F.name)}</b><small>${esc([F.rank ? `Rank ${F.rank}` : '', seenText(F.seen)].filter(Boolean).join(' · ') || 'Friend')}</small></div>${IC('right')}</button>`).join('')
+      : '<p class="sub">No friends yet. Share your code, or type in a friend’s code.</p>';
+    if (sent.length) h += '<div class="section">Waiting for a yes</div>' + sent.map(([uid, F]) => `<div class="row"><div class="ic">${fThumb(F.dg)}</div><div class="txt"><b>${esc(F.name)}</b><small>Request sent</small></div><button class="small soft" data-fa="remove" data-uid="${uid}">Cancel</button></div>`).join('');
+    const bl = Object.entries(O.blocked);
+    if (bl.length) h += '<div class="section">Blocked</div>' + bl.map(([uid, n]) => `<div class="row"><div class="ic">${IC('lock')}</div><div class="txt"><b>${esc(n)}</b></div><button class="small soft" data-fa="unblock" data-uid="${uid}">Unblock</button></div>`).join('');
+    h += `<div class="section">Cloud backup</div><p class="sub">${O.backupAt ? `Last backup: ${new Date(O.backupAt).toLocaleString()}` : 'Your game is backed up every 10 minutes while you play.'}</p><div class="btnRow"><button class="soft small" data-fa="backup">Back up now</button><button class="soft small" data-fa="restore">Restore</button></div>`;
+    h += `<div class="section">Your account</div>` + (O.email ? `<p class="sub">Saved as ${esc(O.email)}. Sign in with it on another phone to take your game, friends and code along.</p>` : `<p class="sub">Add an email and password to keep your game, friends and code if you switch phones.</p>${accountForm('link')}`);
+    h += '<button class="soft small" data-fa="offline">Go offline</button>';
+    B.innerHTML = h;
+  }
+  function accountForm(kind) {
+    return `<div class="acctForm" data-kind="${kind}"><input class="nameField" type="email" id="acctEmail-${kind}" autocomplete="email" placeholder="Email"><input class="nameField" type="password" id="acctPw-${kind}" autocomplete="${kind === 'link' ? 'new-password' : 'current-password'}" placeholder="Password (6+ characters)">` +
+      `<div class="btnRow"><button class="soft small" data-fa="${kind}">${kind === 'link' ? 'Save my account' : 'Sign in on this phone'}</button>${kind === 'signin' ? '<button class="soft small" data-fa="forgot">Forgot password</button>' : ''}</div></div>`;
+  }
+  function renderFriendView(B) {
+    const V = friendView, F = onl().friends[V.uid];
+    if (!F) { friendView = null; renderFriends(); return; }
+    const back = '<button class="soft small" data-fa="back">Back</button>';
+    if (V.mode === 'gift') {
+      const opts = giftOptions();
+      B.innerHTML = `<p class="sub">Pick a present for ${esc(F.name)}.</p>` + (opts.length ? `<div class="stallGoods">${opts.map(([k, id, n, th, c]) => `<button class="toyCard" data-fa="sendgift" data-gk="${k}" data-gid="${id}">${th}<b>${esc(n)}</b><small>×${c}</small></button>`).join('')}</div>` : '<p class="sub">Nothing to give yet. Things in your inventory, treats, bouquets and pantry food can be sent.</p>') + back;
+      return;
+    }
+    if (V.mode === 'letter') {
+      B.innerHTML = `<p class="sub">What should the letter to ${esc(F.name)} say?</p><div class="mailKinds">${Object.entries(D.LETTER_KINDS).map(([k, L]) => `<button class="soft" data-fa="sendletter" data-lk="${k}">${L.icon} ${esc(L.name)}</button>`).join('')}</div>` + back;
+      return;
+    }
+    if (V.mode === 'report') {
+      B.innerHTML = `<p class="sub">What’s wrong with ${esc(F.name)}?</p><div class="mailKinds">${['A rude name', 'Too many messages', 'Something else'].map((r) => `<button class="soft" data-fa="sendreport" data-r="${r}">${r}</button>`).join('')}</div><p class="sub">You can also block them, so they can’t reach you anymore.</p><button class="soft small" data-fa="block">Block ${esc(F.name)}</button>` + back;
+      return;
+    }
+    B.innerHTML = `<div class="friendHead"><div class="ic">${fThumb(F.dg)}</div><div><b>${esc(F.name)}</b><small>${esc([`Code ${F.code}`, seenText(F.seen)].filter(Boolean).join(' · '))}</small></div></div>` +
+      `<button class="row playRow" data-fa="visit"><div class="ic">${IC('home')}</div><div class="txt"><b>Visit their home</b><small>Have a look round and leave a little something</small></div></button>` +
+      `<button class="row playRow" data-fa="letter"><div class="ic">${IC('chat')}</div><div class="txt"><b>Write a letter</b><small>They’ll find it in their mailbox</small></div></button>` +
+      `<button class="row playRow" data-fa="gift"><div class="ic">${IC('gift')}</div><div class="txt"><b>Send a present</b><small>From your inventory, treats or pantry</small></div></button>` +
+      `<div class="btnRow"><button class="soft small" data-fa="remove">Remove friend</button><button class="soft small" data-fa="report">Report or block</button></div>` + back;
+  }
+  $('friends').addEventListener('click', async (e) => {
+    if (e.target.id === 'friends' || e.target.closest('[data-act="closeFriends"]')) { $('friends').classList.add('hidden'); return; }
+    const b = e.target.closest('[data-fa]');
+    if (!b || b.disabled) return;
+    const a = b.dataset.fa, uid = b.dataset.uid || (friendView && friendView.uid);
+    const val = (id) => ($(id) ? $(id).value : '');
+    switch (a) {
+      case 'online': b.disabled = true; b.textContent = 'Connecting…'; await goOnline(false); renderFriends(); break;
+      case 'offline': goOffline(); renderFriends(); toast('You’re offline. Your game keeps going as usual'); break;
+      case 'copy': try { await navigator.clipboard.writeText(onl().code); toast('Code copied'); } catch (_) { toast(`Your code: ${onl().code}`); } break;
+      case 'share': try { await navigator.share({ title: 'PixelPups', text: `Be my friend in PixelPups! My friend code: ${onl().code}`, url: location.origin + location.pathname }); } catch (_) { /* cancelled */ } break;
+      case 'add': b.disabled = true; if (await addFriendByCode(val('friendCodeIn'))) renderFriends(); else b.disabled = false; break;
+      case 'accept': { const R = onl().requests[uid]; if (R) { await acceptFriend(uid, R.name, R.code, R.dg); renderFriends(); refreshFriends(); } break; }
+      case 'decline': delete onl().requests[uid]; save(); renderFriends(); break;
+      case 'remove': await removeFriend(uid, false); friendView = null; renderFriends(); break;
+      case 'unblock': await unblock(uid); renderFriends(); break;
+      case 'open': friendView = { uid, mode: 'menu' }; renderFriends(); break;
+      case 'back': friendView = friendView && friendView.mode !== 'menu' ? { uid: friendView.uid, mode: 'menu' } : null; renderFriends(); break;
+      case 'visit': $('friends').classList.add('hidden'); if (place !== 'home') { toast('Head home first, then visit from there'); break; } visitFriend(uid); break;
+      case 'letter': case 'gift': case 'report': friendView.mode = a; renderFriends(); break;
+      case 'sendletter': b.disabled = true; if (await sendToFriend(uid, { lk: b.dataset.lk })) { friendView.mode = 'menu'; renderFriends(); } else b.disabled = false; break;
+      case 'sendgift': b.disabled = true; if (await sendToFriend(uid, { gk: b.dataset.gk, gid: b.dataset.gid })) { friendView.mode = 'menu'; renderFriends(); } else b.disabled = false; break;
+      case 'sendreport': await reportPlayer(uid, b.dataset.r); friendView.mode = 'menu'; renderFriends(); break;
+      case 'block': await removeFriend(uid, true); friendView = null; renderFriends(); break;
+      case 'backup': b.disabled = true; if (await pushBackup(true)) toast('Backed up ☁️'); renderFriends(); break;
+      case 'restore': restoreBackup(); break;
+      case 'link': if (await linkEmail(val('acctEmail-link'), val('acctPw-link'))) renderFriends(); break;
+      case 'signin': b.disabled = true; await signInEmail(val('acctEmail-signin'), val('acctPw-signin')); b.disabled = false; renderFriends(); break;
+      case 'forgot': if (!val('acctEmail-signin')) { toast('Type your email first'); break; } resetPassword(val('acctEmail-signin')); break;
+      default: break;
+    }
+  });
+  $('visitReact').addEventListener('click', (e) => { const b = e.target.closest('[data-emo]'); if (b) leaveReaction(b.dataset.emo); });
 
   // Add ?debug to the game link to poke at the game from the browser console
   if (/[?&]debug\b/.test(location.search)) {
@@ -16138,6 +16700,7 @@
       openBake, startBake, bakeCut, bakeToIce, iceAt, bakeOven, get bake() { return bake; }, giveTreat, openStall, startStall, stallSell, get stall() { return stall; }, marketDay, marketStock, weekHot,
       openMuseum, museumTick, hallVisitors, hallChoices, museum, museumFame, renderMuseum, spawnCatchables, get catchables() { return catchables; }, swingNet, catchIt, openCritters, renderExhibits, get roamers() { return roamers; },
       startFishing, fishTap, fishPick, startSnowman, snowStart, snowNext, renderSnow, meltSnowmen, snowOnGround, startFlakes, flakesTap, set lastTap(v) { lastTap = v; }, startDisc, discTap, disc, discCupToday,
+      NET, onl, goOnline, goOffline, openFriends, renderFriends, addFriendByCode, acceptFriend, removeFriend, sendToFriend, visitFriend, leaveReaction, pushBackup, pushHome, fetchBackup, restoreBackup, linkEmail, signInEmail, safeName, refreshFriends, visitPayload, visitFromPayload, get friendView() { return friendView; },
       rollFavor, startFavor, get favorW() { return favorW; }, weekStat, rollWeek, deliverGazette, openGazette, addRivalry, rivalry, rivalOf, toyPals, round3Ctx, round3Action, nearPier, nearDiscMat, nearMuseum, nearMarket,
     };
   }
