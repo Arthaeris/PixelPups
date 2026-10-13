@@ -153,6 +153,13 @@ window.VP_DATA = (function () {
     easel:     { name: 'Easel and paints', icon: '🎨', price: 120, cat: 'decor', solid: true },
     mailbox:   { name: 'Mailbox',        icon: '📮', price: 25, cat: 'decor', solid: true },
     painting:  { name: 'Painting',       icon: '🖼️', price: null, cat: 'rare', solid: true, painting: true },
+    fireflyjar:{ name: 'Firefly jar',    icon: '🫙', price: null, cat: 'rare', solid: true, comfort: 3 },
+    snowglobe: { name: 'Snow globe',     icon: '🔮', price: null, cat: 'rare', solid: true, comfort: 3 },
+    fishtrophy:{ name: 'Fish trophy',    icon: '🐟', price: null, cat: 'rare', solid: true, comfort: 3 },
+    discrack:  { name: 'Disc rack',      icon: '🥏', price: null, cat: 'rare', solid: true, comfort: 2 },
+    museumcase:{ name: 'Display case',   icon: '🏛️', price: null, cat: 'rare', solid: true, comfort: 4 },
+    terrarium: { name: 'Terrarium',      icon: '🪴', price: 60, cat: 'garden', solid: true, garden: true, comfort: 2 },
+    insecthotel:{ name: 'Bug hotel',     icon: '🐞', price: 35, cat: 'garden', solid: true, garden: true, comfort: 2 },
     // Living room
     sofa:      { name: 'Sofa',           icon: '🛋️', price: 45, cat: 'living', solid: true, lounge: true },
     armchair:  { name: 'Armchair',       icon: '💺', price: 40, cat: 'living', solid: true, lounge: true },
@@ -169,6 +176,7 @@ window.VP_DATA = (function () {
     chair:     { name: 'Chair',          icon: '🪑', price: 15, cat: 'kitchen', solid: true },
     fridge:    { name: 'Fridge',         icon: '🧊', price: 55, cat: 'kitchen', solid: true },
     stove:     { name: 'Stove',          icon: '🍳', price: 50, cat: 'kitchen', solid: true },
+    oven:      { name: 'Baking oven',    icon: '🥧', price: 95, cat: 'kitchen', solid: true },
     // Decor
     plant:     { name: 'Plant',          icon: '🪴', price: 20, cat: 'decor', solid: true },
     cactus:    { name: 'Cactus',         icon: '🌵', price: 15, cat: 'decor', solid: true },
@@ -204,7 +212,7 @@ window.VP_DATA = (function () {
     cloudbed:  { name: 'Cloud bed',      icon: '☁️', price: null, cat: 'rare', solid: false, role: 'bed', sleepY: 0.14, regen: 2, comfort: 10, rare: true },
   };
   // What tapping a piece of furniture does
-  const USES = { easel: 'paint', mailbox: 'mail', tv: 'tv', toybox: 'toybox', fireplace: 'fire', stove: 'cook', piano: 'piano', guitar: 'piano', lamp: 'lamp', bathtub: 'bath', giftbox: 'gift', jukebox: 'music' };
+  const USES = { oven: 'bake', easel: 'paint', mailbox: 'mail', tv: 'tv', toybox: 'toybox', fireplace: 'fire', stove: 'cook', piano: 'piano', guitar: 'piano', lamp: 'lamp', bathtub: 'bath', giftbox: 'gift', jukebox: 'music' };
   for (const [k, u] of Object.entries(USES)) ITEMS[k].use = u;
   // Things that light up your home at night. r = how far the light reaches (tiles), y = height of the glow,
   // on = 'toggle' when it can be switched (lamps and fires start on, TVs and music start off)
@@ -217,6 +225,7 @@ window.VP_DATA = (function () {
     fairylights: { color: '#ffd6f0', r: 2.4, y: 0.9, twinkle: true },
     gardenlamp:  { color: '#ffe3a1', r: 2.4, y: 0.95 },
     aquarium:    { color: '#7fd3ff', r: 1.4, y: 0.6 },
+    fireflyjar:  { color: '#d8ff7a', r: 2.0, y: 0.5, twinkle: true },
     tv:          { color: '#9fc7ff', r: 1.7, y: 0.7, on: false },
     jukebox:     { color: '#ff8fd0', r: 1.8, y: 0.8, on: false },
   };
@@ -224,6 +233,8 @@ window.VP_DATA = (function () {
   const GADGETS = {
     flashlight: { name: 'Flashlight', icon: '🔦', price: 60, desc: 'Lights the way on night walks', bought: 'It switches on by itself on night walks' },
     hoe:        { name: 'Garden hoe', icon: '⛏️', price: 40, desc: 'Turns garden ground into a bed you can plant in', bought: 'Stand on garden ground and tap Dig a bed', feat: 'farming' },
+    net:        { name: 'Critter net', icon: '🥅', price: 50, desc: 'Catch little critters on your walks', bought: 'Walk up to a critter and tap Catch while it sits still', feat: 'catching' },
+    rod:        { name: 'Fishing rod', icon: '🎣', price: 70, desc: 'Fish off the pier at the beach', bought: 'Walk to the end of the pier at the beach and tap Fish', feat: 'fishing' },
     wateringcan:{ name: 'Watering can', icon: '🚿', price: 55, desc: 'Watered plants grow faster and give more', bought: 'Tap a planted bed to water it', feat: 'farming' },
   };
   const CATS = [['dog', '🐶 Dog stuff'], ['living', '🛋️ Living room'], ['kitchen', '🍳 Kitchen'], ['decor', '🪴 Decor'], ['garden', '🌷 Garden'], ['agility', '🏁 Agility'], ['luxury', '💎 Luxury']];
@@ -479,6 +490,16 @@ window.VP_DATA = (function () {
     frost:      { name: 'Frost stripes',   earned: true, pattern: 'stripes', c1: '#eef7fd', c2: '#d6ebf8', trim: '#7fa9c8' },
     sunshine:   { name: 'Sunshine dots',   earned: true, pattern: 'dots',    c1: '#fff6cf', c2: '#ffd34d', trim: '#d8a523' },
     critterwall: { name: 'Woodland panels', earned: true, pattern: 'planksV', c1: '#a9c49a', c2: '#98b588', trim: '#5f7d52' },
+    gallery:    { name: 'Gallery white',   earned: true, pattern: 'plain',   c1: '#f7f5f0', trim: '#9a8f7e' },
+    // thank-yous from neighbors you did a favor for
+    linen:      { name: 'Lena’s linen',     earned: true, pattern: 'check',   c1: '#efe6d8', c2: '#e4d8c4', trim: '#a8916d' },
+    burrow:     { name: 'Mia’s burrow',     earned: true, pattern: 'planksV', c1: '#b48a68', c2: '#a67c5b', trim: '#6b4a33' },
+    parisian:   { name: 'Emma’s Paris',     earned: true, pattern: 'stripes', c1: '#f9e1e7', c2: '#f3cad5', trim: '#b5798b' },
+    herbarium:  { name: 'Hannah’s herbs',   earned: true, pattern: 'dots',    c1: '#e3eedb', c2: '#9cc38a', trim: '#6c9058' },
+    cloud:      { name: 'Sophie’s clouds',  earned: true, pattern: 'dots',    c1: '#dceefb', c2: '#ffffff', trim: '#8fb4d3' },
+    harbor:     { name: 'Clara’s harbor',   earned: true, pattern: 'stripes', c1: '#1f4f7a', c2: '#245b8b', trim: '#e9e1c9' },
+    cookie:     { name: 'Lea’s cookie jar', earned: true, pattern: 'check',   c1: '#f2d3a8', c2: '#e6bf8a', trim: '#9b6a3a' },
+    rainy:      { name: 'Marie’s raindrops', earned: true, pattern: 'dots',   c1: '#cfdbe6', c2: '#7f9fbc', trim: '#56718a' },
   };
   const FLOORS = {
     oak:      { name: 'Oak checker',  price: 0,  pattern: 'check',  c1: '#d8b689', c2: '#cba579' },
@@ -503,6 +524,15 @@ window.VP_DATA = (function () {
     chalk:    { name: 'Chalkboard',     earned: true, pattern: 'planks', c1: '#3f5b4c', c2: '#36503f' },
     cocoa:    { name: 'Cocoa carpet',   earned: true, pattern: 'carpet', c1: '#8d6248', c2: '#82593f' },
     snowdrift: { name: 'Snowdrift',     earned: true, pattern: 'marble', c1: '#fbfdff', c2: '#dde9f2' },
+    mosaic:    { name: 'Museum mosaic',  earned: true, pattern: 'tiles',  c1: '#e8dcc7', c2: '#b9a37f' },
+    racing:    { name: 'Jonas’s race track', earned: true, pattern: 'check', c1: '#3a3a3a', c2: '#f2f2f2' },
+    driftwood: { name: 'Paul’s driftwood', earned: true, pattern: 'planks', c1: '#b9ab98', c2: '#a89a86' },
+    library:   { name: 'Felix’s library', earned: true, pattern: 'carpet', c1: '#7d2e2e', c2: '#712828' },
+    disco:     { name: 'Leon’s disco',    earned: true, pattern: 'check',  c1: '#c7a6f7', c2: '#8ad3f0' },
+    kitchen:   { name: 'Noah’s kitchen',  earned: true, pattern: 'tiles',  c1: '#ffffff', c2: '#e05a4f' },
+    slate:     { name: 'Ben’s slate',     earned: true, pattern: 'tiles',  c1: '#6f7b86', c2: '#5f6a74' },
+    checkboard:{ name: 'Tim’s chessboard', earned: true, pattern: 'check', c1: '#f4f1ea', c2: '#2f2f35' },
+    moss:      { name: 'Elias’s moss',    earned: true, pattern: 'carpet', c1: '#86a35c', c2: '#7a9752' },
   };
   const DEFAULT_ROOM = { wall: 'cream', floor: 'oak' };
 
@@ -890,6 +920,12 @@ window.VP_DATA = (function () {
     { id: 'harvest',  text: 'Harvest something from your garden', ev: 'harvest', n: 1, reward: 20, needs: 'beds' },
     { id: 'agility',  text: 'Run an agility course {n} times',    ev: 'agility', n: 2, reward: 20, needs: 'agilityok' },
     { id: 'letter',   text: 'Send a letter to a neighbor',        ev: 'letter', n: 1, reward: 10, needs: 'mailbox' },
+    { id: 'bake',     text: 'Bake a batch of dog treats',         ev: 'bake', n: 1, reward: 20, needs: 'oven' },
+    { id: 'fish',     text: 'Catch {n} fish off the pier',        ev: 'fish', n: [2, 3], reward: 20, needs: 'rod' },
+    { id: 'catch',    text: 'Catch {n} critters with your net',   ev: 'catch', n: [2, 3], reward: 20, needs: 'net' },
+    { id: 'disc',     text: 'Play {n} rounds of disc dog',        ev: 'disc', n: 1, reward: 20, needs: 'discok' },
+    { id: 'favor',    text: 'Do a favor for a neighbor',          ev: 'favor', n: 1, reward: 25, needs: 'feat:favors' },
+    { id: 'snowman',  text: 'Build a snowman or a snow dog',      ev: 'snowman', n: 1, reward: 20, needs: 'winter' },
   ];
   const CHALLENGE_BONUS = { coins: 30, rareChance: 0.15 };  // for finishing all three in a day
 
@@ -923,6 +959,15 @@ window.VP_DATA = (function () {
     { id: 'maps',     name: 'X marks the spot',icon: '🗺️', text: 'Follow 3 bottle maps to their treasure', stat: 'mapsDug', n: 3 },
     { id: 'sitter',   name: 'Trusted sitter',  icon: '🐕‍🦺', text: 'Look after 3 neighbors’ dogs', stat: 'sits', n: 3 },
     { id: 'artist',   name: 'Dog painter',     icon: '🎨', text: 'Paint 5 portraits', stat: 'paintings', n: 5 },
+    { id: 'baker',    name: 'Biscuit baker',   icon: '🥧', text: 'Bake 30 treats', stat: 'baked', n: 30 },
+    { id: 'merchant', name: 'Market regular',  icon: '🧺', text: 'Sell 50 things at the market', stat: 'sold', n: 50 },
+    { id: 'curator',  name: 'Curator',         icon: '🏛️', text: 'Welcome 1,000 museum visitors', stat: 'visitors', n: 1000 },
+    { id: 'angler',   name: 'Pier angler',     icon: '🎣', text: 'Catch 25 fish', stat: 'fished', n: 25 },
+    { id: 'catcher',  name: 'Critter catcher', icon: '🥅', text: 'Catch 10 kinds of critters', stat: 'critterKinds', n: 10 },
+    { id: 'snowart',  name: 'Snow sculptor',   icon: '⛄', text: 'Build 5 snowmen or snow dogs', stat: 'snowmen', n: 5 },
+    { id: 'discpro',  name: 'Disc champion',   icon: '🥏', text: 'Win the Disc Cup', stat: 'discWins', n: 1 },
+    { id: 'helper',   name: 'Good neighbor',   icon: '🤝', text: 'Do 10 favors for neighbors', stat: 'favors', n: 10 },
+    { id: 'upstairs', name: 'Moving on up',    icon: '🪜', text: 'Build an upstairs', stat: 'upRooms', n: 1 },
   ];
 
   // ===================================================================
@@ -1079,6 +1124,15 @@ window.VP_DATA = (function () {
     stars:    { rank: 5, name: 'Stargazing', text: 'Lie down on a clear night and look for your dogs in the stars' },
     lead:     { rank: 6, name: 'Let your dog lead', text: 'Your dog decides where the walk goes' },
     luxury:   { rank: 12, name: 'Luxury furniture', text: 'The fanciest pieces in the shop' },
+    gazette:  { rank: 4, name: 'The PixelPups Gazette', text: 'A little newspaper in your mailbox every week' },
+    winter:   { rank: 3, name: 'Winter fun', text: 'Snowmen, snow dogs and catching snowflakes when it snows' },
+    fishing:  { rank: 4, name: 'Fishing', text: 'A fishing rod in the shop, and a pier at the beach' },
+    catching: { rank: 5, name: 'Catching critters', text: 'A critter net in the shop. Show off your catches in a critter garden' },
+    baking:   { rank: 6, name: 'Baking', text: 'A baking oven for dog treats made from your harvest' },
+    favors:   { rank: 6, name: 'Neighbor favors', text: 'Neighbors ask your dog to sniff out lost things' },
+    market:   { rank: 7, name: 'Market stall', text: 'Sell your goods at the Old Town market on weekends' },
+    museum:   { rank: 8, name: 'Town museum', text: 'Lend your finds to the museum and curate exhibitions' },
+    disc:     { rank: 8, name: 'Disc dog', text: 'Throw a frisbee at the beach, and a Disc Cup on the 14th' },
   };
   // XP and place-mastery points for things you do. cap = how often it counts per game day.
   const XP = {
@@ -1092,6 +1146,8 @@ window.VP_DATA = (function () {
     stars: { xp: 12, m: 5, cap: 4 }, music: { xp: 4, cap: 8 }, lead: { xp: 10, m: 8, cap: 6 },
     ducks: { xp: 2, m: 1, cap: 10 }, harvest: { xp: 8, cap: 12 }, plant: { xp: 2, cap: 20 }, agility: { xp: 10, m: 4, cap: 10 }, tourney: { xp: 40, m: 20, cap: 4 },
     paint: { xp: 12, cap: 4 }, letter: { xp: 5, cap: 6 }, treasuremap: { xp: 50, m: 25, cap: 4 }, sitting: { xp: 60, cap: 3 },
+    bake: { xp: 14, cap: 6 }, market: { xp: 25, m: 10, cap: 4 }, museum: { xp: 6, cap: 10 }, fish: { xp: 5, m: 3, cap: 20 }, catch: { xp: 5, m: 3, cap: 20 },
+    snowman: { xp: 15, m: 5, cap: 4 }, flakes: { xp: 6, m: 2, cap: 6 }, disc: { xp: 8, m: 4, cap: 10 }, discup: { xp: 40, m: 20, cap: 2 }, favor: { xp: 30, m: 10, cap: 5 },
   };
   const XP_MISC = { secret: 60, chat: 3, newFind: 25, dupFind: 3, challenge: 40, allChallenges: 60, firstVisit: 40, adopt: 50, room: 60, trickLevel: 10, event: 30 };
   const MASTERY_STARS = [0, 30, 100, 220, 400, 650];   // points for 0..5 stars
@@ -1176,11 +1232,11 @@ window.VP_DATA = (function () {
   // Home tiers: what your home is, how many rooms it can have, and what it does for your dogs
   // ===================================================================
   const HOUSE_TIERS = [
-    { id: 'flat',   name: 'Cozy flat',    rooms: 2,  perk: 'Where it all starts' },
-    { id: 'house',  name: 'Little house', rooms: 4,  rank: 7,  cost: 300,  req: { rooms: 2, comfort: 2, items: 12 },               perk: 'Naps at home restore 15% more energy', wall: 'sunny', floor: 'herring' },
-    { id: 'family', name: 'Family home',  rooms: 7,  rank: 10, cost: 900,  req: { rooms: 4, comfort: 3, items: 22, dogs: 2 },      perk: 'Dogs stay happy longer at home', wall: 'nursery', floor: 'cork' },
-    { id: 'villa',  name: 'Garden villa', rooms: 11, rank: 14, cost: 2000, req: { rooms: 6, gardens: 1, comfort: 4, items: 35 },   perk: 'Auto-feeders and fountains refill twice as fast', wall: 'terracotta', floor: 'terrazzo' },
-    { id: 'estate', name: 'Dream estate', rooms: 16, rank: 18, cost: 4000, req: { rooms: 9, comfort: 5, items: 50, luxury: 2 },    perk: 'A daily allowance of 100 coins', wall: 'royal', floor: 'parquet' },
+    { id: 'flat',   name: 'Cozy flat',    rooms: 2,  up: 0, perk: 'Where it all starts' },
+    { id: 'house',  name: 'Little house', rooms: 4,  up: 0, rank: 7,  cost: 300,  req: { rooms: 2, comfort: 2, items: 12 },               perk: 'Naps at home restore 15% more energy', wall: 'sunny', floor: 'herring' },
+    { id: 'family', name: 'Family home',  rooms: 7,  up: 3, rank: 10, cost: 900,  req: { rooms: 4, comfort: 3, items: 22, dogs: 2 },      perk: 'Dogs stay happy longer at home', wall: 'nursery', floor: 'cork' },
+    { id: 'villa',  name: 'Garden villa', rooms: 11, up: 5, rank: 14, cost: 2000, req: { rooms: 6, gardens: 1, comfort: 4, items: 35 },   perk: 'Auto-feeders and fountains refill twice as fast', wall: 'terracotta', floor: 'terrazzo' },
+    { id: 'estate', name: 'Dream estate', rooms: 16, up: 8, rank: 18, cost: 4000, req: { rooms: 9, comfort: 5, items: 50, luxury: 2 },    perk: 'A daily allowance of 100 coins', wall: 'royal', floor: 'parquet' },
   ];
 
   // ===================================================================
@@ -1853,6 +1909,175 @@ window.VP_DATA = (function () {
   // ===================================================================
   const PAINT_COLS = ['#f8bbd0', '#b3e5fc', '#fff59d', '#c5e1a5', '#ffccbc', '#d1c4e9', '#80cbc4', '#ffffff'];
 
+
+  // ===================================================================
+  // Home: upstairs, stairs, inner walls and moving rooms
+  // ===================================================================
+  // up = upstairs rooms a home tier allows (in HOUSE_TIERS). The upstairs opens once a Family home
+  // (or bigger) has every room it can have downstairs.
+  const HOME_BUILD = {
+    upFrom: 2,          // index of the first home tier with an upstairs
+    wall: 25,           // coins for an inner wall or a doorway
+    stairsMove: 150,    // coins to move the staircase
+    moveShare: 0.8,     // moving a room costs this share of what the last room cost
+  };
+
+  // ===================================================================
+  // Baking: dough, cookie cutters and icing. Treats are kept in a tin and given from the dog's card.
+  // shape = the cutter; effect: happy/energy/bond/hunger/clean as usual,
+  // train = the next tricks are a bit easier, zoom = the next agility run is a bit faster, gift = extra nice in a letter
+  // ===================================================================
+  const BAKES = {
+    bones:   { name: 'Training bones',    icon: '🦴', shape: 'bone',  needs: { carrot: 2, egg: 1 }, effect: { happy: 6, train: 5 }, desc: 'Tricks come easier for the next five tries', price: 14 },
+    paws:    { name: 'Apple paw cookies', icon: '🍪', shape: 'paw',   needs: { apple: 2, egg: 1 },  effect: { happy: 14, bond: 3 }, desc: 'Brings you closer', price: 12 },
+    hearts:  { name: 'Pumpkin hearts',    icon: '🧡', shape: 'heart', needs: { pumpkin: 1, egg: 1 }, effect: { energy: 25, happy: 6, zoom: 1 }, desc: 'Energy, and a faster next agility run', price: 16 },
+    stars:   { name: 'Berry stars',       icon: '⭐', shape: 'star',  needs: { berries: 2, honey: 1 }, effect: { happy: 12, gift: 1 }, desc: 'Neighbors love finding these in a letter', price: 18 },
+    drops:   { name: 'Honey drops',       icon: '🍯', shape: 'drop',  needs: { honey: 1, egg: 1 },  effect: { bond: 5, happy: 8 }, desc: 'Sweet and sticky, a real bonding treat', price: 15 },
+    fishies: { name: 'Fishy crackers',    icon: '🐟', shape: 'fish',  needs: { fish: 1, egg: 1 },   effect: { hunger: 30, clean: 8, happy: 8 }, desc: 'Good for a shiny coat', price: 15 },
+  };
+  const BAKE = { dough: 8, best: 8, icingGood: 0.8 };   // cutter stamps that fit on the dough; icing accuracy for 3 stars
+
+  // ===================================================================
+  // Market stall in Old Town on Saturdays and Sundays (game weekdays). Goods: crops and things you make.
+  // base = coins per piece at a fair price. The Gazette names a hot item each week (sells for 1.5 x).
+  // ===================================================================
+  const MARKET = {
+    days: ['Saturday', 'Sunday'], seconds: 70, slots: 6, hot: 1.5,
+    prices: [['Cheap', 0.75, 1.35], ['Fair', 1, 1], ['Pricey', 1.4, 0.6]],   // [name, price factor, how many customers buy]
+  };
+  const MARKET_GOODS = {
+    carrot: { kind: 'pantry', base: 5 }, apple: { kind: 'pantry', base: 5 }, berries: { kind: 'pantry', base: 7 }, pumpkin: { kind: 'pantry', base: 12 },
+    honey: { kind: 'pantry', base: 10 }, fish: { kind: 'pantry', base: 9 }, egg: { kind: 'pantry', base: 5 }, mushroom: { kind: 'pantry', base: 8 },
+    bouquet: { kind: 'bouquet', base: 18, name: 'Bouquet', icon: '💐' },
+    painting: { kind: 'painting', base: 60, name: 'Painting', icon: '🖼️' },
+  };
+  const MARKET_LINES = {
+    hello: ['Ooh, what have we here?', 'Morning! Just browsing…', 'Is that homemade?', 'My dog would love that!', 'One of those, please!'],
+    happy: ['Lovely, thank you!', 'Perfect!', 'See you next weekend!', 'My dog says thanks!'],
+    gone: ['Never mind…', 'Maybe next time.', 'Hmm, too slow.'],
+    pricey: ['That much? Hm…', 'A bit steep, but fine.'],
+  };
+
+  // ===================================================================
+  // The town museum in Old Town. Lend your finds to themed halls (you keep them in your book).
+  // Halls draw visitors every game day; fresh exhibitions draw more. Your share of the tickets builds up.
+  // ===================================================================
+  const MUSEUM = {
+    slots: 6, perItem: 4, secretBonus: 3, fullBonus: 1.5, freshDays: 5, staleRate: 0.08, staleMin: 0.4, coinPer: 0.5,
+    fame: [0, 250, 900, 2200, 5000],    // total visitors for museum fame 1..5
+  };
+  const MUSEUM_HALLS = [
+    { id: 'town',     name: 'Life in Town',       icon: '🏘️', locs: ['park', 'oldtown'], fame: 0, blurb: 'Little things lost and found around the neighborhood.' },
+    { id: 'wild',     name: 'Into the Wild',      icon: '🌲', locs: ['forest', 'alpine'], fame: 0, blurb: 'Woods and mountains, as dogs know them.' },
+    { id: 'sea',      name: 'By the Sea',         icon: '🌊', locs: ['beach'], fish: true, fame: 1, blurb: 'Shells, sea glass and the fish you caught off the pier.' },
+    { id: 'seasons',  name: 'Through the Year',   icon: '📅', seasonal: true, fame: 1, blurb: 'Each month leaves something behind.' },
+    { id: 'portraits',name: 'Portrait Gallery',   icon: '🖼️', paintings: true, fame: 2, blurb: 'Paintings of the town’s best dogs (yours).' },
+    { id: 'deep',     name: 'Deep and Dark',      icon: '💎', locs: ['caves', 'moon'], fame: 2, blurb: 'From under the ground and far above it.' },
+    { id: 'wonders',  name: 'Wonders',            icon: '✨', locs: ['carnival', 'fairy', 'snowy', 'grounds'], fame: 3, blurb: 'Things nobody can quite explain.' },
+  ];
+  const MUSEUM_REWARDS = { 2: { item: 'museumcase', coins: 100 }, 3: { wall: 'gallery', coins: 200 }, 4: { floor: 'mosaic', coins: 300 }, 5: { coins: 600, xp: 300 } };
+
+  // ===================================================================
+  // Fishing off the pier at the beach. when: day/night; seasons: months. size in cm; value at the market.
+  // ===================================================================
+  const FISH = {
+    herring:  { name: 'Herring',      icon: '🐟', size: [18, 30], weight: 10, pull: 0.8 },
+    mackerel: { name: 'Mackerel',     icon: '🐟', size: [25, 40], weight: 8, pull: 1 },
+    flounder: { name: 'Flounder',     icon: '🐠', size: [20, 45], weight: 6, pull: 1 },
+    cod:      { name: 'Cod',          icon: '🐟', size: [40, 80], weight: 4, pull: 1.3, months: [10, 11, 12, 1, 2, 3] },
+    seabass:  { name: 'Sea bass',     icon: '🐟', size: [35, 65], weight: 4, pull: 1.3, months: [5, 6, 7, 8, 9] },
+    garfish:  { name: 'Garfish',      icon: '🐡', size: [50, 80], weight: 3, pull: 1.4, months: [4, 5, 6] },
+    squid:    { name: 'Little squid', icon: '🦑', size: [15, 30], weight: 3, pull: 1.1, when: 'night' },
+    eel:      { name: 'Eel',          icon: '🐍', size: [40, 90], weight: 2, pull: 1.5, when: 'night' },
+    crabpot:  { name: 'Crab',         icon: '🦀', size: [10, 20], weight: 3, pull: 0.7 },
+    boot:     { name: 'Old boot',     icon: '👢', size: [28, 28], weight: 2, pull: 0.5, junk: true },
+    goldfish: { name: 'Golden fish',  icon: '✨', size: [20, 30], weight: 0.4, pull: 1.6, rare: true },
+  };
+  const FISHING = { bite: [2.5, 7], window: 0.9, reel: 9, keep: [0.35, 0.75], trophyAt: 15 };
+
+  // ===================================================================
+  // Critters you can catch with the net (the critter guide's "spotted" list is separate).
+  // where: places; when: day/night/rain/sun; months: when they're out; fly = flutters about; glow = lights up
+  // ===================================================================
+  const CATCH = {
+    firefly:     { name: 'Firefly',        icon: '✨', col: '#d8ff7a', where: ['park', 'forest', 'fairy'], when: 'night', months: [6, 7, 8], fly: true, glow: true, value: 6 },
+    butterfly:   { name: 'Peacock butterfly', icon: '🦋', col: '#d84a3a', where: ['park', 'alpine', 'fairy'], when: 'day', months: [4, 5, 6, 7, 8, 9], fly: true, value: 8 },
+    brimstone:   { name: 'Brimstone',      icon: '🦋', col: '#f2e35a', where: ['park', 'forest'], when: 'day', months: [3, 4, 5, 6], fly: true, value: 8 },
+    dragonfly:   { name: 'Dragonfly',      icon: '🪰', col: '#3fa7d6', where: ['park', 'grounds', 'forest'], when: 'sun', months: [5, 6, 7, 8, 9], fly: true, value: 12 },
+    bumblebee:   { name: 'Bumblebee',      icon: '🐝', col: '#f5c518', where: ['park', 'alpine', 'fairy'], when: 'day', months: [3, 4, 5, 6, 7, 8], fly: true, value: 9 },
+    ladybird:    { name: 'Ladybird',       icon: '🐞', col: '#e53935', where: ['park', 'oldtown', 'grounds'], when: 'day', months: [4, 5, 6, 7, 8, 9], value: 5 },
+    grasshopper: { name: 'Grasshopper',    icon: '🦗', col: '#7cb342', where: ['park', 'alpine', 'grounds'], when: 'sun', months: [6, 7, 8, 9], value: 7 },
+    cricket:     { name: 'Field cricket',  icon: '🦗', col: '#5d4037', where: ['park', 'grounds', 'forest'], when: 'night', months: [7, 8, 9, 10], value: 9 },
+    snail:       { name: 'Garden snail',   icon: '🐌', col: '#c7a17a', where: ['park', 'forest', 'oldtown'], when: 'rain', value: 5 },
+    frog:        { name: 'Tree frog',      icon: '🐸', col: '#4caf50', where: ['park', 'forest', 'fairy'], when: 'rain', months: [4, 5, 6, 7, 8, 9], value: 14 },
+    newt:        { name: 'Alpine newt',    icon: '🦎', col: '#ff7043', where: ['alpine', 'forest'], when: 'rain', months: [4, 5, 6, 7, 8], value: 16 },
+    beetle:      { name: 'Stag beetle',    icon: '🪲', col: '#4e342e', where: ['forest'], when: 'night', months: [5, 6, 7], value: 18 },
+    hermitcrab:  { name: 'Hermit crab',    icon: '🦀', col: '#ff8a65', where: ['beach'], value: 10 },
+    starfish:    { name: 'Starfish',       icon: '⭐', col: '#ff9e40', where: ['beach'], when: 'night', value: 12 },
+    moth:        { name: 'Moon moth',      icon: '🦋', col: '#b2dfdb', where: ['carnival', 'fairy', 'forest'], when: 'night', fly: true, glow: true, value: 15 },
+    glowworm:    { name: 'Cave glow-worm', icon: '🐛', col: '#80deea', where: ['caves'], glow: true, value: 14 },
+    snowbug:     { name: 'Snow flea',      icon: '❄️', col: '#e3f2fd', where: ['snowy', 'alpine'], months: [12, 1, 2], value: 11 },
+  };
+  const CATCHING = { perWalk: [2, 4], reach: 1.7, scare: 2.0, exhibit: 12, jar: 5 };   // fireflies in a jar: jar = catches for a firefly jar
+
+  // ===================================================================
+  // Winter fun: snowmen and snow dogs (anywhere with snow on the ground), catching snowflakes when it snows
+  // ===================================================================
+  const SNOW = { roll: [1.6, 1.25, 0.9], growth: 0.11, flakes: 25, flakeLife: [3.2, 4.6], keep: 8 };
+
+  // ===================================================================
+  // Disc dog at the beach: five throws a round. Disc Cup on the 14th (classes like agility).
+  // ===================================================================
+  const DISC = { throws: 5, maxDist: 22, minDist: 5, cup: [14], fee: [10, 25, 50], prize: [[60, 30, 15], [140, 70, 35], [300, 150, 70]], rivals: 5 };
+  const DISC_LINES = {
+    catch: ['Great catch!', 'Got it!', 'Snatched out of the air!'],
+    flip: ['A flip catch! The crowd goes wild!', 'Airborne! What a catch!', 'Spectacular leap!'],
+    miss: ['Just missed it!', 'Too far…', 'It hit the sand first.'],
+  };
+
+  // ===================================================================
+  // Neighbor favors. Your dog sniffs the neighbor (or their dog) to pick up the scent, then follows it.
+  // ===================================================================
+  const FAVOR_KINDS = {
+    toy:  { ask: ['{ndog} lost a {thing} somewhere around here. Could your nose-on-legs help?', 'Oh no, {ndog}’s favorite {thing} is gone! Could {dog} sniff it out?'],
+            things: ['squeaky duck', 'rope toy', 'chew bone', 'tennis ball', 'rubber chicken'], icon: '🧸' },
+    item: { ask: ['I dropped my {thing} on the way here. {dog} has such a good nose…', 'My {thing}! I had it a minute ago. Could {dog} help me find it?'],
+            things: ['house keys', 'glove', 'scarf', 'sunglasses', 'wallet'], icon: '🔑' },
+    dog:  { ask: ['{ndog} slipped the leash and ran off! Could {dog} track them down?', 'Have you seen {ndog}? They ran after something. Please help!'],
+            things: [], icon: '🐕' },
+  };
+  const FAVOR_THANKS = ['You’re a star! And {dog} is a hero.', 'Thank you SO much! {dog} deserves a treat.', 'I knew {dog} could do it! Thank you!'];
+  const FAVOR = { chance: 0.35, coins: [25, 50], friend: 12, trail: 9 };
+  // a thank-you from each neighbor, the first time you help them
+  const FAVOR_GIFTS = {
+    Lena: { wall: 'linen' }, Jonas: { floor: 'racing' }, Mia: { wall: 'burrow' }, Paul: { floor: 'driftwood' }, Emma: { wall: 'parisian' },
+    Felix: { floor: 'library' }, Hannah: { wall: 'herbarium' }, Leon: { floor: 'disco' }, Sophie: { wall: 'cloud' }, Noah: { floor: 'kitchen' },
+    Clara: { wall: 'harbor' }, Ben: { floor: 'slate' }, Lea: { wall: 'cookie' }, Tim: { floor: 'checkboard' }, Marie: { wall: 'rainy' }, Elias: { floor: 'moss' },
+  };
+
+  // ===================================================================
+  // The PixelPups Gazette: once a game week (on Monday) in your mailbox
+  // ===================================================================
+  const GAZETTE = {
+    names: ['Pawsome Weekly', 'The Sniff Report', 'The PixelPups Gazette'],
+    gossip: ['{owner} has been seen buying a suspicious amount of tennis balls.', 'Word is {ndog} learned to open the fridge. {owner} denies everything.',
+      '{owner} and {ndog} were spotted jogging at dawn. Every. Single. Day.', 'Rumor has it {ndog} is training for the Champion class.',
+      '{owner} says the café puppuccino has “changed {ndog}’s life”.', 'Somebody built a sandcastle shaped like a bone at the beach. Suspects: {owner}.',
+      '{owner} is painting the fence again. {ndog} is supervising.', '{ndog} has a new best friend: a pigeon named Gustav.'],
+    ads: ['🛒 The shop has new {cat} in stock!', '☕ Café Pfote: two puppuccinos for the price of… two!', '🏁 Agility club: try the weave poles!', '🍦 Beach kiosk: ice cream for dogs, now in pumpkin.',
+      '🎣 Pier fishing: the {fish} are biting this week!', '🏛️ Museum: new exhibitions every week, thanks to you!'],
+  };
+
+  // ===================================================================
+  // Dogs at home: rivals (they scuffle) and making up. Friendship lives in FRIEND_LEVEL / state.friends.
+  // ===================================================================
+  const RIVAL = { scuffle: 14, play: 6, level: 40, makeUp: 3 };
+  const RIVAL_LINES = {
+    tug: ['{a} and {b} are fighting over the {toy}!', 'Tug of war! {a} vs. {b}', '{a} won’t let {b} have the {toy}'],
+    share: ['{a} brings the {toy} to {b} 💕', '{a} shares the {toy} with {b}'],
+    avoid: ['{a} won’t nap next to {b}', '{a} picks the bed far away from {b}'],
+  };
+
   return {
     CONFIG, NEEDS, STATS, TRAITS, BREEDS, LEGACY_COATS, ITEMS, CATS, TOYS, WALLS, FLOORS, DEFAULT_ROOM, WEATHER, WEATHER_ODDS, DAYLIGHT, DOG_NAMES,
     TRICKS, SECRET_TRICKS, TRICK_XP, TRICK_LEVELS, TRICK_SUCCESS, TRICK_SNAP, TRICK_FOCUS, COMPAT, FRIEND_LEVEL, NEIGHBORS, GIFTS, GIFT_CHANCE, GIFT_FRIEND_BONUS, RECALL,
@@ -1869,5 +2094,7 @@ window.VP_DATA = (function () {
     STAR_LINES, STAR_AGAIN, MUSIC_REACT, MUSIC_STYLE, HOWL_BREEDS, SING_SONGS, LEAD, LEAD_SAY,
     SEEDS, STAGE_NAMES, GARDEN, OBSTACLES, COURSES, CLASSES, TOURNEY, AGILITY_LINES, DUCK_PLACES, DUCK_REACT, DUCK_HANDFULS,
     LETTER_KINDS, LETTER_REPLIES, BOTTLE, MAP_NOTES, SIT, SIT_ASK, SIT_QUIRKS, SIT_THANKS, PAINT_COLS,
+    HOME_BUILD, BAKES, BAKE, MARKET, MARKET_GOODS, MARKET_LINES, MUSEUM, MUSEUM_HALLS, MUSEUM_REWARDS, FISH, FISHING, CATCH, CATCHING, SNOW, DISC, DISC_LINES,
+    FAVOR_KINDS, FAVOR_THANKS, FAVOR, FAVOR_GIFTS, GAZETTE, RIVAL, RIVAL_LINES,
   };
 })();
