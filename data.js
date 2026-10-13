@@ -155,6 +155,7 @@ window.VP_DATA = (function () {
     rug:       { name: 'Rug',            icon: '🧶', price: 15, cat: 'living', solid: false },
     fireplace: { name: 'Fireplace',      icon: '🔥', price: 90, cat: 'living', solid: true, lounge: true },
     piano:     { name: 'Piano',          icon: '🎹', price: 85, cat: 'living', solid: true },
+    guitar:    { name: 'Acoustic guitar', icon: '🎸', price: 55, cat: 'living', solid: true },
     // Kitchen
     table:     { name: 'Table',          icon: '🍽️', price: 30, cat: 'kitchen', solid: true },
     chair:     { name: 'Chair',          icon: '🪑', price: 15, cat: 'kitchen', solid: true },
@@ -180,6 +181,7 @@ window.VP_DATA = (function () {
     birdbath:  { name: 'Bird bath',      icon: '🐦', price: 35, cat: 'garden', solid: true, garden: true, comfort: 3 },
     gardentree:{ name: 'Apple tree',     icon: '🍎', price: 45, cat: 'garden', solid: true, garden: true, comfort: 3 },
     gardenpond:{ name: 'Garden pond',    icon: '🪷', price: 70, cat: 'garden', solid: true, garden: true, comfort: 4 },
+    gardenbench:{ name: 'Garden bench',  icon: '🪑', price: 30, cat: 'garden', solid: true, garden: true, comfort: 1 },
     gardenlamp:{ name: 'Garden lantern', icon: '🏮', price: 40, cat: 'garden', solid: true, garden: true },
     digpit:    { name: 'Sand pit',       icon: '🏖️', price: 45, cat: 'garden', solid: false, garden: true, digSpot: true },
     // Luxury: expensive, only in the shop, never found
@@ -194,7 +196,7 @@ window.VP_DATA = (function () {
     cloudbed:  { name: 'Cloud bed',      icon: '☁️', price: null, cat: 'rare', solid: false, role: 'bed', sleepY: 0.14, regen: 2, comfort: 10, rare: true },
   };
   // What tapping a piece of furniture does
-  const USES = { tv: 'tv', toybox: 'toybox', fireplace: 'fire', stove: 'cook', piano: 'piano', lamp: 'lamp', bathtub: 'bath', giftbox: 'gift', jukebox: 'music' };
+  const USES = { tv: 'tv', toybox: 'toybox', fireplace: 'fire', stove: 'cook', piano: 'piano', guitar: 'piano', lamp: 'lamp', bathtub: 'bath', giftbox: 'gift', jukebox: 'music' };
   for (const [k, u] of Object.entries(USES)) ITEMS[k].use = u;
   // Things that light up your home at night. r = how far the light reaches (tiles), y = height of the glow,
   // on = 'toggle' when it can be switched (lamps and fires start on, TVs and music start off)
@@ -540,6 +542,7 @@ window.VP_DATA = (function () {
     bow:      { name: 'Bow',        icon: '🙇', seq: 'dH',  dur: 1.6, needs: ['down'] },
     roll:     { name: 'Roll over',  icon: '🌀', seq: 'rl',  dur: 1.8, needs: ['down'] },
     dead:     { name: 'Play dead',  icon: '😵', seq: 'uH',  dur: 2.4, needs: ['roll'] },
+    sing:     { name: 'Sing along', icon: '🎤', seq: 'Ou',  dur: 2.4, music: true },
   };
   // Five secret tricks, lightly scrambled so they can't be read at a glance. No peeking!
   const SECRET_TRICKS = 'XX0iLnRhZWIgeWRhZXRzIGEgcGVlSyI6InRuaWgiLGV1cnQ6Im1odHlociIsfTI6ImthZXBzIns6InFlciIsNi4yOiJydWQiLCJUVFRUIjoicWVzIiwiNmJmZHVcYzM4ZHVcIjoibm9jaSIsImVjbmFEIjoiZW1hbiIsImVjbmFkIjoiZGkieyx9Ii50dW8gc2kgbm9vbSBlaHQgbmVodyB5bG5PIjoidG5paCIsZXVydDoidGhnaW4iLH0xOiJrYWVwcyJ7OiJxZXIiLDQuMjoicnVkIiwiSE8iOiJxZXMiLCI1MWZkdVxjMzhkdVwiOiJub2NpIiwibm9vbSBlaHQgdGEgbHdvSCI6ImVtYW4iLCJsd29oIjoiZGkieyx9IiF0aSBkbG9oIGRuYSAscHUgLHBVIjoidG5paCIsfTM6InBtdWoiezoicWVyIiwyLjI6InJ1ZCIsIkh1dSI6InFlcyIsIjgzZGR1XGUzOGR1XCI6Im5vY2kiLCJkbmF0c2RuYUgiOiJlbWFuIiwiZG5hdHNkbmFoIjoiZGkieyx9Ii5rY2FiIGVkaWxzIG5laHQgLi4ubGxpdHMgZGxvSCI6InRuaWgiLH0zOiJuaXBzIns6InFlciIsNC4yOiJydWQiLCJkSCI6InFlcyIsImE3ZGR1XGQzOGR1XCI6Im5vY2kiLCJrbGF3bm9vTSI6ImVtYW4iLCJrbGF3bm9vbSI6ImRpInssfSIuLi5uaWFnYSBuaXBzIGRuYSBuaXBzICxuaXBTIjoidG5paCIsfTI6Im5pcHMiezoicWVyIiwyLjI6InJ1ZCIsIk9PTyI6InFlcyIsIjAwZmR1XGMzOGR1XCI6Im5vY2kiLCJsaWF0IHJ1b3kgZXNhaEMiOiJlbWFuIiwiZXNhaGMiOiJkaSJ7Ww==';
@@ -852,6 +855,12 @@ window.VP_DATA = (function () {
     { id: 'floattoy', text: 'Catch {n} floating toys',            ev: 'floattoy', n: 3, reward: 20, needs: 'loc:fairy' },
     { id: 'moonfetch',text: 'Play fetch on the moon {n} times',   ev: 'fetch:moon', n: 4, reward: 20, needs: 'loc:moon' },
     { id: 'crater',   text: 'Dig in {n} moon craters',            ev: 'crater', n: 3, reward: 20, needs: 'loc:moon' },
+    { id: 'seek',     text: 'Play hide and seek {n} times',       ev: 'seek', n: 2, reward: 20, needs: 'feat:hideseek' },
+    { id: 'brush',    text: 'Brush a dog',                        ev: 'brush', n: 1, reward: 15, needs: 'feat:brush' },
+    { id: 'skip',     text: 'Skip {n} stones',                    ev: 'skip', n: [3, 5], reward: 15, needs: 'feat:stones' },
+    { id: 'music',    text: 'Play a song for your dogs',          ev: 'music', n: 1, reward: 15, needs: 'music' },
+    { id: 'sitdown',  text: 'Sit down with your dogs {n} times',  ev: 'sit', n: 2, reward: 10 },
+    { id: 'lead',     text: 'Let a dog lead a walk',              ev: 'lead', n: 1, reward: 20, needs: 'feat:lead' },
   ];
   const CHALLENGE_BONUS = { coins: 30, rareChance: 0.15 };  // for finishing all three in a day
 
@@ -876,6 +885,9 @@ window.VP_DATA = (function () {
     { id: 'tickets',  name: 'Ticket tycoon',   icon: '🎟️', text: 'Win 100 carnival tickets', stat: 'ticketsWon', n: 100 },
     { id: 'puzzles',  name: 'Statue whisperer',icon: '🗿', text: 'Solve the fairy puzzle 3 times', stat: 'puzzles', n: 3 },
     { id: 'sleds',    name: 'Snow speedster',  icon: '🛷', text: 'Go sledding 10 times', stat: 'sleds', n: 10 },
+    { id: 'skip7',    name: 'Stone skipper',   icon: '🪨', text: 'Skip a stone 7 times', stat: 'skipBest', n: 7 },
+    { id: 'seek10',   name: 'Master hider',    icon: '🙈', text: 'Play 10 rounds of hide and seek', stat: 'seeks', n: 10 },
+    { id: 'stars',    name: 'Star namer',      icon: '⭐', text: 'Name a star after a dog', stat: 'starsNamed', n: 1 },
   ];
 
   // ===================================================================
@@ -1018,6 +1030,12 @@ window.VP_DATA = (function () {
     gardens:  { rank: 10, name: 'Gardens', text: 'Turn rooms into gardens' },
     calendar: { rank: 3, name: 'Seasonal events', say: 'the calendar', text: 'Events through the year, in a calendar next to the weather' },
     meetups:  { rank: 5, name: 'Meetups', text: 'Neighbors invite you to meet them somewhere' },
+    hideseek: { rank: 2, name: 'Hide and seek', text: 'Hide from your dogs, or let one of them hide' },
+    piles:    { rank: 3, name: 'Leaf and snow piles', text: 'Rake leaves or snow into a pile for your dogs to jump in' },
+    brush:    { rank: 4, name: 'Brushing', text: 'Brush your dogs for a fluffy coat' },
+    stones:   { rank: 4, name: 'Skipping stones', text: 'Skip stones on the water. How many bounces can you get?' },
+    stars:    { rank: 5, name: 'Stargazing', text: 'Lie down on a clear night and look for your dogs in the stars' },
+    lead:     { rank: 6, name: 'Let your dog lead', text: 'Your dog decides where the walk goes' },
     luxury:   { rank: 12, name: 'Luxury furniture', text: 'The fanciest pieces in the shop' },
   };
   // XP and place-mastery points for things you do. cap = how often it counts per game day.
@@ -1028,6 +1046,8 @@ window.VP_DATA = (function () {
     crab: { xp: 3, m: 3, cap: 10 }, summit: { xp: 30, m: 25 }, crystal: { xp: 6, m: 5, cap: 20 }, echo: { xp: 3, m: 2, cap: 15 },
     sled: { xp: 6, m: 6, cap: 15 }, ferris: { xp: 5, m: 4, cap: 6 }, tickets: { xp: 1, m: 1, cap: 60 }, statue: { xp: 4, m: 3, cap: 20 },
     floattoy: { xp: 5, m: 4, cap: 20 }, crater: { xp: 4, m: 4, cap: 20 }, cow: { xp: 3, m: 3, cap: 10 }, squirrel: { xp: 3, m: 3, cap: 10 },
+    sit: { xp: 2, cap: 6 }, seek: { xp: 8, m: 3, cap: 8 }, brush: { xp: 6, cap: 6 }, pile: { xp: 6, m: 3, cap: 8 }, skip: { xp: 3, m: 2, cap: 15 },
+    stars: { xp: 12, m: 5, cap: 4 }, music: { xp: 4, cap: 8 }, lead: { xp: 10, m: 8, cap: 6 },
   };
   const XP_MISC = { secret: 60, chat: 3, newFind: 25, dupFind: 3, challenge: 40, allChallenges: 60, firstVisit: 40, adopt: 50, room: 60, trickLevel: 10, event: 30 };
   const MASTERY_STARS = [0, 30, 100, 220, 400, 650];   // points for 0..5 stars
@@ -1592,6 +1612,92 @@ window.VP_DATA = (function () {
     gardenpond: ['looks for frogs', '🐸'], digpit: ['digs straight in', '⛏️'], flowerbed: ['smells every flower', '🌷'],
   };
 
+  // ===================================================================
+  // Pastimes: sitting down, hide and seek, brushing, leaf piles, skipping stones,
+  // stargazing, music, and letting a dog lead the walk
+  // ===================================================================
+  // furniture you can sit on at home. y = how high you sit, two = room for a dog beside you, floor = you sit on the floor
+  const SEATS = {
+    sofa: { y: 0.42, two: true }, armchair: { y: 0.41 }, beanbag: { y: 0.36 }, chair: { y: 0.46 }, gardenbench: { y: 0.44, two: true },
+    bed: { y: 0.13, floor: true }, cushion: { y: 0.14, floor: true }, heatedbed: { y: 0.15, floor: true }, cloudbed: { y: 0.2, floor: true },
+    rug: { y: 0.02, floor: true }, rainbowrug: { y: 0.02, floor: true },
+  };
+  // what each personality does when you sit down ({dog}, {seat})
+  const SIT_REACT = {
+    couch:    { how: 'beside', tx: ['{dog} hops up next to you and sighs happily', '{dog} climbs up beside you and gets comfy'] },
+    social:   { how: 'beside', tx: ['{dog} squeezes in right beside you', '{dog} snuggles up close'] },
+    shy:      { how: 'feet',   tx: ['{dog} curls up by your feet', '{dog} lies down quietly at your feet'] },
+    pampered: { how: 'knee',   tx: ['{dog} rests its head on your knee', '{dog} leans its head on your knee and closes its eyes'] },
+    foodie:   { how: 'stare',  tx: ['{dog} sits in front of you and stares, just in case there’s a snack', '{dog} sits very nicely in front of you. Snack?'] },
+    zoomies:  { how: 'lap',    tx: ['{dog} races a lap around you, then flops down at your feet', '{dog} does one wild lap and collapses next to you'] },
+    brainiac: { how: 'toy',    tx: ['{dog} brings you a toy and waits', '{dog} drops a toy in your lap'] },
+    digger:   { how: 'nest',   tx: ['{dog} scratches a little nest beside you and lies down', '{dog} digs at the ground a bit, then settles down'] },
+    water:    { how: 'lean',   tx: ['{dog} leans against your legs', '{dog} sits down with its back against your legs'] },
+  };
+  const STEAL_LINES = ['{dog} steals your spot the second you stand up 😎', '{dog} jumps into the warm spot you just left', 'Your seat? {dog} thinks it’s theirs now'];
+  // a neighbor sits down next to you on a bench ({ndog} = their dog)
+  const BENCH_LINES = [
+    'Mind if I sit? {ndog} needs a little break.', 'Lovely spot, this. {ndog} always pulls me here.', 'Ahh, my feet. Nice to sit for a minute.',
+    'I come here most days. {ndog} likes to watch the world go by.', 'Room for one more? Thanks!', 'Best bench in the whole place, if you ask me.',
+    '{ndog} and I sit here every evening. Nice to have company.', 'Your {dog} looks so relaxed. {ndog} could learn a thing or two.',
+  ];
+  // hide and seek: how each personality looks for you, and how it hides
+  const SEEK = {
+    digger:   { speed: 2.6, steps: 3, nose: true,  say: '{dog} follows its nose straight to you' },
+    foodie:   { speed: 2.4, steps: 3, nose: true,  say: '{dog} sniffed you out' },
+    water:    { speed: 2.4, steps: 4, say: '{dog} found you' },
+    brainiac: { speed: 2.6, steps: 3, pretend: true, say: '{dog} walked right past you… then pounced!' },
+    social:   { speed: 2.4, steps: 4, pretend: true, say: '{dog} pretended not to see you, then jumped on you' },
+    zoomies:  { speed: 4.4, steps: 7, say: '{dog} zoomed around everywhere and crashed into you' },
+    couch:    { speed: 1.4, steps: 5, nap: true, say: '{dog} found you, eventually' },
+    shy:      { speed: 1.8, steps: 5, say: '{dog} found you and looks very relieved' },
+    pampered: { speed: 1.8, steps: 5, say: '{dog} found you, without getting its paws dirty' },
+  };
+  const HIDE_GIGGLE = ['A tail is wagging somewhere…', 'You hear a little snort…', 'Something rustles nearby…', 'Was that a sneeze?'];
+  const HIDE_FOUND = ['There you are, {dog}!', 'Found you, {dog}!', 'Got you, {dog}!'];
+  // brushing
+  const BRUSH_REACT = {
+    pampered: '{dog} melts. This is the best day ever.', couch: '{dog} nearly falls asleep while you brush.', shy: '{dog} leans into the brush.',
+    zoomies: '{dog} can’t keep still, but it loves it.', digger: 'So much dirt came out of {dog}’s coat!', social: '{dog} wants everyone to see its shiny coat.',
+    foodie: '{dog} keeps checking the brush for treats.', brainiac: '{dog} watches the brush very closely.', water: '{dog} would rather be in a puddle, but okay.',
+  };
+  const BRUSH_MIN = 90;   // real minutes a brushed dog stays extra fluffy
+  // leaf and snow piles
+  const PILE = { patches: 12, reach: 1.15, findAt: 6, findChance: 0.35, coins: [3, 12] };
+  const PILE_LINES = {
+    leaves: ['{dog} launches into the leaves!', '{dog} dives in head first 🍂', '{dog} disappears into the pile, then pops out again'],
+    snow: ['{dog} jumps into the snow and vanishes ❄️', '{dog} dives in and comes out all white', '{dog} rolls around in the snow pile'],
+    skip: ['{dog} sniffs the pile and walks off', '{dog} watches from a safe distance'],
+  };
+  // skipping stones: the needle swings, and the sweet spot is in the middle
+  const SKIP = { swing: 1.5, sweet: 0.12, max: 9 };
+  const SKIP_LINES = ['{n} skips!', 'Plip, plip, plop: {n} skips', 'Wow, {n} skips!', 'Only {n}. Try a flatter throw'];
+  // stargazing: dogs' shapes in the sky
+  const STAR_LINES = ['It looks just like {dog}!', 'Look, it’s {dog}, up in the sky!', 'Those stars make the shape of {dog}!'];
+  const STAR_AGAIN = ['There’s {dog}’s constellation again', '{dog}’s stars are out tonight'];
+  // music: how each dog reacts to a tune
+  const MUSIC_REACT = {
+    howl:  { tx: '{dog} howls along', ic: '🎵' },
+    knee:  { tx: '{dog} puts its head on your knee', ic: '🥰' },
+    hide:  { tx: '{dog} hides under the bed', ic: '🙈' },
+    dance: { tx: '{dog} bounces around to the beat', ic: '🎶' },
+    tilt:  { tx: '{dog} tilts its head, listening', ic: '❓' },
+  };
+  const MUSIC_STYLE = { social: 'howl', zoomies: 'dance', digger: 'howl', water: 'howl', pampered: 'knee', couch: 'knee', foodie: 'knee', shy: 'hide', brainiac: 'tilt' };
+  const HOWL_BREEDS = ['husky', 'beagle'];
+  const SING_SONGS = 3;   // songs a dog howls along to before it learns Sing along
+  // a dog leads the walk: where each personality likes to go
+  const LEAD = {
+    brainiac: ['hidden', 'unexplored', 'sniff'], digger: ['sniff', 'hidden', 'dig'], water: ['water', 'hidden', 'sniff'],
+    couch: ['bench', 'bench', 'sniff'], foodie: ['vendor', 'sniff', 'bench'], social: ['friend', 'friend', 'sniff'],
+    zoomies: ['far', 'far', 'hidden'], shy: ['bench', 'sniff', 'water'], pampered: ['bench', 'vendor', 'sniff'],
+  };
+  const LEAD_SAY = {
+    hidden: '{dog} has found a way somewhere new!', unexplored: '{dog} wants to see what’s over there', sniff: '{dog} smells something interesting',
+    dig: '{dog} has a spot to dig in mind', water: '{dog} is heading for the water', bench: '{dog} wants to sit down on that bench',
+    vendor: '{dog} smells food…', friend: '{dog} spotted a friend', far: '{dog} is off! Keep up!', hunt: '{dog} is on the trail of something',
+  };
+
   return {
     CONFIG, NEEDS, STATS, TRAITS, BREEDS, LEGACY_COATS, ITEMS, CATS, TOYS, WALLS, FLOORS, DEFAULT_ROOM, WEATHER, WEATHER_ODDS, DAYLIGHT, DOG_NAMES,
     TRICKS, SECRET_TRICKS, TRICK_XP, TRICK_LEVELS, TRICK_SUCCESS, TRICK_SNAP, TRICK_FOCUS, COMPAT, FRIEND_LEVEL, NEIGHBORS, GIFTS, GIFT_CHANCE, GIFT_FRIEND_BONUS, RECALL,
@@ -1604,5 +1710,7 @@ window.VP_DATA = (function () {
     RANK_MAX, rankNeed, RANK_TITLES, RANK_UNLOCKS, XP, XP_MISC, MASTERY_STARS, MASTERY_PERKS,
     GLOW, GADGETS, CHAT, BADGES, BOND, SPECIALTIES, SPEC_LEVELS, SPEC_CHANGE, STORIES, HOUSE_TIERS, SEASONS, MONTHS, SETS, CRITTERS, CRITTER_CHANCE, CRITTER_REWARD,
     CAL, SEASON_NAMES, CAL_EVENTS, MEET_SPOTS, MEET_INVITES, MEET_LINES, AWAY, FURN_REACT,
+    SEATS, SIT_REACT, STEAL_LINES, BENCH_LINES, SEEK, HIDE_GIGGLE, HIDE_FOUND, BRUSH_REACT, BRUSH_MIN, PILE, PILE_LINES, SKIP, SKIP_LINES,
+    STAR_LINES, STAR_AGAIN, MUSIC_REACT, MUSIC_STYLE, HOWL_BREEDS, SING_SONGS, LEAD, LEAD_SAY,
   };
 })();
