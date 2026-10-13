@@ -1683,3 +1683,28 @@ body.keysOn #tips { bottom: calc(var(--pad-b) + 160px); }
 
 .btnCol { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
 .btnCol button { white-space: nowrap; }
+
+/* ----- friends online ----- */
+.netList p { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; font-size: 14px; }
+.netList .i { flex: 0 0 auto; color: #12996a; margin-top: 2px; }
+.sub.warn { color: #c4416f; }
+.codeCard { text-align: center; background: rgba(255, 255, 255, 0.65); border-radius: 18px; padding: 12px; margin-bottom: 10px; }
+.codeCard small { display: block; opacity: 0.75; }
+.codeCard b { display: block; font-size: 34px; letter-spacing: 6px; font-family: "Courier New", ui-monospace, monospace; margin: 4px 0 8px; color: var(--accent-ink, #3b2fb0); }
+.codeCard .btnRow { justify-content: center; }
+.addRow { display: flex; gap: 8px; align-items: center; }
+.addRow .nameField { margin: 0; text-transform: uppercase; letter-spacing: 3px; }
+.friendRow { width: 100%; text-align: left; border: none; font: inherit; color: inherit; }
+.friendRow .i:last-child { opacity: 0.5; }
+.row .ic .th { width: 40px; height: 40px; }
+.friendHead { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.friendHead .ic .th { width: 56px; height: 56px; }
+.friendHead b { display: block; font-size: 20px; }
+.friendHead small { opacity: 0.8; }
+.acctForm .nameField { margin: 4px 0; }
+#visitReact { display: flex; gap: 4px; }
+#visitReact.hidden { display: none; }
+#visitReact button { font-size: 18px; padding: 4px 8px; }
+.addRow .nameField:placeholder-shown { text-transform: none; letter-spacing: 0; }
+#visitBar { flex-wrap: wrap; }
+#visitReact { order: 3; flex: 1 0 100%; justify-content: center; margin-top: 6px; }
