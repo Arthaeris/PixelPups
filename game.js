@@ -343,6 +343,7 @@
       finds: {},                       // 📒 book finds: id -> how many
       seen: { toys: [], coats: [], rares: [] },
       learned: [],                     // tricks any dog has learned
+      seeds: {}, beds: [], bouquets: 0, paintings: [], playerName: '',   // the garden, paintings and your name
       daily: null,                     // today's challenges
       tickets: 0,                      // carnival tickets
       portal: false,                   // fairy portal opened
@@ -624,8 +625,10 @@
       furnRT.set(f, { group: g, claim: null });
       furnMap.set(f.i + ',' + f.j, f);
       if (g.userData.content) g.userData.content.visible = !!f.filled;
+      if (f.type === 'painting') applyPaintingTex(g, f.pid);
     }
     rebuildHomeLights();
+    if (!visit) mailFlags();
   }
   // =====================================================================
   // Light at night: lamps light up the floor around them, and on walks a flashlight or headlamp lights the way
@@ -2168,6 +2171,7 @@
         const spot = frontOf(tb);
         if (spot) { this.goTo(spot, 2, () => pullToyOut(this, tb), 0.45); return; }
       }
+      if (!visit && gardenDogIdea(this)) return;
       if (this.flag('digs') && !visit && Object.keys(state.gardens).length && Math.random() < 0.12) {
         const t = randomGardenPoint();
         if (t) { this.goTo(t, 2, () => this.setState('dig', 2), 0.3); return; }
@@ -2906,9 +2910,10 @@
         }
       }
     } else if (mode === 'normal') {
-      for (let i = 0; i < dogs.length; i++) {
-        for (let j = i + 1; j < dogs.length; j++) {
-          const a = dogs[i], b = dogs[j];
+      const pack = sitDog ? dogs.concat(sitDog) : dogs;
+      for (let i = 0; i < pack.length; i++) {
+        for (let j = i + 1; j < pack.length; j++) {
+          const a = pack[i], b = pack[j];
           if (!FREE_FOR_MEETING.includes(a.state) || !FREE_FOR_MEETING.includes(b.state) || !ready(a, b)) continue;
           if (a.root.position.distanceTo(b.root.position) < 3 && Math.random() < 0.08) { startEncounter(a, b); return; }
         }
@@ -4430,6 +4435,8 @@
     const it = D.ITEMS[f.type];
     const at = tileCenter(f).add(new V3(0, 1.2, 0));
     if (!it.use && D.SEATS[f.type]) { sitDown(homeSeat(f)); return; }
+    if (it.use === 'paint') { startPainting(f); return; }
+    if (it.use === 'mail') { openMail(); return; }
     if (it.use === 'piano') { startMusic(f); return; }
     const toggle = (label, onMsg, offMsg) => {
       f.on = !(f.on ?? label);
@@ -5475,8 +5482,8 @@
         text: `${d.name} was born on this day.`, task: { kind: 'progress', ev: 'pet', n: 3, how: `Give ${d.name} 3 birthday cuddles` }, reward: { coins: 40, xp: 40 } };
     });
   }
-  const calEvents = () => D.CAL_EVENTS.filter((e) => !e.need || locUnlocked(e.need)).concat(birthdayEvents());
-  const evKnown = (e) => !!e.bday || calState().seen.includes(e.id);
+  const calEvents = () => D.CAL_EVENTS.filter((e) => !e.need || locUnlocked(e.need)).concat(birthdayEvents(), tourneyEvents());
+  const evKnown = (e) => !!e.bday || !!e.tourney || calState().seen.includes(e.id);
   const evRange = (e, y) => [gdOf(y, e.m, e.d0), gdOf(y, e.m, e.d1) + 1];
   function evActive(e) { const [a, b] = evRange(e, clockNow.year); return clockNow.gameDay >= a && clockNow.gameDay < b; }
   const evDone = (e) => calState().done[e.id] === clockNow.year;
@@ -5930,7 +5937,7 @@
       const head = `${D.MONTHS[c.month]}, year ${c.year}`;
       const h = head !== lastMonth ? `<div class="jMonth">${head}</div>` : '';
       lastMonth = head;
-      return `${h}<div class="jEntry">${TH('pic', e.ic || '🐾')}<div><small>${D.MONTHS[c.month]} ${c.day}</small><span>${esc(plain(e.tx))}</span>${e.ph ? `<img class="jPhoto" src="${e.ph}" alt="">` : ''}</div></div>`;
+      return `${h}<div class="jEntry">${TH('pic', e.ic || '🐾')}<div><small>${D.MONTHS[c.month]} ${c.day}</small><span>${esc(plain(personal(e.tx)))}</span>${e.ph ? `<img class="jPhoto" src="${e.ph}" alt="">` : ''}</div></div>`;
     }).join('');
     $('jBody').innerHTML =
       `<div class="jCover"><img class="portrait" src="${ART.portraitURL(d.breed, d.coat)}" alt=""><div><h3>${esc(d.name)}</h3>` +
@@ -5993,6 +6000,7 @@
     const lines = awayLines();
     const h = awayHours;
     $('awaySub').textContent = h >= 48 ? `You were away for ${Math.round(h / 24)} days.` : h >= 1.5 ? `You were away for ${Math.round(h)} hours.` : 'You were away for a little while.';
+    $('awayTitle').textContent = youName() ? `While you were away, ${youName()}` : 'While you were away';
     $('awayList').innerHTML = lines.map((l) => `<div class="awayRow"><img class="portrait" src="${ART.portraitURL(l.d.breed, l.d.coat)}" alt="">${l.d2 ? `<img class="portrait two" src="${ART.portraitURL(l.d2.breed, l.d2.coat)}" alt="">` : ''}<span>${esc(l.tx)}</span></div>`).join('');
     $('away').classList.remove('hidden');
     // the nicest line goes into the journal too
@@ -6053,6 +6061,13 @@
     if (next) { const open = reqsOf(next).filter((U) => { const [a, b] = reqProgress(U); return a < b; }); if (open.length) add(IC('lock'), `Next place: ${plain(reqText(open[0]))}.`, 'map', 'Map'); }
     for (const id of Object.keys(D.LOCATIONS)) { const t = hiddenTotal(id), f = hiddenOf(id).length; if (locUnlocked(id) && t && f < t && (state.locWalks || {})[id]) { add(IC('search'), `${t - f} hidden spot${t - f > 1 ? 's' : ''} still to find in ${D.LOCATIONS[id].name}.`, 'walk:' + id, 'Go'); break; } }
     if (inboxUnread()) add(IC('sparkle'), `${inboxUnread()} new thing${inboxUnread() > 1 ? 's' : ''} in What’s new.`, 'inbox', 'Read');
+    // hobbies
+    if (unreadMail()) add(IC('chat'), `${unreadMail()} letter${unreadMail() > 1 ? 's' : ''} in your mailbox.`, '', '');
+    if (state.tmap) add(TH('pic', '🗺️'), `You have a treasure map for ${D.LOCATIONS[state.tmap.loc].name}.`, 'tmap', 'Map');
+    if (state.sitting && !state.sitting.pending) { const N = D.NEIGHBORS.find((x) => x.owner === state.sitting.owner); if (N) add(TH('dog', `${N.dog.breed}|${N.dog.coat}`), state.sitting.ready ? `${state.sitting.owner} is at your door to pick up ${N.dog.name}.` : `${N.dog.name} is staying with you. A walk and some cuddles make for a happy dog.`, state.sitting.ready ? 'home' : '', state.sitting.ready ? 'Go home' : ''); }
+    const ripe = (state.beds || []).filter((b) => b.seed && b.stage >= 4 && !D.SEEDS[b.seed].flower).length;
+    if (ripe) add(IC('sprout'), `${ripe} bed${ripe > 1 ? 's are' : ' is'} ready to pick in your garden.`, home ? '' : 'home', home ? '' : 'Go home');
+    if (locUnlocked('grounds') && tourneyToday() && agi().entered !== clockNow.gameDay) add(TH('pic', '🏆'), `It’s tournament day at the Tournament Grounds (${D.CLASSES[agi().cls]}).`, 'walk:grounds', 'Go');
     // pastimes that fit right now
     const kind = pileKind();
     if (kind && unlockedFeat('piles') && out.length < 5) add(IC('rake'), kind === 'snow' ? 'It’s snowy: shovel a snow pile for your dogs to jump in.' : 'Leaves are falling: rake a pile for your dogs to jump in.', home ? '' : '', '');
@@ -6082,6 +6097,7 @@
     else if (go.startsWith('bath:')) { const d = dogs.find((x) => x.id === go.slice(5)); if (place !== 'home') toast('Baths happen at home 🛁'); else if (d) openBath(d); }
     else if (go.startsWith('walk:')) { if (place === 'park' && loc === go.slice(5)) toast('You are already here!'); else openMap(); }
     else if (go.startsWith('play:')) { const d = dogs.find((x) => x.id === go.slice(5)); if (d) openPlay(d); }
+    else if (go === 'tmap') openTreasureMap();
   });
 
   // =====================================================================
@@ -6150,6 +6166,7 @@
     carnival: 'There’s a boardwalk in the east now, with the big top on it. And the north-west corner is quieter than it looks.',
     fairy: 'A soft green hill has appeared in the north. Fairies love hills.',
     moon: 'The base has grown: a huge crater to the east and a mesa to the west. Low gravity makes the climbing easy.',
+    grounds: 'Three agility rings, the stands in the east and the judges’ tent in the far corner.',
   };
   function goWalk(id = 'park') {
     if (!dogs.length) return;
@@ -6192,6 +6209,10 @@
     startQuirks();
     if (unlockedFeat('calendar')) { startHunts(); startCalDecor(); }
     spawnPatches();
+    spawnDucks();
+    spawnBottle();
+    walkStartT = Date.now();
+    if (sitDog) { sitDog.reset && sitDog.releaseClaim(); sitDog.root.position.set(0.9, groundAt(0.9, 17.3), 17.3); sitDog.root.rotation.y = sitDog.face = Math.PI; sitDog.setState('follow'); if (state.sitting) state.sitting.walks = (state.sitting.walks || 0) + 1; }
     placeMeetup();
     refreshLeashBtn();
     refreshUI();
@@ -6208,6 +6229,7 @@
       carnival: 'Moonlight Carnival! 🎡 Do the trick a booth asks for to win 🎟️ tickets',
       fairy: 'The Fairy Realm… ✨ The animals here can talk!',
       moon: 'Moon Base! 🌕 Everything is bouncy up here — try a throw',
+      grounds: 'The Tournament Grounds! 🏁 Stand on a ring’s red mat to train · tournaments on the 8th and 20th',
     }[loc];
     arriveFade();
     eventOnArrive();
@@ -6221,6 +6243,8 @@
     if (tm) exitTrickMode();
     endFun('leave');
     clearPatches();
+    clearDucks();
+    if (bottle) { bottle.g.parent && bottle.g.parent.remove(bottle.g); bottle = null; }
     clearLostDog();
     const wasAt = loc;
     place = 'home';
@@ -6252,6 +6276,9 @@
     parkWater.taken = null;
     recordWalk(wasAt);
     spawnPatches();
+    if (sitDog) { sitDog.dropSpot(); sitDog.offLeash = false; sitDog.returning = false; sitDog.leash.visible = false; sitDog.root.position.copy(freeNear(CHUNK / 2 + 0.9, CHUNK - 2)); sitDog.idle(rand(1, 3)); }
+    renderBeds();
+    sittingTick();
     // a dog that got wet on the walk shakes off at the door, right next to you
     const wet = dogs.find((d) => d.wetT > 0);
     if (wet) setTimeout(() => { if (place === 'home') shakeOff(wet, 'walk'); }, 1400);
@@ -6493,6 +6520,7 @@
       carnival: `You have ${state.tickets} 🎟️. Stand at a game booth and do the trick on its sign. Trade tickets at the 🎪 Prize booth`,
       fairy: 'Turn the four stone dogs (tap them) until they all face the glowing orb · catch floating toys · say hi to the animals',
       moon: 'Low gravity: throws fly high and far · dig in craters — one ❌ hides a space capsule',
+      grounds: 'Train in the three rings any time · tournaments on the 8th and 20th of each month at the Agility club stall',
     }[loc];
     if (msg) toast(msg);
   }
@@ -6608,7 +6636,8 @@
     $('talkName').textContent = w.info.owner;
     $('talkSub').textContent = `with ${w.info.dog.name}`;
     const meetLine = finishMeetup(w);
-    showTalkLine(meetLine || chatLine(w, true));
+    const hello = youName() && Math.random() < 0.5 ? `${pick(['Hi', 'Hello', 'Oh, hi', 'Hey'])}, ${youName()}! ` : '';
+    showTalkLine(meetLine || hello + chatLine(w, true));
     $('talk').classList.remove('hidden');
     sfx('tip');
     tip('chat', { title: 'Neighbors', text: 'Stop and chat with the neighbors on your walks. They know a thing or two, and sometimes they have something for you.', icon: 'person' });
@@ -6643,7 +6672,8 @@
   }
   // the extra button in the walk bar changes with what's nearby
   const CTX = { talk: ['chat', 'Talk'], stay: ['hand', 'Stay'], echo: ['echo', 'Speak'], sled: ['sled', 'Sled'], ferris: ['ferris', 'Ride'], portal: ['portal', 'Portal'], rocket: ['rocket', 'Rocket'],
-    sit: ['seat', 'Sit'], skip: ['stone', 'Skip'], stars: ['star', 'Stars'], rake: ['rake', 'Rake'], shovel: ['rake', 'Shovel'] };
+    sit: ['seat', 'Sit'], skip: ['stone', 'Skip'], stars: ['star', 'Stars'], rake: ['rake', 'Rake'], shovel: ['rake', 'Shovel'],
+    pickup: ['person', 'Hand over'], bed: ['sprout', 'Dig a bed'], treasure: ['map', 'Dig here'], bottle: ['search', 'Bottle'], run: ['flag', 'Run'], enter: ['flag', 'Enter'], ducks: ['wave', 'Feed ducks'] };
   let ctxKind = null;
   function setCtx(k) {
     if (k === ctxKind) return;
@@ -6668,7 +6698,7 @@
       case 'skip': startSkip(); break;
       case 'stars': startGaze(); break;
       case 'rake': case 'shovel': startRake(); break;
-      default: break;
+      default: hobbyAction(ctxKind); break;
     }
   }
   const flatDist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -7547,6 +7577,9 @@
     if (need === 'offleash' && !unlockedFeat('offleash')) return null;
     if (need.startsWith('feat:') && !unlockedFeat(need.slice(5))) return null;
     if (need === 'music' && !hasItem('piano') && !hasItem('guitar')) return null;
+    if (need === 'beds' && !(state.beds || []).some((b) => b.seed)) return null;
+    if (need === 'agilityok' && !(unlockedFeat('agility') && (locUnlocked('grounds') || state.furniture.filter((f) => D.ITEMS[f.type].agility).length >= 3))) return null;
+    if (need === 'mailbox' && !(unlockedFeat('letters') && hasItem('mailbox'))) return null;
     if (need === 'trick' && !unlockedFeat('tricks')) return null;
     if (need === 'stove' && !unlockedFeat('kitchen')) return null;
     if (need === 'bathtub' && !unlockedFeat('bath')) return null;
@@ -7833,7 +7866,7 @@
   // the joystick stays out of the way: faint from the start, nearly gone after a moment of steady walking
   let joyAng = null, joyFadeT = null;
   const joyWake = () => { joyBase.classList.remove('fade'); clearTimeout(joyFadeT); joyFadeT = setTimeout(() => joyBase.classList.add('fade'), 1100); };
-  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet'];
+  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet', 'bedSheet', 'courseSheet', 'tourney', 'paint', 'mail', 'tmapSheet', 'nameAsk'];
   // sheets: a soft sound when they open and close; tips step aside while one is open
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
@@ -7933,7 +7966,7 @@
     if (funTap()) return;
 
     let dog = null;
-    const hits = raycaster.intersectObjects(dogs.map((d) => d.root), true);
+    const hits = raycaster.intersectObjects(dogs.map((d) => d.root).concat(sitDog ? [sitDog.root] : []), true);
     for (const h of hits) {
       let o = h.object;
       while (o && !o.userData.dog) o = o.parent;
@@ -7941,7 +7974,7 @@
     }
     if (!dog && hitGround) {
       let best = 0.85;
-      for (const d of dogs) {
+      for (const d of sitDog ? dogs.concat(sitDog) : dogs) {
         const dd = Math.hypot(d.root.position.x - gp.x, d.root.position.z - gp.z);
         if (dd < best) { best = dd; dog = d; }
       }
@@ -7962,6 +7995,15 @@
       return;
     }
 
+    const bd = tapBed(raycaster, hitGround ? gp : null);
+    if (bd) {
+      const c = new V3(bd.i + 0.5, 0, bd.j + 0.5);
+      if (flatDist(player.root.position, c) < 2.6) openBed(bd);
+      else { player.moveTarget = c.clone(); bedTask = bd; }
+      tapRing.position.set(c.x, 0.06, c.z);
+      tapT = 0.5;
+      return;
+    }
     const thing = tapFurniture(raycaster, hitGround ? gp : null);
     if (thing) {
       if (thing.clutter) startTidy(thing.clutter);
@@ -8002,6 +8044,12 @@
     return null;
   }
   function interactDog(d) {
+    if (d === sitDog) {
+      if (state.sitting) state.sitting.petted = (state.sitting.petted || 0) + 1;
+      if (d.state === 'sleep') d.wake();
+      if (d.root.position.distanceTo(player.root.position) < 1.9 || place === 'park') d.pet(); else d.goTo(() => player.root.position, 3.2, () => d.pet(), 1.1);
+      return;
+    }
     selected = d;
     updatePack();
     if (funTapDog(d)) return;
@@ -8100,11 +8148,14 @@
     if (!selectedInv || !(state.inventory[selectedInv] > 0)) { toast('Pick an item from the bar first'); return; }
     if (D.ITEMS[selectedInv].garden && !isGardenTile(i, j)) { toast(`${D.ITEMS[selectedInv].name} only fits in a garden`); return; }
     if (state.clutter.some((c) => c.i === i && c.j === j)) { toast('Tidy up that spot first'); return; }
+    if (bedAt(i, j)) { toast('There’s a garden bed there'); return; }
+    let pid;
+    if (selectedInv === 'painting') { const P = freePainting(); if (!P) { toast('All your paintings are up already'); return; } pid = P.id; }
     if (D.ITEMS[selectedInv].solid && Math.floor(player.root.position.x) === i && Math.floor(player.root.position.z) === j) {
       toast("You're standing there!");
       return;
     }
-    state.furniture.push({ type: selectedInv, i, j, rot: placeRot, filled: false });
+    state.furniture.push(Object.assign({ type: selectedInv, i, j, rot: placeRot, filled: false }, pid ? { pid } : {}));
     furnNew.push(state.furniture[state.furniture.length - 1]);
     state.inventory[selectedInv]--;
     if (state.inventory[selectedInv] <= 0) selectedInv = firstInv();
@@ -8283,7 +8334,10 @@
       }
       section('stock', V.name);
       for (const [kind, key, p0] of V.stock) {
-        if (kind === 'meal') {
+        if (kind === 'item') {
+          const it = D.ITEMS[key], have = (state.inventory[key] || 0) + state.furniture.filter((f) => f.type === key).length;
+          card(thumbOf.item(key), it.name, have ? `You have ${have}` : 'For your home', p0 || it.price, (pr) => { pay(pr); state.inventory[key] = (state.inventory[key] || 0) + 1; selectedInv = key; toast(`${it.name} added. Place it in Decorate`); done(); }, { feat: it.agility ? 'agility' : null });
+        } else if (kind === 'meal') {
           const R = D.RECIPES[key], have = state.meals.filter((m) => m.id === key).length;
           const price = tix ? R.tickets : R.price;
           card(thumbOf.meal(key), R.name, `${R.desc}${have ? ` · you have ${have}` : ''}`, price, (pr) => { pay(pr); state.meals.push({ id: key, q: 2 }); toast(`${R.name} — give it from a dog's bubble → Treat`); done(); }, { feat: 'kitchen' });
@@ -8334,8 +8388,9 @@
       }
       section('toys', 'Toys');
       for (const [k, G] of Object.entries(D.GADGETS)) {
+        if (G.feat) continue;
         const owned = (state.gadgets || []).includes(k);
-        card(TH('pic', G.icon), G.name, owned ? 'You carry it on walks' : G.desc, G.price, (pr) => { pay(pr); state.gadgets = (state.gadgets || []).concat(k); toast(`${G.name} bought. It switches on by itself on night walks`); done(); }, { owned });
+        card(TH('pic', G.icon), G.name, owned ? 'You carry it on walks' : G.desc, G.price, (pr) => { pay(pr); state.gadgets = (state.gadgets || []).concat(k); toast(`${G.name} bought. ${G.bought}`); done(); }, { owned });
       }
       for (const [k, t] of Object.entries(D.TOYS)) {
         if (t.price == null || k === 'tennis' || t.vendor) continue;
@@ -8374,6 +8429,17 @@
         const owned = state.outfits.includes(id);
         card(wearThumb(id), O.name, owned ? 'In your closet' : SLOT_NAMES[O.slot], O.price, (pr) => { pay(pr); getOutfit(id, false); done(); }, { owned });
       }
+      section('seeds', 'Garden tools & seeds');
+      lockSec('farming');
+      cur.note = gardensUnlocked() ? 'Dig beds in a garden with the hoe, then plant. Water makes plants grow faster and give more.' : 'You need a garden for these: turn a room into a garden first.';
+      for (const [k, G] of Object.entries(D.GADGETS)) {
+        if (G.feat !== 'farming') continue;
+        const owned = (state.gadgets || []).includes(k);
+        card(TH('pic', G.icon), G.name, owned ? 'Yours' : G.desc, G.price, (pr) => { pay(pr); state.gadgets = (state.gadgets || []).concat(k); toast(`${G.name} bought. ${G.bought}`); done(); }, { owned });
+      }
+      for (const [k, Sd] of Object.entries(D.SEEDS)) {
+        card(TH('pic', Sd.icon), Sd.name, `You have ${state.seeds[k] || 0} · ${Sd.flower ? 'flowers that keep blooming' : `grows ${D.INGREDIENTS[Sd.crop].name.toLowerCase()}`} · about ${Math.round(Sd.stage * 4 / 60 * 10) / 10} h`, Sd.price, (pr) => { pay(pr); state.seeds[k] = (state.seeds[k] || 0) + 1; done(); });
+      }
       section('pantry', 'Pantry');
       lockSec('kitchen');
       for (const [id, I] of Object.entries(D.INGREDIENTS)) {
@@ -8383,6 +8449,7 @@
       for (const [cat, title] of D.CATS) {
         section(cat, plain(title));
         if (cat === 'luxury') lockSec('luxury');
+        if (cat === 'agility') lockSec('agility');
         if (cat === 'garden' && !unlockedFeat('gardens')) lockSec('gardens');
         const locked = cat === 'garden' && unlockedFeat('gardens') && !gardensUnlocked();
         if (locked) cur.note = `Unlocks with gardens: a home with ${D.GARDEN_UNLOCK_SECTIONS} rooms.`;
@@ -8391,8 +8458,8 @@
           const owned = (state.inventory[t] || 0) + state.furniture.filter((f) => f.type === t).length;
           const kind = locked ? 'Needs gardens' : it.use === 'bath' ? 'Tap it for bath time' : it.use === 'cook' ? 'Tap it to cook' : it.use === 'gift' ? 'Pack gifts for visitors' : it.auto ? 'Refills itself' : it.role === 'bed' ? (it.regen ? 'Dogs rest extra fast' : 'Dogs nap on it') : it.role === 'food' ? 'Fill it with Bowls' : it.role === 'water' ? 'Fill it with Bowls' : it.use ? 'Tap it to use' : it.lounge ? 'Couch Potatoes love it' : it.garden ? 'For gardens' : it.solid ? 'Decoration' : 'Dogs can walk on it';
           const use = it.use;
-          const feat = use === 'bath' ? 'bath' : use === 'cook' ? 'kitchen' : use === 'gift' ? 'gifts' : null;
-          card(thumbOf.item(t), it.name, owned ? `You have ${owned} · ${kind}` : kind, it.price, (pr) => { pay(pr); state.inventory[t] = (state.inventory[t] || 0) + 1; selectedInv = t; toast(`${it.name} added. Place it in Decorate`); done(); }, { disabled: locked, label: locked ? 'Locked' : null, count: owned, feat, off: wk('item', t) });
+          const feat = use === 'bath' ? 'bath' : use === 'cook' ? 'kitchen' : use === 'gift' ? 'gifts' : use === 'paint' ? 'painting' : use === 'mail' ? 'letters' : it.agility ? 'agility' : null;
+          card(thumbOf.item(t), it.name, owned ? `You have ${owned} · ${it.agility ? 'part of your agility course' : use === 'paint' ? 'paint your dogs' : use === 'mail' ? 'write to neighbors' : kind}` : it.agility ? `Agility obstacle · ${D.OBSTACLES[it.agility].name}` : use === 'paint' ? 'Tap it to paint your dogs' : use === 'mail' ? 'Write to the neighbors' : kind, it.price, (pr) => { pay(pr); state.inventory[t] = (state.inventory[t] || 0) + 1; selectedInv = t; toast(`${it.name} added. Place it in Decorate`); done(); }, { disabled: locked, label: locked ? 'Locked' : null, count: owned, feat, off: wk('item', t) });
         }
       }
     }
@@ -8462,6 +8529,9 @@
 
   function openBag() { renderBag(); $('bag').classList.remove('hidden'); }
   function renderBag() {
+    const seeds = Object.entries(state.seeds || {}).filter(([, n]) => n > 0);
+    $('bagExtra').innerHTML = (state.tmap ? `<button class="row bagMap" data-act="tmap"><div class="ic">${TH('pic', '🗺️')}</div><div class="txt"><b>Treasure map</b><small>${esc(D.LOCATIONS[state.tmap.loc].name)} · tap to look</small></div></button>` : '') +
+      (seeds.length || state.bouquets ? `<p class="sub">${seeds.map(([k, n]) => `${D.SEEDS[k].icon} ${n}`).join(' · ')}${state.bouquets ? `${seeds.length ? ' · ' : ''}💐 ${state.bouquets} bouquet${state.bouquets > 1 ? 's' : ''}` : ''}</p>` : '');
     const G = $('toyGrid');
     G.innerHTML = '';
     const all = Object.entries(D.TOYS);
@@ -9026,6 +9096,7 @@
     else if (act === 'house') openHouse();
     else if (act === 'album') openAlbum();
     else if (act === 'ctx') ctxAction();
+    else if (act === 'tmap') { $('bag').classList.add('hidden'); openTreasureMap(); }
     else if (act === 'locinfo') locChipInfo();
     else if (act === 'home') goHome();
     else if (act === 'decorate') enterDecorate();
@@ -9278,6 +9349,15 @@
     for (const k of Object.keys(st.pantry)) if (!D.INGREDIENTS[k]) delete st.pantry[k];
     st.shampoos = obj(st.shampoos);
     for (const k of Object.keys(st.shampoos)) if (!D.SHAMPOOS[k]) delete st.shampoos[k];
+    st.beds = Array.isArray(st.beds) ? st.beds.filter((b) => b && Number.isFinite(b.i) && Number.isFinite(b.j)).map((b) => Object.assign({ seed: null, stage: 0, prog: 0, water: [], wet: 0, last: Date.now() }, b, { seed: D.SEEDS[b.seed] ? b.seed : null, water: Array.isArray(b.water) ? b.water : [] })) : [];
+    st.seeds = obj(st.seeds);
+    for (const k of Object.keys(st.seeds)) if (!D.SEEDS[k]) delete st.seeds[k];
+    st.bouquets = Math.max(0, +st.bouquets || 0);
+    st.paintings = Array.isArray(st.paintings) ? st.paintings.filter((p) => p && p.id && typeof p.url === 'string') : [];
+    st.furniture = st.furniture.filter((f) => f.type !== 'painting' || st.paintings.some((p) => p.id === f.pid));
+    st.playerName = String(st.playerName || '').replace(/[<>{}]/g, '').trim().slice(0, 16);
+    if (st.tmap && !(st.tmap.loc && D.LOCATIONS[st.tmap.loc])) st.tmap = null;
+    if (st.sitting && !D.NEIGHBORS.some((N) => N.owner === st.sitting.owner)) st.sitting = null;
     st.clutter = Array.isArray(st.clutter) ? st.clutter.filter((c) => c && (c.kind === 'hole' || c.kind === 'prints' || (c.kind === 'toy' && D.TOYS[c.type]))) : [];
     st.meals = Array.isArray(st.meals) ? st.meals.filter((m) => m && D.RECIPES[m.id]) : [];
     st.accessories = Array.isArray(st.accessories) ? st.accessories.filter((a) => D.ACCESSORIES[a]) : [];
@@ -9820,6 +9900,7 @@
     whoosh: () => hiss(0.45, { f: 500, fTo: 2200, vol: 0.08, q: 0.6 }),
     twinkle: () => [1568, 2093, 2637].forEach((f, i) => tone(f, 0.25, { vol: 0.025, at: i * 0.09 })),
     brush: () => hiss(0.12, { filter: 'highpass', f: 1800, vol: 0.04, q: 0.5 }),
+    quack: () => { tone(330, 0.09, { to: 260, vol: 0.06, type: 'sawtooth' }); tone(310, 0.09, { to: 240, vol: 0.05, type: 'sawtooth', at: 0.12 }); },
   };
   // playable instruments: a soft piano and a plucked guitar
   function playNote(n, kind) {
@@ -9866,7 +9947,7 @@
   // =====================================================================
   // Mini-map on walks: small and faint until you touch it, tap to make it big
   // =====================================================================
-  const MM_GROUND = { park: '#8fcb6f', oldtown: '#bdb6aa', forest: '#4f8a3c', beach: '#ead39a', alpine: '#9ccc65', caves: '#5d5d66', snowy: '#eef4fb', carnival: '#7e6ca8', fairy: '#a5d6a7', moon: '#c9c9d1' };
+  const MM_GROUND = { grounds: '#7cc35f', park: '#8fcb6f', oldtown: '#bdb6aa', forest: '#4f8a3c', beach: '#ead39a', alpine: '#9ccc65', caves: '#5d5d66', snowy: '#eef4fb', carnival: '#7e6ca8', fairy: '#a5d6a7', moon: '#c9c9d1' };
   const mmBase = new Map(), mmFog = new Map();
   let mmBig = false, mmIdle = 0, mmT = 0;
   // the square of the world the map shows: the classic 39 x 39, or the whole outline of a shaped place
@@ -10068,6 +10149,7 @@
     photo = true;
     document.body.classList.add('photo');
     $('photoBar').classList.remove('hidden');
+    updateNameTag();
     hideHint();
     tip('photo', { title: 'Photo mode', text: 'Pinch to zoom, walk to frame the shot, then tap the shutter. The paw button hides you from the picture.', icon: 'camera' });
   }
@@ -10076,6 +10158,7 @@
     player.root.visible = true;
     document.body.classList.remove('photo');
     $('photoBar').classList.add('hidden');
+    updateNameTag();
   }
   function takePhoto() {
     renderer.render(world, camera);
@@ -10089,7 +10172,7 @@
     x.textAlign = 'right';
     x.fillStyle = 'rgba(255,255,255,0.85)';
     x.shadowColor = 'rgba(0,0,0,0.25)'; x.shadowBlur = 6 * u;
-    x.fillText('PixelPups', c.width - 14 * u, c.height - 14 * u);
+    x.fillText(state.photoName && youName() ? `${youName()} · PixelPups` : 'PixelPups', c.width - 14 * u, c.height - 14 * u);
     photoURL = c.toDataURL('image/jpeg', 0.92);
     sfx('shutter');
     const f = $('photoFlash');
@@ -10102,7 +10185,7 @@
   }
   $('shutter').addEventListener('click', takePhoto);
   $('photoExit').addEventListener('click', exitPhoto);
-  $('photoMe').addEventListener('click', () => { player.root.visible = !player.root.visible; $('photoMe').classList.toggle('off', !player.root.visible); });
+  $('photoMe').addEventListener('click', () => { player.root.visible = !player.root.visible; $('photoMe').classList.toggle('off', !player.root.visible); updateNameTag(); });
   $('photoDone').addEventListener('click', () => $('photoPreview').classList.add('hidden'));
   $('photoJournal').addEventListener('click', () => {
     if (!photoURL) return;
@@ -10185,7 +10268,7 @@
     $('title').classList.remove('hidden');
     $('hud').classList.add('hidden');
     const names = dogs.map((d) => d.name);
-    $('titleSub').textContent = names.length ? `${names.length > 2 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names.join(' and ')} ${names.length > 1 ? 'are' : 'is'} out in ${LOC().name}` : 'A cozy dog game';
+    $('titleSub').textContent = (youName() ? `Welcome back, ${youName()}! ` : '') + (names.length ? `${names.length > 2 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names.join(' and ')} ${names.length > 1 ? 'are' : 'is'} out in ${LOC().name}` : 'A cozy dog game');
     applyEnvironment();
     camLook.set(0, 0.5, 4);
     camDist = 13;
@@ -10315,6 +10398,7 @@
     renderCreator();
     $('creator').classList.remove('hidden');
   }
+  $('crLook').addEventListener('input', (e) => { if (e.target.id === 'crName') { state.playerName = cleanName(e.target.value); state.nameAsked = true; } });
   function closeCreator() {
     $('creator').classList.add('hidden');
     applyPlayerLook();
@@ -10334,6 +10418,7 @@
     if (crTab === 'look') {
       const variant = (patch) => lookKey(Object.assign({}, L, patch));
       $('crLook').innerHTML =
+        `<div class="section">Your name</div><p class="sub small">Optional. Neighbors and your dogs’ journals will use it.</p><input id="crName" class="nameField" maxlength="16" placeholder="Your name" autocomplete="off" value="${esc(youName())}">` +
         `<div class="section">Body</div><div class="crRow two">${LK.bodies.map(([id, name]) => `<button class="crOpt${L.body === id ? ' sel' : ''}" data-k="body" data-v="${id}">${TH('me', variant({ body: id, hair: L.body === id ? L.hair : 0 }))}<small>${name}</small></button>`).join('')}</div>` +
         `<div class="section">Hairstyle</div><div class="crRow four">${LK.hair[L.body].map((name, i) => `<button class="crOpt${L.hair === i ? ' sel' : ''}" data-k="hair" data-v="${i}">${TH('hairpick', JSON.stringify({ look: Object.assign({}, L, { hair: i, outfit: Object.assign({}, L.outfit, { hat: undefined }) }) }))}<small>${name}</small></button>`).join('')}</div>` +
         `<div class="section">Skin</div>${swatches(LK.skins, L.skin, 'skin')}` +
@@ -10410,6 +10495,7 @@
     }
     updatePlayer(dt);
     funUpdate(dt);
+    hobbyUpdate(dt);
     updateTowelTask();
     updateUseTask();
     cookTick(dt);
@@ -10556,6 +10642,9 @@
     player.root.rotation.y = player.face = Math.PI;
     for (const dd of state.dogs) addDog(dd, false);
     selected = dogs[0] || null;
+    growBeds();
+    renderBeds();
+    if (state.sitting && !state.sitting.pending) sitArrive();
     updateToyIcons();
     refreshLeashBtn();
     refreshUI();
@@ -10589,6 +10678,7 @@
     const sw = state.setsWelcome;
     if (sw && sw.length) setTimeout(() => news({ title: 'Collection sets!', text: `You had already finished: ${sw.join(', ')}. Your prizes are in.`, th: TH('pic', '🧩') }), 2500);
     delete state.setsWelcome;
+    if (dogs.length && state.tutorial === 'done' && !state.nameAsked && !youName() && (!/[?&]debug\b/.test(location.search) || /[?&]askname\b/.test(location.search))) setTimeout(() => { if (!modalOpen()) askName(); else state.nameAsked = false; }, 4500);
     if (dogs.length && state.tutorial === 'done') setTimeout(() => tip('pastimesNew', { title: 'New things to do together', text: 'Tap a dog’s bubble, then Play: hide and seek, brushing and letting your dog lead. You can also sit on sofas and benches, play the piano, rake leaves, skip stones and look at the stars.', icon: 'ball' }), 3000);
     if (notes.has('v13') && !notes.has('v12')) setTimeout(() => tip('seasonNew', { title: 'Something new every week and month', text: 'New: vendors have specials every week, each month hides four new things to find, collection sets give prizes, and there’s a critter guide. See Menu → Collectibles.', icon: 'book' }), 1200);
     if (notes.has('v12') && !notes.has('v11')) setTimeout(() => tip('houseNew', { title: 'Neighbors and your home', text: 'New: neighbors have stories to tell (Menu → Neighbors), your home can grow into a dream estate (Menu → Home), vendors have weekly specials, and your book has sets, monthly finds and a critter guide.', icon: 'home' }), 1200);
@@ -10703,7 +10793,7 @@
   // =====================================================================
   // seats on walks: the benches each place already had, plus a few new benches and logs along the neighbors' loop
   function addSeats(sc) {
-    const SEAT_STYLE = { park: 'wood', oldtown: 'dark', forest: 'log', beach: 'wood', alpine: 'dark', caves: 'stone', snowy: 'snow', carnival: 'red', fairy: 'mush', moon: 'metal' };
+    const SEAT_STYLE = { grounds: 'wood', park: 'wood', oldtown: 'dark', forest: 'log', beach: 'wood', alpine: 'dark', caves: 'stone', snowy: 'snow', carnival: 'red', fairy: 'mush', moon: 'metal' };
     const seats = [];
     const tmp = new V3();
     sc.root.updateMatrixWorld(true);
@@ -12257,12 +12347,20 @@
       row('hide', 'search', `Hide and seek: ${d.name} hides`, 'You cover your eyes, then go looking', lock('hideseek')) +
       row('brush', 'brush', `Brush ${d.name}`, d.fluffed ? 'Already lovely and fluffy, but dogs never say no' : 'A fluffy coat, and a happy dog', lock('brush')) +
       row('lead', 'lead', `Let ${d.name} lead`, 'Follow your dog wherever it wants to go', lock('lead'), walk ? '' : 'On walks only') +
+      row('course', 'flag', 'Agility course', (() => { const n = homeCourse().list.length; return n >= 3 ? `${n} obstacles at home · set the order and run it` : `Place 3 obstacles or more at home (Shop → Agility). You have ${n}`; })(), lock('agility'), walk ? 'At home (or at the Tournament Grounds)' : '') +
       '<div class="section">More to try</div>' +
       info('seat', 'Sit down', 'Tap a sofa, chair, dog bed or rug at home, or stand by a bench on a walk') +
       info('note', 'Play music', 'Tap a piano or a guitar at home') +
       info('rake', 'Leaf and snow piles', kind ? `It’s ${kind === 'snow' ? 'snowy' : 'autumn'}: look for ${kind === 'snow' ? 'snow' : 'leaves'} on the ground and rake a pile` : 'In autumn and winter (always in the Snowy Village)', lock('piles')) +
       info('stone', 'Skipping stones', 'Stand by a pond, a lake or the sea on a walk', lock('stones')) +
-      info('star', 'Stargazing', 'On a clear night, on a walk or in your garden', lock('stars'));
+      info('star', 'Stargazing', 'On a clear night, on a walk or in your garden', lock('stars')) +
+      info('sprout', 'Growing plants', hasGadget('hoe') ? 'Stand on garden ground and tap Dig a bed, then plant seeds' : 'Buy a hoe and seeds in the shop, then dig beds in a garden', lock('farming')) +
+      info('wave', 'Feeding ducks', 'Stand by a pond with ducks on a walk', lock('ducks')) +
+      info('brush', 'Painting', 'Tap an easel at home (from the shop)', lock('painting')) +
+      info('chat', 'Letters', 'Tap your mailbox at home', lock('letters')) +
+      info('search', 'Messages in bottles', 'Look along the shore at the beach', lock('bottles')) +
+      info('flag', 'Tournaments', locUnlocked('grounds') ? `At the Tournament Grounds on the ${D.TOURNEY.days.join('th and ')}th of each month` : 'At the Tournament Grounds, once you’ve found them') +
+      info('dog', 'Dog sitting', 'Neighbors who know you well sometimes ask by letter', lock('sitting'));
   }
   $('playList').addEventListener('click', (e) => {
     const b = e.target.closest('[data-play]');
@@ -12276,6 +12374,7 @@
       case 'hide': startHide(d); break;
       case 'brush': startBrush(d); break;
       case 'lead': startLead(d); break;
+      case 'course': if (place === 'home') openCourse(); else toast('Your course is at home. Here, stand on a ring’s red start mat'); break;
       default: break;
     }
   });
@@ -12288,6 +12387,8 @@
   function funCtx() {
     if (fun || mode !== 'normal' || visit || title) return null;
     const pp = player.root.position;
+    const hc = hobbyCtx(pp);
+    if (hc) return hc;
     if (unlockedFeat('piles') && patches.length && nearPatch(pp, 2.2)) return patches[0].kind === 'snow' ? 'shovel' : 'rake';
     if (place === 'park') {
       if (nearestSeat(pp)) return 'sit';
@@ -12324,6 +12425,1182 @@
     }
   }
 
+
+  // =====================================================================
+  // Hobbies, part 1: the vegetable and flower garden (dig a bed, plant, water, pick)
+  // =====================================================================
+  const bedGroup = pivot(homeRoot);
+  const bedsOf = () => (state.beds = Array.isArray(state.beds) ? state.beds : []);
+  const bedAt = (i, j) => bedsOf().find((b) => b.i === i && b.j === j);
+  const rainingHome = () => !visit && curWeather().precip === 'rain';
+  function renderBeds() {
+    bedGroup.clear();
+    if (visit) return;
+    const now = Date.now();
+    for (const b of bedsOf()) {
+      const g = ART.buildBed(b.wet > now || (rainingHome() && !!b.seed));
+      if (b.seed) g.add(ART.buildPlant(b.seed, b.stage, false));
+      g.position.set(b.i + 0.5, 0, b.j + 0.5);
+      g.userData.bed = b;
+      bedGroup.add(g);
+    }
+  }
+  // what the garden needs at the spot you stand on
+  function bedSpot() {
+    if (place !== 'home' || visit || !unlockedFeat('farming') || !hasGadget('hoe')) return null;
+    const p = player.root.position, i = Math.floor(p.x), j = Math.floor(p.z);
+    if (!isGardenTile(i, j) || bedAt(i, j) || furnitureAt(i, j) || state.clutter.some((c) => c.i === i && c.j === j)) return null;
+    return { i, j };
+  }
+  function digBed() {
+    const s = bedSpot();
+    if (!s) return;
+    if (bedsOf().length >= D.GARDEN.beds) { toast(`That’s ${D.GARDEN.beds} beds already. Plenty to look after!`); return; }
+    state.beds.push({ i: s.i, j: s.j, seed: null, stage: 0, prog: 0, water: [], wet: 0, last: Date.now() });
+    // step off the new bed
+    sfx('scrub');
+    for (let k = 0; k < 5; k++) setTimeout(() => spawnEmoji('🟫', new V3(s.i + 0.5 + rand(-0.3, 0.3), 0.3, s.j + 0.5 + rand(-0.3, 0.3)), { size: 0.22, life: 0.6, vy: 1.2 }), k * 90);
+    renderBeds();
+    toast('A fresh bed, ready to plant 🌱 Tap it to plant seeds');
+    tip('beds', { title: 'Your garden beds', text: 'Tap a bed to plant seeds. Plants grow in five stages over a few hours, even while you’re away. Water them (or let it rain): watered plants grow faster and give more. Pick them when they’re ready, or they drop their crop and start over.', icon: 'sprout' });
+    save();
+  }
+  // plants grow in real time; water makes a stage go 1.5x as fast and adds to the harvest
+  function growBeds(now = Date.now()) {
+    let changed = false;
+    const rain = rainingHome();
+    for (const b of bedsOf()) {
+      if (!b.seed) { b.last = now; continue; }
+      const S = D.SEEDS[b.seed];
+      if (!S) { b.seed = null; continue; }
+      const last = b.last || now, el = Math.max(0, (now - last) / 60000);
+      b.last = now;
+      if (rain) { b.wet = Math.max(b.wet || 0, now + D.GARDEN.moist * 60000); if (!b.water[b.stage]) { b.water[b.stage] = 1; changed = true; } }
+      const wetMin = clamp(((b.wet || 0) - last) / 60000, 0, el);
+      b.prog = (b.prog || 0) + wetMin * 1.5 + (el - wetMin);
+      while (b.prog >= S.stage && b.stage < 4) { b.prog -= S.stage; b.stage++; changed = true; if ((b.wet || 0) > now) b.water[b.stage] = 1; }
+      // left ripe too long: a crop drops its fruit and starts over from a sprout (flowers just keep blooming)
+      if (b.stage >= 4 && !S.flower && b.prog > S.stage * D.GARDEN.ripeKeep) {
+        b.stage = 1; b.prog = 0; b.water = []; b.dropped = (b.dropped || 0) + 1; changed = true;
+        if (place === 'home') toast(`${S.icon} The ${D.INGREDIENTS[S.crop].name.toLowerCase()} were left too long and fell off. The plant is growing again`);
+      }
+      if (b.stage >= 4 && S.flower) b.prog = Math.min(b.prog, S.stage);
+    }
+    if (changed) { renderBeds(); computeComfort(); }
+    return changed;
+  }
+  // tapping a bed: walk over, then the bed sheet
+  function tapBed(ray, gp) {
+    if (place !== 'home' || visit || !bedsOf().length) return null;
+    const hits = ray.intersectObjects(bedGroup.children, true);
+    for (const h of hits) { let o = h.object; while (o && !o.userData.bed) o = o.parent; if (o) return o.userData.bed; }
+    if (gp) return bedAt(Math.floor(gp.x), Math.floor(gp.z)) || null;
+    return null;
+  }
+  let bedOpen = null;
+  function openBed(b) {
+    bedOpen = b;
+    growBeds();
+    renderBedSheet();
+    $('bedSheet').classList.remove('hidden');
+  }
+  function bedLeft(b) {
+    const S = D.SEEDS[b.seed];
+    if (!S || b.stage >= 4) return '';
+    const wet = (b.wet || 0) > Date.now();
+    const min = Math.max(1, Math.round((S.stage - (b.prog || 0)) / (wet ? 1.5 : 1)));
+    return min >= 60 ? `about ${Math.round(min / 60)} h ${min % 60 ? (min % 60) + ' min' : ''}` : `about ${min} min`;
+  }
+  function renderBedSheet() {
+    const b = bedOpen;
+    if (!b) return;
+    const S = D.SEEDS[b.seed];
+    const wet = (b.wet || 0) > Date.now() || rainingHome();
+    const can = hasGadget('wateringcan');
+    let h = '';
+    if (!S) {
+      $('bedTitle').textContent = 'An empty bed';
+      const have = Object.entries(state.seeds || {}).filter(([k, n]) => n > 0 && D.SEEDS[k]);
+      h += `<p class="sub">${have.length ? 'Pick something to plant:' : 'You have no seeds. The shop sells them (Menu → Shop → Garden), and neighbors sometimes send some.'}</p>`;
+      h += `<div class="wardGrid">${have.map(([k, n]) => `<button class="ward" data-bed="plant" data-k="${k}">${TH('pic', D.SEEDS[k].icon)}<small>${esc(D.SEEDS[k].name)}</small><b>×${n}</b></button>`).join('')}</div>`;
+      h += `<div class="btnRow"><button class="soft" data-bed="remove">Fill the bed in</button></div>`;
+    } else {
+      const ripe = b.stage >= 4;
+      const watered = (b.water || []).filter(Boolean).length;
+      $('bedTitle').textContent = `${S.icon} ${S.flower ? S.name.replace(/ (seeds|bulbs|cuttings)$/, '') : D.INGREDIENTS[S.crop].name}`;
+      h += `<div class="bedStages">${D.STAGE_NAMES.map((n, k) => `<span class="${k < b.stage ? 'done' : k === b.stage ? 'now' : ''}${b.water && b.water[k] ? ' wet' : ''}" title="${esc(n)}"></span>`).join('')}</div>`;
+      h += `<p class="sub"><b>${esc(D.STAGE_NAMES[b.stage])}</b>${ripe ? '' : ` · next stage in ${bedLeft(b)}`}<br>${wet ? '💧 The soil is wet: growing 1.5× as fast.' : 'The soil is dry.'} Watered at ${watered} of 5 stages${S.flower ? '' : ' (more water, a bigger harvest)'}.</p>`;
+      h += '<div class="btnRow">';
+      if (!ripe) h += `<button class="soft" data-bed="water" ${can && !wet ? '' : 'disabled'}>${can ? (wet ? 'Still wet' : '🚿 Water') : '🚿 Needs a watering can'}</button>`;
+      if (ripe) h += `<button class="primary" data-bed="pick">${S.flower ? '💐 Pick a bouquet' : '🧺 Harvest'}</button>`;
+      if (ripe && S.flower) h += `<button class="soft" data-bed="leave">Leave them blooming</button>`;
+      h += `<button class="soft danger" data-bed="pull">Pull it up</button></div>`;
+    }
+    $('bedBody').innerHTML = h;
+  }
+  $('bedBody').addEventListener('click', (e) => {
+    const t = e.target.closest('[data-bed]');
+    if (!t || t.disabled || !bedOpen) return;
+    const b = bedOpen, act = t.dataset.bed;
+    if (act === 'plant') {
+      const k = t.dataset.k;
+      if (!(state.seeds[k] > 0)) return;
+      state.seeds[k]--;
+      Object.assign(b, { seed: k, stage: 0, prog: 0, water: [], last: Date.now(), dropped: 0 });
+      if ((b.wet || 0) > Date.now()) b.water[0] = 1;
+      progress('plant');
+      sfx('pet');
+      toast(`Planted ${D.SEEDS[k].name.toLowerCase()} 🌱`);
+    } else if (act === 'water') {
+      waterBed(b);
+    } else if (act === 'pick') {
+      harvestBed(b);
+    } else if (act === 'leave') {
+      $('bedSheet').classList.add('hidden');
+      return;
+    } else if (act === 'pull') {
+      Object.assign(b, { seed: null, stage: 0, prog: 0, water: [] });
+      toast('Pulled it up. The bed is empty again');
+    } else if (act === 'remove') {
+      state.beds = bedsOf().filter((x) => x !== b);
+      $('bedSheet').classList.add('hidden');
+      renderBeds();
+      save();
+      return;
+    }
+    renderBeds();
+    computeComfort();
+    renderBedSheet();
+    save();
+  });
+  $('bedClose').addEventListener('click', () => $('bedSheet').classList.add('hidden'));
+  function waterBed(b) {
+    if (!hasGadget('wateringcan')) return;
+    b.wet = Date.now() + D.GARDEN.moist * 60000;
+    b.water[b.stage] = 1;
+    sfx('splash');
+    for (let k = 0; k < 6; k++) setTimeout(() => spawnEmoji('💧', new V3(b.i + 0.5 + rand(-0.3, 0.3), 0.9, b.j + 0.5 + rand(-0.3, 0.3)), { size: 0.25, life: 0.6, vy: -1.2 }), k * 80);
+    player.armR.rotation.x = -1.2;
+    toast('Watered 💧 It grows faster while the soil is wet');
+  }
+  function harvestBed(b) {
+    const S = D.SEEDS[b.seed];
+    if (!S || b.stage < 4) return;
+    const watered = (b.water || []).filter(Boolean).length;
+    const at = new V3(b.i + 0.5, 0.8, b.j + 0.5);
+    if (S.flower) {
+      const n = 1 + (watered >= 3 ? 1 : 0);
+      state.bouquets = (state.bouquets || 0) + n;
+      Object.assign(b, { stage: 2, prog: 0, water: [] });
+      toast(`💐 You picked ${n > 1 ? 'two bouquets' : 'a bouquet'}. ${n > 1 ? 'They' : 'It'} can go in a letter. The ${S.name.split(' ')[0].toLowerCase()} will bloom again`);
+      spawnEmoji('💐', at, { size: 0.5 });
+    } else {
+      const n = S.yield[0] + Math.floor(Math.random() * (S.yield[1] - S.yield[0] + 1)) + watered;
+      const key = b.seed;
+      state.pantry[S.crop] = (state.pantry[S.crop] || 0) + n;
+      Object.assign(b, { seed: null, stage: 0, prog: 0, water: [] });
+      // usually a seed to plant again
+      if (Math.random() < 0.6) state.seeds[key] = (state.seeds[key] || 0) + 1;
+      state.stats.harvested = (state.stats.harvested || 0) + n;
+      toast(`🧺 You picked ${n} ${D.INGREDIENTS[S.crop].icon} ${D.INGREDIENTS[S.crop].name.toLowerCase()}${watered >= 4 ? '. Well watered, a great harvest!' : ''}`);
+      for (let k = 0; k < Math.min(n, 6); k++) setTimeout(() => spawnEmoji(D.INGREDIENTS[S.crop].icon, at.clone().add(new V3(rand(-0.3, 0.3), 0, rand(-0.3, 0.3))), { size: 0.4 }), k * 120);
+      // the dogs nearby are curious
+      for (const d of dogs) if (d.root.position.distanceTo(at) < 4) { d.happy = Math.min(100, d.happy + 3); journalAdd(d, 'harvest1', '🧺', `Watched you pick the first ${D.INGREDIENTS[S.crop].name.toLowerCase()} from the garden`); }
+    }
+    progress('harvest');
+    sfx('find');
+    haptic();
+  }
+  // a digger finds the garden irresistible; a foodie keeps watch over ripe food
+  function gardenDogIdea(d) {
+    if (place !== 'home' || visit || !bedsOf().some((b) => b.seed)) return false;
+    const ripe = bedsOf().filter((b) => b.seed && b.stage >= 3 && !D.SEEDS[b.seed].flower);
+    if (d.flag('digs') && ripe.length && Math.random() < 0.05) {
+      const b = pick(ripe);
+      d.goTo(new V3(b.i + 0.5, 0, b.j + 1.2), 2, () => {
+        d.setState('dig', 2);
+        const S = D.SEEDS[b.seed];
+        setTimeout(() => {
+          if (!b.seed) return;
+          state.pantry[S.crop] = (state.pantry[S.crop] || 0) + 1;
+          Object.assign(b, { stage: 1, prog: 0, water: [] });
+          renderBeds();
+          toast(`${d.name} dug up a ${D.INGREDIENTS[S.crop].name.toLowerCase().replace(/s$/, '')} a bit early! ${S.icon}`);
+          journalAdd(d, 'digcrop', '⛏️', `Dug up a ${D.INGREDIENTS[S.crop].name.toLowerCase().replace(/s$/, '')} from the garden, a bit too early`);
+        }, 1800);
+      }, 0.35);
+      return true;
+    }
+    if (d.traits.includes('foodie') && ripe.length && Math.random() < 0.15) {
+      const b = pick(ripe);
+      d.goTo(new V3(b.i + 0.5, 0, b.j + 1.2), 1.6, () => { d.faceTo(new V3(b.i + 0.5, 0, b.j + 0.5)); d.setState('sit', rand(6, 10)); spawnEmoji('👀', d.headWorld(0.35), { size: 0.35 }); }, 0.35);
+      return true;
+    }
+    return false;
+  }
+
+  // =====================================================================
+  // Hobbies, part 2: agility (a course at home, and the rings and tournaments at the Tournament Grounds)
+  // =====================================================================
+  const agi = () => (state.agility = Object.assign({ best: {}, cls: 0, wins: [0, 0, 0], entered: -1, runs: 0, trophies: [] }, state.agility || {}));
+  const ROT_ANG = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+  // your course at home: every obstacle you placed, in the order you set
+  function homeCourse() {
+    const F = state.furniture.filter((f) => D.ITEMS[f.type] && D.ITEMS[f.type].agility);
+    const order = (state.agility && state.agility.order) || [];
+    F.sort((a, b) => { const ia = order.indexOf(a.i + ',' + a.j), ib = order.indexOf(b.i + ',' + b.j); return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || state.furniture.indexOf(a) - state.furniture.indexOf(b); });
+    const list = F.map((f) => [D.ITEMS[f.type].agility, f.i + 0.5, f.j + 0.5, ROT_ANG[f.rot || 0], f]);
+    const key = 'home:' + list.map((o) => o[0] + o[1] + o[2] + o[3].toFixed(1)).join('|');
+    return { id: key, name: 'Your course', list, par: Math.round(list.reduce((s, o) => s + D.OBSTACLES[o[0]].t + 2.2, 2)), home: true };
+  }
+  function groundsCourse(id) {
+    const C = D.COURSES[id];
+    return C && { id, name: C.name, list: C.list, par: C.par, cls: C.cls, start: C.start };
+  }
+  // how fast and how clean a dog runs
+  function agilityStats(d) {
+    let v = 4.2 * (d.flag('zooms') ? 1.2 : 1) * (d.flag('lounges') ? 0.82 : 1) * (d.isPuppy() ? 0.9 : 1) * (d.energy < 30 ? 0.8 : 1) * (d.hearts() >= 4 ? 1.05 : 1);
+    if (d.specAs('athlete')) v *= 1 + 0.04 * d.specAs('athlete');
+    const fault = clamp(0.22 - d.obedience() * 0.004 + (d.flag('zooms') ? 0.08 : 0) + (d.isPuppy() ? 0.06 : 0), 0.03, 0.4);
+    return { v, fault };
+  }
+  function startAgility(course, opt = {}) {
+    const d = opt.dog || selected || dogs[0];
+    if (!d || !course.list.length) return;
+    if (course.list.length < 3) { toast('Place at least 3 obstacles for a course (Shop → Agility)'); return; }
+    if (d.energy < 15) { toast(`${d.name} is too tired for agility right now`); return; }
+    if (fun) endFun('switch');
+    const pp = player.root.position;
+    // the way round: in front of each obstacle, through it, and out the other side
+    const legs = [];
+    let start = course.start ? new V3(course.start[0], 0, course.start[1]) : null;
+    if (!start) { const [, x, z, r] = course.list[0]; start = new V3(x - Math.sin(r) * 2.2, 0, z - Math.cos(r) * 2.2); if (isSolid(start.x, start.z)) start = d.root.position.clone(); }
+    for (const [kind, x, z, r] of course.list) {
+      const len = kind === 'weave' || kind === 'tunnel' ? 0.75 : 0.6;
+      legs.push({ kind, a: new V3(x - Math.sin(r) * len, 0, z - Math.cos(r) * len), c: new V3(x, 0, z), b: new V3(x + Math.sin(r) * len, 0, z + Math.cos(r) * len), r });
+    }
+    const st = agilityStats(d);
+    fun = { kind: 'agility', still: true, dog: d, course, legs, i: 0, phase: 'toStart', t: 0, faults: 0, tapped: null, start, st, opt, cue: 0, onBtn: () => agilityTap() };
+    funBar(`Get ready… ${d.name} heads to the start`, 'Go!', 0);
+    $('funMeter').classList.add('needle', 'cue');
+    d.free = true;
+    d.doAct('none', (dt) => agilityStep(d, dt), 'Running agility 🏁');
+    player.face = Math.atan2(start.x - pp.x, start.z - pp.z);
+    camFocus = { dog: d, t: 999 };
+    fun.end = () => { camFocus = null; $('funMeter').classList.remove('cue'); };
+    tip('agility', { title: 'Agility', text: 'As your dog runs up to each obstacle, a marker fills the bar. Tap Go! when it’s in the green: that tells your dog exactly when to take it. Too early or too late and it may knock a bar or run past.', icon: 'flag' });
+  }
+  function agilityTap() {
+    const F = fun;
+    if (!F || F.kind !== 'agility') return;
+    if (F.phase === 'done') { endFun('done'); return; }
+    if (F.phase !== 'run' || F.tapped !== null) return;
+    F.tapped = F.cue;
+    haptic();
+    sfx('tap');
+  }
+  function agilityStep(d, dt) {
+    const F = fun;
+    if (!F || F.kind !== 'agility' || F.dog !== d) return false;
+    const A = d.act, pos = d.root.position;
+    if (F.phase === 'toStart') {
+      if (d.stepTo(F.start.x, F.start.z, 3, dt) < 0.3 || (F.t += dt) > 8) {
+        pos.set(F.start.x, groundAt(F.start.x, F.start.z), F.start.z);
+        F.phase = 'count'; F.t = 0;
+        const L0 = F.legs[0]; d.faceTo(L0.a); A.pose = 'sit';
+      }
+      return true;
+    }
+    if (F.phase === 'count') {
+      F.t += dt;
+      const left = 3 - Math.floor(F.t);
+      if (left !== F.shown) { F.shown = left; funBar(left > 0 ? `${left}…` : 'Go!', 'Go!', 0); sfx(left > 0 ? 'tap' : 'whoosh'); }
+      if (F.t >= 3) { F.phase = 'run'; F.t = 0; F.time = 0; F.legT = 0; F.sub = 'to'; F.tapped = null; A.pose = 'none'; }
+      return true;
+    }
+    if (F.phase !== 'run') return true;
+    F.time += dt;
+    const L = F.legs[F.i];
+    if (!L) { agilityFinish(); return true; }
+    const O = D.OBSTACLES[L.kind];
+    if (F.sub === 'to') {
+      // running up to the obstacle: the cue fills as it gets close
+      const dd = flatDist(pos, L.a);
+      F.cue = clamp(1 - (dd - 0.2) / 3.2, 0, 1);
+      $('funFill').style.width = (F.cue * 100).toFixed(1) + '%';
+      const dx = L.a.x - pos.x, dz = L.a.z - pos.z, l = Math.hypot(dx, dz) || 1, step = Math.min(l, F.st.v * dt);
+      pos.x += dx / l * step; pos.z += dz / l * step;
+      pos.y = groundAt(pos.x, pos.z);
+      d.face = Math.atan2(dx, dz); d.moving = true; d.curSpeed = F.st.v;
+      if (l < 0.12) {
+        // judge the timing: green is 0.72 to 0.96
+        const q = F.tapped;
+        let fault = F.st.fault;
+        if (q === null) fault += 0.45; else if (q < 0.72) fault += 0.2 + (0.72 - q); else if (q > 0.96) fault += 0.15;
+        else fault *= 0.35;
+        if (L.kind === 'weave' && d.flag('quick')) fault = 0;
+        if (O.trick) fault *= 1 - d.trickLvl(O.trick) * 0.1;
+        F.bad = Math.random() < fault;
+        F.sub = 'through'; F.legT = 0; F.tapped = null;
+        $('funFill').style.width = '0%';
+      }
+      return true;
+    }
+    if (F.sub === 'through') {
+      const dur = O.t * (4.2 / F.st.v) + (F.bad && (L.kind === 'tunnel' || L.kind === 'weave' || L.kind === 'table') ? 1.2 : 0);
+      F.legT += dt;
+      const k = clamp(F.legT / dur, 0, 1);
+      const r = L.r;
+      let ox = 0, oy = 0, hop = 0;
+      if (L.kind === 'weave') ox = Math.sin(k * Math.PI * 5) * 0.22;
+      if (L.kind === 'hurdle' || L.kind === 'tire') hop = Math.sin(k * Math.PI) * 0.7;
+      if (L.kind === 'aframe') oy = Math.sin(k * Math.PI) * 0.62;
+      if (L.kind === 'table') oy = k < 0.15 ? k / 0.15 * 0.42 : k > 0.85 ? (1 - k) / 0.15 * 0.42 : 0.42;
+      if (L.kind === 'tunnel') oy = -0.12;
+      const bx = lerp(L.a.x, L.b.x, k), bz = lerp(L.a.z, L.b.z, k);
+      pos.set(bx + Math.cos(r) * ox, groundAt(bx, bz) + oy, bz - Math.sin(r) * ox);
+      d.face = r; d.moving = L.kind !== 'table' || k < 0.15 || k > 0.85; d.curSpeed = F.st.v;
+      A.pose = (L.kind === 'hurdle' || L.kind === 'tire') ? 'jump' : L.kind === 'table' && k > 0.15 && k < 0.85 ? 'sit' : 'none';
+      A.hop = hop; A.tilt = (L.kind === 'hurdle' || L.kind === 'tire') ? lerp(-0.4, 0.4, k) : 0;
+      if (F.bad && L.kind !== 'table' && k > 0.45 && !F.said) { F.said = true; F.faults++; sfx('fail'); spawnEmoji(L.kind === 'hurdle' || L.kind === 'tire' ? '💥' : '❌', d.headWorld(0.35), { size: 0.4 }); }
+      if (F.bad && L.kind === 'table' && k > 0.5 && !F.said) { F.said = true; F.faults++; sfx('fail'); spawnEmoji('❌', d.headWorld(0.35), { size: 0.4 }); }
+      if (k >= 1) {
+        if (!F.bad) { sfx('pet'); spawnEmoji('✨', d.headWorld(0.3), { size: 0.3 }); }
+        F.i++; F.sub = 'to'; F.bad = false; F.said = false; A.hop = 0; A.tilt = 0;
+        funBar(`⏱ ${F.time.toFixed(1)} s · ${F.i}/${F.legs.length}${F.faults ? ` · ${F.faults} fault${F.faults > 1 ? 's' : ''}` : ''}`, 'Go!', 0);
+      }
+      return true;
+    }
+    return true;
+  }
+  function agilityFinish() {
+    const F = fun, d = F.dog, C = F.course, G = agi();
+    F.phase = 'done';
+    const total = Math.round((F.time + F.faults * D.TOURNEY.fault) * 10) / 10;
+    d.act.pose = 'hop';
+    d.happy = Math.min(100, d.happy + 10);
+    d.energy = Math.max(0, d.energy - 8);
+    d.addBond(2);
+    addSpec(d, 'athlete', 3);
+    G.runs++;
+    progress('agility');
+    const prev = G.best[C.id];
+    const better = !prev || total < prev.t;
+    if (better) G.best[C.id] = { t: total, dog: d.name, faults: F.faults };
+    journalAdd(d, 'agility1', '🏁', `Ran an agility course for the first time (${total} s)`);
+    if (F.faults === 0) journalAdd(d, 'agilityclean:' + C.id, '✨', `Ran the ${C.name.toLowerCase()} without a single fault`);
+    let msg = `${d.name}: ${total} s${F.faults ? ` (${F.time.toFixed(1)} s + ${F.faults} × ${D.TOURNEY.fault} s for faults)` : ', clean run!'}${better && prev ? ' · new best!' : ''}`;
+    if (F.opt.tourney !== undefined) msg = tourneyResult(F, total) || msg;
+    else if (total <= C.par) msg += ' · under par 🌟';
+    confetti(d.headWorld(0.3), F.faults ? 2 : 5);
+    sfx(F.faults ? 'trick' : 'unlock');
+    $('funMeter').classList.remove('cue');
+    funBar(msg, 'Done');
+    save();
+  }
+  // ----- tournaments: twice a month at the grounds; win a class to move up -----
+  const tourneyToday = () => D.TOURNEY.days.includes(clockNow.day);
+  function tourneyEvents() {
+    if (!locUnlocked('grounds')) return [];
+    const out = [];
+    for (let m = 1; m <= 12; m++) for (const d0 of D.TOURNEY.days) out.push({ id: `tourney:${m}:${d0}`, tourney: true, name: 'Agility tournament', icon: '🏆', m, d0, d1: d0, loc: 'grounds',
+      text: 'Enter at the Agility club stall at the Tournament Grounds.', task: { kind: 'progress', ev: 'tourney', n: 1, how: 'Run in the tournament at the Tournament Grounds' }, reward: { coins: 20, xp: 30 } });
+    return out;
+  }
+  function enterTourney() {
+    const G = agi();
+    if (!tourneyToday()) { toast(`The next tournament is on the ${D.TOURNEY.days.find((x) => x > clockNow.day) || D.TOURNEY.days[0]}th`); return; }
+    if (G.entered === clockNow.gameDay) { toast('You already ran in today’s tournament. Come back next time!'); return; }
+    const cls = G.cls, C = Object.entries(D.COURSES).find(([, x]) => x.cls === cls);
+    const fee = D.TOURNEY.fee[cls], d = selected || dogs[0];
+    confirmBox(`${D.CLASSES[cls]} tournament`, `${d.name} runs the ${C[1].name.toLowerCase()} against ${D.TOURNEY.rivals} other dogs. Entry: 🪙 ${fee}. Prizes for the top 3${cls < 2 ? ', and a win moves you up a class' : ''}.`, `Enter (🪙 ${fee})`, state.coins >= fee, () => {
+      state.coins -= fee;
+      G.entered = clockNow.gameDay;
+      updateHud();
+      startAgility(groundsCourse(C[0]), { tourney: cls, dog: d });
+    });
+  }
+  function tourneyResult(F, total) {
+    const G = agi(), cls = F.opt.tourney, C = F.course;
+    const rr = ART.mulberry32(hashStr(`${state.uid}|${clockNow.gameDay}|${cls}`));
+    const span = [[1.0, 1.4], [0.95, 1.3], [0.9, 1.25]][cls];
+    const rivals = shuffle(D.NEIGHBORS).slice(0, D.TOURNEY.rivals).map((N) => ({ name: N.dog.name, owner: N.owner, t: Math.round(C.par * (span[0] + rr() * (span[1] - span[0])) * 10) / 10 }));
+    const all = rivals.concat({ me: true, name: F.dog.name, t: total }).sort((a, b) => a.t - b.t);
+    const place1 = all.findIndex((x) => x.me) + 1;
+    const prize = D.TOURNEY.prize[cls][place1 - 1] || 0;
+    if (prize) addCoins(prize, player.root.position);
+    progress('tourney');
+    const medal = ['🥇', '🥈', '🥉'][place1 - 1];
+    if (place1 === 1) {
+      G.wins[cls] = (G.wins[cls] || 0) + 1;
+      G.trophies.push({ cls, dog: F.dog.name, gd: clockNow.gameDay });
+      if (cls === 2) state.stats.champWins = (state.stats.champWins || 0) + 1;
+      if (G.cls === cls && cls < 2) { G.cls = cls + 1; setTimeout(() => news({ title: `Moved up: ${D.CLASSES[cls + 1]}`, text: `${F.dog.name} won the ${D.CLASSES[cls].toLowerCase()}. Next tournament, you run in the ${D.CLASSES[cls + 1].toLowerCase()}.`, th: TH('pic', '🏆') }), 1500); }
+    }
+    if (medal) journalAdd(F.dog, null, medal, `Came ${['first', 'second', 'third'][place1 - 1]} in the ${D.CLASSES[cls].toLowerCase()} at an agility tournament (${total} s)`);
+    else journalAdd(F.dog, 'tourney1', '🏁', 'Ran in an agility tournament for the first time');
+    F.board = all;
+    showTourneyBoard(all, cls, place1, prize);
+    return `${medal || ''} Place ${place1} of ${all.length}: ${total} s${prize ? ` · 🪙 ${prize}` : ''}`;
+  }
+  function showTourneyBoard(all, cls, place1, prize) {
+    $('tourneyTitle').textContent = `${D.CLASSES[cls]}: place ${place1}`;
+    $('tourneyList').innerHTML = all.map((x, i) => `<div class="row${x.me ? ' me' : ''}"><div class="ic"><b>${['🥇', '🥈', '🥉'][i] || i + 1}</b></div><div class="txt"><b>${esc(x.name)}</b><small>${x.me ? 'Your dog' : esc(x.owner + '’s dog')}</small></div><b>${x.t.toFixed(1)} s</b></div>`).join('') +
+      `<p class="sub">${prize ? `You won 🪙 ${prize}.` : 'No prize this time. Practice in the rings and try again next tournament!'}</p>`;
+    setTimeout(() => $('tourney').classList.remove('hidden'), 900);
+  }
+  $('tourneyClose').addEventListener('click', () => $('tourney').classList.add('hidden'));
+  // the course sheet at home: the order your obstacles are run in
+  function openCourse() {
+    renderCourse();
+    $('courseSheet').classList.remove('hidden');
+  }
+  function renderCourse() {
+    const C = homeCourse(), G = agi();
+    const best = G.best[C.id];
+    $('courseList').innerHTML = C.list.length ? C.list.map((o, i) => `<div class="row"><div class="ic"><b>${i + 1}</b></div><div class="txt"><b>${D.OBSTACLES[o[0]].icon} ${esc(D.OBSTACLES[o[0]].name)}</b></div><button class="soft small" data-mv="${i}" data-d="-1" ${i ? '' : 'disabled'}>↑</button><button class="soft small" data-mv="${i}" data-d="1" ${i < C.list.length - 1 ? '' : 'disabled'}>↓</button></div>`).join('') +
+      `<p class="sub">Your dog runs them in this order. ${best ? `Best time on this course: ${best.t} s (${esc(best.dog)}).` : 'No best time yet.'} Rotate an obstacle in Decorate to change which way the dog goes through it.</p>`
+      : '<p class="sub">No obstacles yet. Buy some in the Shop (Agility) and place them at home, in a room or a garden.</p>';
+    $('courseRun').disabled = C.list.length < 3;
+  }
+  $('courseList').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mv]');
+    if (!b) return;
+    const C = homeCourse(), i = +b.dataset.mv, j = i + +b.dataset.d;
+    const keys = C.list.map((o) => o[4].i + ',' + o[4].j);
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    agi().order = keys;
+    renderCourse();
+    save();
+  });
+  $('courseRun').addEventListener('click', () => { $('courseSheet').classList.add('hidden'); startAgility(homeCourse()); });
+  $('courseClose').addEventListener('click', () => $('courseSheet').classList.add('hidden'));
+  // at the grounds: which ring's start mat you're standing on
+  function ringAt(pp) {
+    if (place !== 'park' || loc !== 'grounds') return null;
+    for (const [id, C] of Object.entries(D.COURSES)) if (Math.hypot(pp.x - C.start[0], pp.z - C.start[1]) < 1.8) return id;
+    return null;
+  }
+  const nearBooth = (pp) => place === 'park' && loc === 'grounds' && S.vendors[0] && flatDist(S.vendors[0].front, pp) < 2.4;
+
+  // =====================================================================
+  // Hobbies, part 3: ducks on the ponds, and painting your dogs
+  // =====================================================================
+  let ducks = [], crumbs = [], handfuls = 0;
+  function clearDucks() { for (const k of ducks) k.g.parent && k.g.parent.remove(k.g); for (const c of crumbs) c.g.parent && c.g.parent.remove(c.g); ducks = []; crumbs = []; }
+  function spawnDucks() {
+    clearDucks();
+    handfuls = D.DUCK_HANDFULS;
+    if (!D.DUCK_PLACES.includes(loc) || !S.ponds || !unlockedFeat('ducks')) return;
+    const spring = seasonOf(clockNow.month) === 'spring';
+    for (const P of S.ponds) {
+      if (P.x1 - P.x0 > 40 || Math.min(P.x1 - P.x0, P.z1 - P.z0) < 2.2) continue;
+      const cx = (P.x0 + P.x1) / 2, cz = (P.z0 + P.z1) / 2;
+      const y = waterY(cx, cz) - 0.03;
+      const n = 2 + Math.floor(Math.random() * 3);
+      for (let k = 0; k < n; k++) {
+        const g = ART.buildDuck(false);
+        const x = rand(P.x0 + 0.5, P.x1 - 0.5), z = rand(P.z0 + 0.5, P.z1 - 0.5);
+        g.position.set(x, y, z);
+        parkRoot.add(g);
+        const mom = { g, P, y, tx: x, tz: z, t: rand(0, 4), speed: 0.4 };
+        ducks.push(mom);
+        // in spring a mother duck has little ones paddling behind her
+        if (spring && k === 0) for (let c = 0; c < 3; c++) { const gg = ART.buildDuck(true); gg.position.set(x, y, z + 0.4 * (c + 1)); parkRoot.add(gg); ducks.push({ g: gg, P, y, follow: ducks[ducks.length - 1], young: true, t: 0, speed: 0.6 }); }
+      }
+    }
+  }
+  function nearDucks(pp) {
+    if (place !== 'park' || !ducks.length || !unlockedFeat('ducks')) return null;
+    const e = pondEdge(pp);
+    if (!e || flatDist(e, pp) > 2.2) return null;
+    return ducks.some((k) => flatDist(k.g.position, pp) < 9) ? e : null;
+  }
+  function updateDucks(dt) {
+    if (!ducks.length) return;
+    const pp = player.root.position;
+    for (const k of ducks) {
+      const P = k.P, g = k.g;
+      k.t += dt;
+      let tx, tz, sp = k.speed;
+      if (k.follow) { const f = k.follow.g.position, back = new V3(-Math.sin(k.follow.g.rotation.y), 0, -Math.cos(k.follow.g.rotation.y)); tx = f.x + back.x * 0.45; tz = f.z + back.z * 0.45; sp = 0.9; }
+      else {
+        // food in the water? paddle over. A dog in the water? paddle away.
+        const food = crumbs.filter((c) => c.wet && c.P === P).sort((a, b) => flatDist(a.g.position, g.position) - flatDist(b.g.position, g.position))[0];
+        const splash = dogs.find((d) => d.state === 'splash' && flatDist(d.root.position, g.position) < 3);
+        if (splash) { const a = Math.atan2(g.position.x - splash.root.position.x, g.position.z - splash.root.position.z); tx = g.position.x + Math.sin(a) * 2; tz = g.position.z + Math.cos(a) * 2; sp = 1.6; if (!k.quacked) { k.quacked = true; sfx('quack'); } }
+        else if (food) { tx = food.g.position.x; tz = food.g.position.z; sp = 1.1; if (flatDist(food.g.position, g.position) < 0.3) { food.left -= dt * 1.5; if (food.left <= 0) { food.g.parent && food.g.parent.remove(food.g); crumbs.splice(crumbs.indexOf(food), 1); sfx('quack'); spawnEmoji('💛', g.position.clone().add(new V3(0, 0.5, 0)), { size: 0.3 }); } } }
+        else { k.quacked = false; if (k.t > 4 || flatDist(new V3(k.tx, 0, k.tz), g.position) < 0.2) { k.t = 0; k.tx = rand(P.x0 + 0.4, P.x1 - 0.4); k.tz = rand(P.z0 + 0.4, P.z1 - 0.4); } tx = k.tx; tz = k.tz; }
+      }
+      tx = clamp(tx, P.x0 + 0.3, P.x1 - 0.3); tz = clamp(tz, P.z0 + 0.3, P.z1 - 0.3);
+      const dx = tx - g.position.x, dz = tz - g.position.z, l = Math.hypot(dx, dz);
+      if (l > 0.05) { const st = Math.min(l, sp * dt); g.position.x += dx / l * st; g.position.z += dz / l * st; g.rotation.y = angleLerp(g.rotation.y, Math.atan2(dx, dz), Math.min(1, dt * 5)); }
+      g.position.y = k.y + Math.sin(k.t * 2 + g.position.x) * 0.015;
+    }
+    for (let i = crumbs.length - 1; i >= 0; i--) {
+      const c = crumbs[i];
+      if (c.wet) { c.age += dt; if (c.age > 25) { c.g.parent && c.g.parent.remove(c.g); crumbs.splice(i, 1); } continue; }
+      c.t += dt;
+      const k = Math.min(1, c.t / 0.6);
+      c.g.position.set(lerp(c.from.x, c.to.x, k), lerp(c.from.y, c.to.y, k) + Math.sin(k * Math.PI) * 0.8, lerp(c.from.z, c.to.z, k));
+      if (k >= 1) { c.wet = true; c.age = 0; ripple(c.to, 0.6); }
+    }
+    void pp;
+  }
+  function feedDucks() {
+    const pp = player.root.position, e = nearDucks(pp);
+    if (!e) return;
+    if (handfuls <= 0) { toast('You’re out of crumbs for this walk. The ducks look very full anyway'); return; }
+    handfuls--;
+    const P = S.ponds.find((p) => e.center.x > p.x0 - 0.6 && e.center.x < p.x1 + 0.6 && e.center.z > p.z0 - 0.6 && e.center.z < p.z1 + 0.6) || S.ponds[0];
+    player.face = Math.atan2(e.center.x - pp.x, e.center.z - pp.z);
+    player.throwT = 0.3;
+    const dir = new V3(e.center.x - pp.x, 0, e.center.z - pp.z).normalize();
+    for (let k = 0; k < 3; k++) {
+      const to = new V3(clamp(e.center.x + dir.x * rand(0.6, 1.8) + rand(-0.4, 0.4), P.x0 + 0.2, P.x1 - 0.2), 0, clamp(e.center.z + dir.z * rand(0.6, 1.8) + rand(-0.4, 0.4), P.z0 + 0.2, P.z1 - 0.2));
+      to.y = waterY(to.x, to.z);
+      const g = new THREE.Group();
+      box(g, 0.08, 0.04, 0.08, '#e6c27a', 0, 0, 0);
+      g.position.copy(pp).add(new V3(0, 1.1, 0));
+      parkRoot.add(g);
+      crumbs.push({ g, from: g.position.clone(), to, t: -k * 0.08, wet: false, P, left: 1 });
+    }
+    sfx('throw');
+    progress('ducks');
+    state.stats.duckFeeds = (state.stats.duckFeeds || 0) + 1;
+    // the dogs: each in its own way, the first time on a walk
+    if (!feedDucks.seen) feedDucks.seen = new Set();
+    for (const d of dogs) {
+      const key = loc + ':' + d.id + ':' + walkStartT;
+      if (feedDucks.seen.has(key)) continue;
+      feedDucks.seen.add(key);
+      const tr = traitPick(d), T = D.DUCK_REACT[tr];
+      if (!T) continue;
+      setTimeout(() => {
+        if (place !== 'park') return;
+        toast(fill(T, { dog: d.name }));
+        journalAdd(d, 'ducks1', '🦆', 'Watched you feed the ducks');
+        if (tr === 'water' && e) { d.goTo(e.clone(), 3.4, () => { d.faceTo(e.center); d.setState('splash', 2.6); d.wetT = 40; addDirt(d, walkDirt(), 1); }, 0.5); }
+        else if (tr === 'shy') { const f = player.face; d.goTo(new V3(pp.x - Math.sin(f) * 0.7, 0, pp.z - Math.cos(f) * 0.7), 3, () => d.setState('sit', 3), 0.3); }
+        else if (tr === 'foodie') { d.goTo(e.clone(), 3.2, () => { d.faceTo(e.center); d.setState('sniff', 2); spawnEmoji('😋', d.headWorld(0.35), { size: 0.35 }); }, 0.5); }
+        else spawnEmoji(tr === 'zoomies' ? '🌀' : '🦆', d.headWorld(0.4), { size: 0.35 });
+      }, 700 + dogs.indexOf(d) * 900);
+    }
+    tip('ducks', { title: 'Feeding the ducks', text: `You have ${D.DUCK_HANDFULS} handfuls of crumbs on every walk. The ducks paddle over when the crumbs hit the water. In spring, look out for ducklings!`, icon: 'wave' });
+    if (handfuls === 0) setTimeout(() => toast('That was the last handful 🦆'), 1500);
+  }
+
+  // ----- painting: your dog poses, you paint -----
+  let paint = null;
+  const portraitImg = (d) => new Promise((res) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = ART.portraitURL(d.breed, d.coat); });
+  async function startPainting(f) {
+    if (!needRank('painting')) return;
+    const d = selected && dogs.includes(selected) ? selected : dogs[0];
+    if (!d) return;
+    if (fun) endFun('switch');
+    const easel = tileCenter(f);
+    // the model sits a couple of steps in front of the easel
+    const r = ROT_ANG[f.rot || 0];
+    let spot = new V3(easel.x + Math.sin(r) * 2, 0, easel.z + Math.cos(r) * 2);
+    if (isSolid(spot.x, spot.z)) spot = freePoint(easel.x, easel.z, 1.5, 3) || d.root.position.clone();
+    d.free = true;
+    d.doAct('none', (dt) => {
+      if (!paint || paint.dog !== d) return false;
+      if (d.stepTo(spot.x, spot.z, 2.4, dt) < 0.3) { d.act.pose = 'sit'; d.faceTo(easel); }
+      return true;
+    }, 'Posing for a painting 🎨');
+    const img = await portraitImg(d);
+    const c = $('paintCanvas'), x = c.getContext('2d');
+    const N = c.width;
+    x.fillStyle = '#fbf8f0'; x.fillRect(0, 0, N, N);
+    // light pencil lines to paint over
+    x.globalAlpha = 0.18;
+    if (img) { x.imageSmoothingEnabled = false; x.drawImage(img, N * 0.18, N * 0.14, N * 0.64, N * 0.64); }
+    x.globalAlpha = 1;
+    paint = { dog: d, f, img, col: D.PAINT_COLS[Math.floor(Math.random() * D.PAINT_COLS.length)], cov: new Set(), last: null, strokes: 0 };
+    $('paintTitle').textContent = `Painting ${d.name}`;
+    $('paintCols').innerHTML = D.PAINT_COLS.map((c2) => `<button class="sw${c2 === paint.col ? ' sel' : ''}" data-pc="${c2}" style="--c:${c2}" aria-label="${c2}"></button>`).join('');
+    $('paintDone').disabled = true;
+    $('paintHint').textContent = 'Pick a color for the background, then paint over the whole canvas with your finger.';
+    $('paint').classList.remove('hidden');
+    tip('painting', { title: 'Painting', text: 'Rub over the canvas to paint. Each background color you pick goes where you paint next, so try a few. When most of it is painted, tap Finish.', icon: 'brush' });
+  }
+  function paintAt(px, py) {
+    const P = paint, c = $('paintCanvas'), x = c.getContext('2d'), N = c.width;
+    // the finished picture at this spot: your color behind the dog
+    const R = 16 + Math.random() * 6;
+    x.save();
+    x.beginPath();
+    x.arc(px + rand(-2, 2), py + rand(-2, 2), R, 0, TAU);
+    x.clip();
+    x.fillStyle = P.col; x.fillRect(px - R, py - R, R * 2, R * 2);
+    if (P.img) { x.imageSmoothingEnabled = false; x.drawImage(P.img, N * 0.18, N * 0.14, N * 0.64, N * 0.64); }
+    // a few lighter bristle marks
+    x.globalAlpha = 0.18; x.fillStyle = '#ffffff';
+    for (let k = 0; k < 3; k++) x.fillRect(px + rand(-R, R), py + rand(-R, R), rand(4, 9), 2);
+    x.restore();
+    const g = 10;
+    for (let gx = Math.floor((px - R) / (N / g)); gx <= Math.floor((px + R) / (N / g)); gx++) for (let gy = Math.floor((py - R) / (N / g)); gy <= Math.floor((py + R) / (N / g)); gy++) if (gx >= 0 && gy >= 0 && gx < g && gy < g) P.cov.add(gx + ',' + gy);
+    const share = P.cov.size / (g * g);
+    $('paintDone').disabled = share < 0.6;
+    if (share >= 0.6) $('paintHint').textContent = share > 0.9 ? 'Lovely! Tap Finish.' : 'Almost there. Finish whenever you like.';
+  }
+  (function paintInput() {
+    const c = $('paintCanvas');
+    const pt = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * (c.width / r.width), (e.clientY - r.top) * (c.height / r.height)]; };
+    let down = false, last = null;
+    c.addEventListener('pointerdown', (e) => { if (!paint) return; e.preventDefault(); down = true; last = pt(e); paintAt(...last); try { c.setPointerCapture(e.pointerId); } catch (_) { /* fine */ } });
+    c.addEventListener('pointermove', (e) => {
+      if (!down || !paint) return;
+      const p = pt(e), dd = Math.hypot(p[0] - last[0], p[1] - last[1]);
+      for (let k = 1; k <= Math.ceil(dd / 8); k++) paintAt(lerp(last[0], p[0], k / Math.ceil(dd / 8)), lerp(last[1], p[1], k / Math.ceil(dd / 8)));
+      if (Math.random() < 0.3) sfx('brush');
+      last = p;
+    });
+    const up = () => { down = false; };
+    c.addEventListener('pointerup', up);
+    c.addEventListener('pointercancel', up);
+  })();
+  $('paintCols').addEventListener('click', (e) => { const b = e.target.closest('[data-pc]'); if (!b || !paint) return; paint.col = b.dataset.pc; $('paintCols').querySelectorAll('.sw').forEach((x) => x.classList.toggle('sel', x === b)); });
+  $('paintQuit').addEventListener('click', () => { paint = null; $('paint').classList.add('hidden'); });
+  $('paintDone').addEventListener('click', () => finishPainting());
+  function finishPainting() {
+    const P = paint;
+    if (!P) return;
+    const c = $('paintCanvas'), out = document.createElement('canvas');
+    out.width = out.height = 160;
+    const x = out.getContext('2d');
+    x.drawImage(c, 0, 0, 160, 160);
+    const url = out.toDataURL('image/jpeg', 0.8);
+    const id = newId();
+    state.paintings = (state.paintings || []).concat({ id, dog: P.dog.id, name: P.dog.name, url, t: Date.now() }).slice(-24);
+    state.inventory.painting = (state.inventory.painting || 0) + 1;
+    state.stats.paintings = (state.stats.paintings || 0) + 1;
+    journalAdd(P.dog, null, '🎨', 'Sat for a painting');
+    const e = P.dog.journal[P.dog.journal.length - 1];
+    if (e && e.tx === 'Sat for a painting') e.ph = url;
+    P.dog.happy = Math.min(100, P.dog.happy + 8);
+    progress('paint');
+    sfx('unlock');
+    paint = null;
+    $('paint').classList.add('hidden');
+    news({ title: 'A new painting!', text: `Your portrait of ${P.dog.name} is in your inventory. Hang it up in Decorate.`, th: `<img class="th" src="${url}" alt="">` });
+    save();
+  }
+  // a painting on its stand shows the picture you painted
+  const paintTex = new Map();
+  function applyPaintingTex(g, pid) {
+    const P = (state.paintings || []).find((p) => p.id === pid);
+    const c = g.userData.canvas;
+    if (!P || !c) return;
+    let t = paintTex.get(pid);
+    if (!t) {
+      const im = new Image();
+      t = new (THREE.Texture || THREE.CanvasTexture)(im);
+      im.onload = () => { t.needsUpdate = true; };
+      im.src = P.url;
+      paintTex.set(pid, t);
+    }
+    c.material = new THREE.MeshLambertMaterial({ map: t });
+  }
+  const freePainting = () => (state.paintings || []).find((p) => !state.furniture.some((f) => f.pid === p.id));
+
+  // =====================================================================
+  // Hobbies, part 4: letters, messages in bottles, dog sitting, and your name
+  // =====================================================================
+  const youName = () => String(state.playerName || '').trim();
+  // "Sat with you on the sofa" → "Sat with Lena on the sofa", once you have a name
+  function personal(t) {
+    const n = youName();
+    if (!n || !t) return t;
+    return t.replace(/\byour\b/g, n + '’s').replace(/\byou\b/g, n);
+  }
+  const mail = () => (state.mail = Object.assign({ inbox: [], out: [], last: -99 }, state.mail || {}));
+  const nfriend = (o) => ((state.nfriend || {})[o] || 0) + Math.min(10, ((state.chats || {})[o] || {}).n || 0);
+  const addNFriend = (o, n) => { state.nfriend = state.nfriend || {}; state.nfriend[o] = clamp((state.nfriend[o] || 0) + n, 0, 100); };
+  const unreadMail = () => mail().inbox.filter((m) => !m.read).length;
+  const knownNeighbors = () => D.NEIGHBORS.filter((N) => (state.chats || {})[N.owner] || (state.nfriend || {})[N.owner] || storyOf(N.owner));
+  function nfill(t, N) { return fill(t, { ndog: N.dog.name, dog: (dogs[0] || { name: 'your dog' }).name, you: youName() || 'us', owner: N.owner }); }
+  // the mailbox flag goes up when a letter is waiting
+  function mailFlags() {
+    const up = unreadMail() > 0;
+    for (const [f, r] of furnRT) if (f.type === 'mailbox' && r.group.userData.flag) r.group.userData.flag.rotation.x = up ? 0 : 1.4;
+  }
+  function receive(o) {
+    mail().inbox.unshift(Object.assign({ id: newId(), gd: clockNow.gameDay, read: false }, o));
+    state.mail.inbox = state.mail.inbox.slice(0, 30);
+    const N = D.NEIGHBORS.find((x) => x.owner === o.from);
+    news({ title: `📬 A letter from ${o.from}`, text: hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it (Shop → Decor).', th: N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : TH('pic', '💌') });
+    mailFlags();
+  }
+  function seedGift(n) { const pool = Object.keys(D.SEEDS); const out = {}; for (let k = 0; k < n; k++) { const s = pick(pool); out[s] = (out[s] || 0) + 1; } return { seeds: out }; }
+  function giftText(g) {
+    if (!g) return '';
+    const parts = [];
+    if (g.coins) parts.push(`🪙 ${g.coins}`);
+    for (const [k, n] of Object.entries(g.seeds || {})) parts.push(`${n} × ${D.SEEDS[k].icon} ${D.SEEDS[k].name.toLowerCase()}`);
+    for (const [k, n] of Object.entries(g.pantry || {})) parts.push(`${n} × ${D.INGREDIENTS[k].icon} ${D.INGREDIENTS[k].name.toLowerCase()}`);
+    if (g.find) parts.push(`${D.FINDS[g.find].icon} ${D.FINDS[g.find].name}`);
+    return parts.join(', ');
+  }
+  function claimGift(g) {
+    if (!g) return;
+    if (g.coins) addCoins(g.coins, null);
+    for (const [k, n] of Object.entries(g.seeds || {})) state.seeds[k] = (state.seeds[k] || 0) + n;
+    for (const [k, n] of Object.entries(g.pantry || {})) state.pantry[k] = (state.pantry[k] || 0) + n;
+    if (g.find) grantFind(g.find, null);
+  }
+  // replies come the next in-game day; now and then a neighbor writes first
+  function mailTick() {
+    const M = mail(), today = clockNow.gameDay;
+    for (const o of M.out.filter((x) => x.gd < today)) {
+      M.out.splice(M.out.indexOf(o), 1);
+      const N = D.NEIGHBORS.find((x) => x.owner === o.to);
+      if (!N) continue;
+      let text, gift = null;
+      if (o.gift) {
+        text = fill(pick(D.LETTER_REPLIES.gift), { gift: o.giftName, ndog: N.dog.name });
+        gift = Object.assign(unlockedFeat('farming') ? seedGift(3) : {}, { coins: 20 + Math.floor(Math.random() * 20) });
+        if (Math.random() < 0.08) { const rare = Object.keys(D.FINDS).filter((k) => !state.finds[k] && D.FINDS[k].weight > 0 && !D.FINDS[k].where && locUnlocked(D.FINDS[k].loc)); if (rare.length) gift.find = pick(rare); }
+        addNFriend(N.owner, 10);
+      } else if (o.kind === 'tip') {
+        const h = hintLines();
+        text = fill(pick(D.LETTER_REPLIES.tip), { hint: h.length ? pick(h) : 'Honestly, I think your garden is the best secret spot around.' });
+        addNFriend(N.owner, 4);
+      } else if (o.kind === 'walk') {
+        text = nfill(pick(D.LETTER_REPLIES.walk), N);
+        addNFriend(N.owner, 5);
+        if (unlockedFeat('meetups') && !meetupLive()) setTimeout(() => inviteFrom(N), 4000);
+      } else {
+        text = nfill(pick(D.LETTER_REPLIES[o.kind] || D.LETTER_REPLIES.hello), N);
+        addNFriend(N.owner, o.kind === 'thanks' ? 6 : 4);
+        if (Math.random() < 0.45) gift = Math.random() < 0.5 && unlockedFeat('farming') ? seedGift(2) : { coins: 10 + Math.floor(Math.random() * 15) };
+      }
+      state.stats.lettersBack = (state.stats.lettersBack || 0) + 1;
+      receive({ from: N.owner, text: `Dear ${youName() || 'neighbor'},\n${text}\n${N.owner} & ${N.dog.name}`, gift });
+    }
+    // a neighbor writes first: seeds for the garden, or could you look after their dog?
+    if (today - M.last >= 3 && dogs.length && !visit && unlockedFeat('letters')) {
+      M.last = today;
+      const friends = knownNeighbors().filter((N) => nfriend(N.owner) >= 8);
+      if (friends.length && Math.random() < 0.5) {
+        const N = pick(friends);
+        if (unlockedFeat('sitting') && !state.sitting && Math.random() < 0.45) receive({ from: N.owner, ask: 'sit', text: `Dear ${youName() || 'neighbor'},\n${nfill(pick(D.SIT_ASK), N)}\n${N.owner}` });
+        else receive({ from: N.owner, text: `Dear ${youName() || 'neighbor'},\n${nfill(pick(D.LETTER_REPLIES.random), N)}\n${N.owner} & ${N.dog.name}`, gift: unlockedFeat('farming') ? seedGift(3) : { coins: 15 } });
+      }
+    }
+    mailFlags();
+  }
+  // a neighbor you wrote to asks to meet
+  function inviteFrom(N) {
+    const places = Object.keys(D.MEET_SPOTS).filter((l) => locUnlocked(l));
+    if (!places.length) return;
+    const l = pick(places), sp = pick(D.MEET_SPOTS[l].filter((x) => !x[3] || hiddenOf(l).includes(x[3])));
+    if (!sp) return;
+    state.meetup = { owner: N.owner, loc: l, spot: sp.slice(0, 3), from: clockNow.gameDay, until: clockNow.gameDay + 4, met: false };
+    news({ title: `${N.owner} invites you`, text: `“Let’s meet at ${sp[0]} in ${D.LOCATIONS[l].name}!”`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
+    save();
+  }
+  // ----- the mailbox sheet -----
+  let mailTab = 'inbox', mailTo = null, mailKind = null, mailGift = null, mailOpenId = null;
+  function openMail() {
+    if (!needRank('letters')) return;
+    mailTab = unreadMail() || !mail().inbox.length ? 'inbox' : mailTab;
+    if (!mail().inbox.length) mailTab = 'write';
+    mailTo = mailKind = mailGift = null;
+    renderMail();
+    $('mail').classList.remove('hidden');
+  }
+  function renderMail() {
+    const M = mail();
+    $('mailTabs').querySelectorAll('.seg').forEach((b) => b.classList.toggle('sel', b.dataset.mt === mailTab));
+    const B = $('mailBody');
+    if (mailTab === 'inbox') {
+      if (!M.inbox.length) { B.innerHTML = '<p class="sub">No letters yet. Write to a neighbor, and they’ll write back the next day.</p>'; return; }
+      B.innerHTML = M.inbox.map((m) => {
+        const N = D.NEIGHBORS.find((x) => x.owner === m.from);
+        const open = m.id === mailOpenId;
+        return `<div class="row letter${m.read ? '' : ' unread'}" data-ml="${m.id}">${N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : TH('pic', '💌')}<div class="txt"><b>${esc(m.from)}</b><small>${esc(open ? '' : m.text.split('\n')[1] || '')}</small>${open ? `<p class="letterTxt">${esc(m.text).replace(/\n/g, '<br>')}</p>${m.gift ? `<p class="sub">Enclosed: ${esc(giftText(m.gift))}${m.gotGift ? ' (collected)' : ''}</p>` : ''}${m.ask === 'sit' && !m.answered ? `<div class="btnRow"><button class="primary small" data-sit="yes" data-m="${m.id}">Yes, I’ll look after ${esc(N ? N.dog.name : 'the dog')}</button><button class="soft small" data-sit="no" data-m="${m.id}">Not this time</button></div>` : ''}` : ''}</div></div>`;
+      }).join('');
+      return;
+    }
+    // writing: to whom, what, and maybe a little something
+    const known = knownNeighbors();
+    if (!known.length) { B.innerHTML = '<p class="sub">You don’t know anyone’s address yet. Chat with neighbors on your walks first.</p>'; return; }
+    const sentToday = (o) => M.out.some((x) => x.to === o);
+    let h = '<div class="section">To</div><div class="mailWho">' + known.map((N) => `<button class="crOpt${mailTo === N.owner ? ' sel' : ''}" data-to="${N.owner}" ${sentToday(N.owner) ? 'disabled' : ''}><img class="th" src="${ART.personPortraitURL(N)}" alt=""><small>${esc(N.owner)}${sentToday(N.owner) ? ' ✉️' : ''}</small></button>`).join('') + '</div>';
+    if (mailTo) {
+      h += '<div class="section">Letter</div><div class="mailKinds">' + Object.entries(D.LETTER_KINDS).map(([k, L]) => `<button class="soft${mailKind === k ? ' sel' : ''}" data-kind="${k}">${L.icon} ${esc(L.name)}</button>`).join('') + '</div>';
+      const pantry = Object.entries(state.pantry || {}).filter(([, n]) => n > 0).slice(0, 4);
+      h += '<div class="section">Put something in (optional)</div><div class="mailKinds">' +
+        `<button class="soft${!mailGift ? ' sel' : ''}" data-gift="">Nothing</button>` +
+        (state.bouquets > 0 ? `<button class="soft${mailGift === 'bouquet' ? ' sel' : ''}" data-gift="bouquet">💐 A bouquet (${state.bouquets})</button>` : '') +
+        pantry.map(([k, n]) => `<button class="soft${mailGift === 'ing:' + k ? ' sel' : ''}" data-gift="ing:${k}">${D.INGREDIENTS[k].icon} ${esc(D.INGREDIENTS[k].name)} (${n})</button>`).join('') + '</div>';
+      if (mailKind) {
+        const N = D.NEIGHBORS.find((x) => x.owner === mailTo);
+        h += `<p class="letterTxt">Dear ${esc(mailTo)},<br>${esc(nfill(D.LETTER_KINDS[mailKind].text, N))}<br>${esc(youName() || 'Your neighbor')}</p><button class="primary" id="mailSend">Send</button>`;
+      }
+    }
+    B.innerHTML = h;
+  }
+  $('mailTabs').addEventListener('click', (e) => { const b = e.target.closest('[data-mt]'); if (b) { mailTab = b.dataset.mt; renderMail(); } });
+  $('mailClose').addEventListener('click', () => $('mail').classList.add('hidden'));
+  $('mailBody').addEventListener('click', (e) => {
+    const M = mail();
+    const sit = e.target.closest('[data-sit]');
+    if (sit) {
+      const m = M.inbox.find((x) => x.id === sit.dataset.m);
+      if (!m) return;
+      m.answered = true;
+      if (sit.dataset.sit === 'yes') { acceptSitting(m.from); $('mail').classList.add('hidden'); }
+      else { addNFriend(m.from, -2); toast('Maybe next time'); renderMail(); }
+      save();
+      return;
+    }
+    const l = e.target.closest('[data-ml]');
+    if (l) {
+      const m = M.inbox.find((x) => x.id === l.dataset.ml);
+      if (!m) return;
+      mailOpenId = mailOpenId === m.id ? null : m.id;
+      if (!m.read) { m.read = true; if (m.gift && !m.gotGift) { m.gotGift = true; claimGift(m.gift); toast(`Enclosed: ${giftText(m.gift)}`); } mailFlags(); }
+      renderMail();
+      save();
+      return;
+    }
+    const to = e.target.closest('[data-to]');
+    if (to && !to.disabled) { mailTo = to.dataset.to; renderMail(); return; }
+    const k = e.target.closest('[data-kind]');
+    if (k) { mailKind = k.dataset.kind; renderMail(); return; }
+    const g = e.target.closest('[data-gift]');
+    if (g) { mailGift = g.dataset.gift || null; renderMail(); return; }
+    if (e.target.id === 'mailSend') sendLetter();
+  });
+  function sendLetter() {
+    if (!mailTo || !mailKind) return;
+    let giftName = '';
+    if (mailGift === 'bouquet' && state.bouquets > 0) { state.bouquets--; giftName = 'a lovely bouquet'; }
+    else if (mailGift && mailGift.startsWith('ing:')) { const k = mailGift.slice(4); if (state.pantry[k] > 0) { state.pantry[k]--; giftName = `a ${D.INGREDIENTS[k].name.toLowerCase().replace(/s$/, '')}`; } }
+    mail().out.push({ to: mailTo, kind: mailKind, gift: !!giftName, giftName, gd: clockNow.gameDay });
+    addNFriend(mailTo, 2);
+    progress('letter');
+    sfx('pay');
+    toast(`✉️ Sent to ${mailTo}. A reply should come tomorrow (in about an hour)`);
+    mailTo = mailKind = mailGift = null;
+    $('mail').classList.add('hidden');
+    save();
+  }
+
+  // ----- messages in bottles -----
+  let bottle = null;
+  function spawnBottle() {
+    if (bottle) { bottle.g.parent && bottle.g.parent.remove(bottle.g); bottle = null; }
+    if (loc !== 'beach' || !unlockedFeat('bottles') || state.tmap || state.bottleDay === clockNow.gameDay || Math.random() > D.BOTTLE.chance) return;
+    const z = S.q.sea.rect.z1 + 0.7;
+    for (let k = 0; k < 20; k++) {
+      const x = rand(-14, 14);
+      if (isSolid(x, z) || !S.inside(x, z)) continue;
+      const g = ART.buildBottle();
+      g.scale.setScalar(1.4);
+      const glint = emojiSprite('✨', 0.3);
+      glint.position.set(0, 0.45, 0);
+      g.add(glint);
+      g.position.set(x, groundAt(x, z), z);
+      g.rotation.y = rand(0, TAU);
+      parkRoot.add(g);
+      bottle = { g, x, z, t: 0 };
+      return;
+    }
+  }
+  const nearBottle = (pp) => bottle && flatDist(pp, bottle.g.position) < 2;
+  function sceneSolid(sc, x, z) {
+    if (sc.inside && !sc.inside(x, z)) return true;
+    if (sc.solid && sc.solid(x, z)) return true;
+    if (sc.ponds.some((p) => x > p.x0 - 0.8 && x < p.x1 + 0.8 && z > p.z0 - 0.8 && z < p.z1 + 0.8)) return true;
+    if ((sc.roofs || []).some((r) => r.test.some((t) => x > t.x0 - 1 && x < t.x1 + 1 && z > t.z0 - 1 && z < t.z1 + 1))) return true;
+    return sc.colliders.some((c) => (c.r !== undefined ? (x - c.x) ** 2 + (z - c.z) ** 2 < (c.r + 0.5) ** 2 : x > c.x0 - 0.5 && x < c.x1 + 0.5 && z > c.z0 - 0.5 && z < c.z1 + 0.5));
+  }
+  // a map to treasure: near something you'd recognise, somewhere you can go
+  function makeMap() {
+    const places = Object.keys(D.LOCATIONS).filter((l) => locUnlocked(l) && l !== 'caves');
+    for (let tries = 0; tries < 12; tries++) {
+      const l = pick(places), sc = sceneOf(l);
+      const marks = [];
+      for (const v of sc.vendors || []) marks.push({ name: D.VENDORS[v.id].name, ic: D.VENDORS[v.id].icon, x: v.front.x, z: v.front.z });
+      for (const s of sc.seats || []) marks.push({ name: 'bench', ic: '🪑', x: s.x, z: s.z });
+      for (const p of sc.ponds || []) if (p.x1 - p.x0 < 30) marks.push({ name: 'pond', ic: '💧', x: (p.x0 + p.x1) / 2, z: (p.z0 + p.z1) / 2, r: Math.max(p.x1 - p.x0, p.z1 - p.z0) / 2 });
+      if (sc.water) marks.push({ name: 'drinking spot', ic: '🚰', x: sc.water.pos.x, z: sc.water.pos.z });
+      if (!marks.length) continue;
+      const m = pick(marks);
+      const h0 = sc.height ? sc.height(m.x, m.z) : 0;
+      for (let k = 0; k < 60; k++) {
+        const a = rand(0, TAU), r = (m.r || 0) + rand(2.5, 4.5), x = m.x + Math.sin(a) * r, z = m.z + Math.cos(a) * r;
+        if (sceneSolid(sc, x, z) || (sc.height && Math.abs(sc.height(x, z) - h0) > 0.3) || Math.hypot(x, z - 18) < 4) continue;
+        return { loc: l, x: +x.toFixed(2), z: +z.toFixed(2), mark: { name: m.name, ic: m.ic, x: m.x, z: m.z }, note: fill(pick(D.MAP_NOTES), { mark: m.name, place: D.LOCATIONS[l].name }), gd: clockNow.gameDay };
+      }
+    }
+    return null;
+  }
+  function pickBottle() {
+    if (!bottle) return;
+    const M = makeMap();
+    bottle.g.parent && bottle.g.parent.remove(bottle.g);
+    bottle = null;
+    state.bottleDay = clockNow.gameDay;
+    if (!M) { addCoins(10, player.root.position); toast('The note in the bottle is too faded to read. There were a few coins inside, though'); return; }
+    state.tmap = M;
+    sfx('find');
+    haptic();
+    for (const d of dogs) journalAdd(d, 'bottle1', '🍾', 'Found a message in a bottle with you on the beach');
+    openTreasureMap();
+    save();
+  }
+  // the map: a torn, hand-drawn sketch of the place around the X
+  function drawTreasureMap(c, M) {
+    const sc = sceneOf(M.loc), x = c.getContext('2d'), N = c.width;
+    const cx = (M.x + M.mark.x) / 2, cz = (M.z + M.mark.z) / 2, span = 18;
+    const W = (wx) => ((wx - cx) / span + 0.5) * N, H = (wz) => ((wz - cz) / span + 0.5) * N;
+    x.fillStyle = '#efe0bd'; x.fillRect(0, 0, N, N);
+    const cell = N / 48;
+    for (let j = 0; j < 48; j++) for (let i = 0; i < 48; i++) {
+      const wx = cx + ((i + 0.5) / 48 - 0.5) * span, wz = cz + ((j + 0.5) / 48 - 0.5) * span;
+      let col = null;
+      if (sc.inside && !sc.inside(wx, wz)) col = '#cdb98f';
+      else if (sc.ponds.some((p) => wx > p.x0 && wx < p.x1 && wz > p.z0 && wz < p.z1)) col = '#9cc3d5';
+      else if (sc.colliders.some((cc) => (cc.r !== undefined ? (wx - cc.x) ** 2 + (wz - cc.z) ** 2 < cc.r * cc.r : wx > cc.x0 && wx < cc.x1 && wz > cc.z0 && wz < cc.z1))) col = '#7f8f5a';
+      else if (sc.onPath && sc.onPath(wx, wz)) col = '#dcc79a';
+      else if (sc.height) { const h = sc.height(wx, wz); if (h > 0.6) col = '#d9c48f'; else if (h < -0.4) col = '#c7b27f'; }
+      if (col) { x.fillStyle = col; x.fillRect(i * cell, j * cell, cell + 0.5, cell + 0.5); }
+    }
+    // pencil texture
+    x.globalAlpha = 0.08; x.fillStyle = '#5d4037';
+    const r = ART.mulberry32(hashStr(M.loc + M.x));
+    for (let k = 0; k < 140; k++) x.fillRect(r() * N, r() * N, 1 + r() * 6, 1);
+    x.globalAlpha = 1;
+    x.font = `${Math.round(N / 9)}px serif`; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillText(M.mark.ic, W(M.mark.x), H(M.mark.z));
+    x.strokeStyle = '#c62828'; x.lineWidth = N / 40; x.lineCap = 'round';
+    const X = W(M.x), Y = H(M.z), s = N / 26;
+    x.beginPath(); x.moveTo(X - s, Y - s); x.lineTo(X + s, Y + s); x.moveTo(X + s, Y - s); x.lineTo(X - s, Y + s); x.stroke();
+    // a dotted trail from the landmark
+    x.setLineDash([N / 60, N / 50]); x.lineWidth = N / 110; x.strokeStyle = '#6d4c41';
+    x.beginPath(); x.moveTo(W(M.mark.x), H(M.mark.z) + N / 18); x.quadraticCurveTo((W(M.mark.x) + X) / 2 + N / 10, (H(M.mark.z) + Y) / 2, X, Y); x.stroke(); x.setLineDash([]);
+    // north
+    x.fillStyle = '#5d4037'; x.font = `bold ${Math.round(N / 16)}px serif`; x.fillText('N', N - N / 12, N / 9); x.fillText('▲', N - N / 12, N / 5.2);
+    // torn edges
+    x.globalCompositeOperation = 'destination-out';
+    for (let k = 0; k < 4; k++) for (let t = 0; t < N; t += 6) { const d = 2 + r() * 7; if (k === 0) x.fillRect(t, 0, 7, d); if (k === 1) x.fillRect(t, N - d, 7, d); if (k === 2) x.fillRect(0, t, d, 7); if (k === 3) x.fillRect(N - d, t, d, 7); }
+    x.globalCompositeOperation = 'source-over';
+  }
+  function openTreasureMap() {
+    const M = state.tmap;
+    if (!M) { toast('You don’t have a treasure map right now'); return; }
+    drawTreasureMap($('tmapCanvas'), M);
+    $('tmapNote').textContent = M.note;
+    $('tmapPlace').textContent = `${D.LOCATIONS[M.loc].icon} ${D.LOCATIONS[M.loc].name}`;
+    $('tmapSheet').classList.remove('hidden');
+    tip('tmap', { title: 'A treasure map', text: 'Go to the place on the map, find the landmark, and stand where the X is. A Dig button shows up when you’re close. You can look at the map again in your Bag.', icon: 'map' });
+  }
+  $('tmapClose').addEventListener('click', () => $('tmapSheet').classList.add('hidden'));
+  const nearTreasure = (pp) => state.tmap && place === 'park' && loc === state.tmap.loc && Math.hypot(pp.x - state.tmap.x, pp.z - state.tmap.z) < 2;
+  function digTreasure() {
+    const M = state.tmap, d = selected && dogs.includes(selected) ? selected : dogs[0];
+    if (!M || !d) return;
+    state.tmap = null;
+    const at = new V3(M.x, groundAt(M.x, M.z), M.z);
+    let t = 0, dug = false;
+    d.free = true;
+    d.doAct('none', (dt) => {
+      t += dt;
+      if (!dug) {
+        if (d.stepTo(at.x, at.z, 3, dt) > 0.5 && t < 4) return true;
+        dug = true; t = 0; d.act.pose = 'dig'; d.faceTo(at);
+        return true;
+      }
+      if (t < 2.2) { if (Math.random() < dt * 6) spawnEmoji('🟫', d.headWorld(-0.4), { size: 0.18, life: 0.5, vy: 1.2 }); return true; }
+      d.free = false;
+      const coins = D.BOTTLE.coins[0] + Math.floor(Math.random() * (D.BOTTLE.coins[1] - D.BOTTLE.coins[0]));
+      addCoins(coins, at.clone().add(new V3(0, 0.6, 0)));
+      const extra = [];
+      if (Math.random() < D.BOTTLE.findChance) { const f = rollFind(loc); if (f) { grantFind(f, at.clone().add(new V3(0, 1, 0))); extra.push(D.FINDS[f].name); } }
+      if (unlockedFeat('farming')) { const g = seedGift(2); claimGift(g); extra.push(giftText(g)); }
+      state.stats.mapsDug = (state.stats.mapsDug || 0) + 1;
+      progress('treasuremap');
+      confetti(at.clone().add(new V3(0, 1, 0)), 8);
+      sfx('unlock');
+      haptic('strong');
+      news({ title: 'Treasure!', text: `${d.name} dug up a little chest: 🪙 ${coins}${extra.length ? ', ' + extra.join(', ') : ''}.`, th: TH('pic', '🗺️') });
+      for (const x of dogs) journalAdd(x, null, '🗺️', `Dug up the treasure from a bottle map in ${LOC().name}`);
+      save();
+      return false;
+    }, 'Digging for treasure ⛏️');
+  }
+
+  // ----- dog sitting -----
+  let sitDog = null, sitOwner = null;
+  class SitDog extends Dog {
+    constructor(data, N) {
+      super(Object.assign({ born: Date.now() - 400 * DAY, grown: true, revealed: true, happy: 75, hunger: 70, thirst: 70, energy: 80, clean: 85 }, N.dog, data, { id: 'n:' + N.dog.name }));
+      this.npc = true;
+      this.sitting = N;
+      const label = textSprite(`${this.name} (${N.owner}’s)`, 0.26);
+      label.position.y = this.headBaseY + 0.62;
+      this.root.add(label);
+    }
+    addBond() { /* not yours to keep */ }
+  }
+  function acceptSitting(owner) {
+    const N = D.NEIGHBORS.find((x) => x.owner === owner);
+    if (!N || state.sitting) return;
+    state.sitting = { owner, pending: true, until: 0, walks: 0, petted: 0, data: null };
+    if (place === 'home') sitArrive();
+    else toast(`${owner} will drop ${N.dog.name} off at your home`);
+    save();
+  }
+  function sitArrive() {
+    const T = state.sitting;
+    const N = T && D.NEIGHBORS.find((x) => x.owner === T.owner);
+    if (!N || sitDog) return;
+    if (T.pending) { T.pending = false; T.until = Date.now() + D.SIT.minutes * 60000; }
+    sitDog = new SitDog(T.data || {}, N);
+    sitDog.root.position.copy(freeNear(CHUNK / 2 + 0.6, CHUNK - 1.6));
+    world.add(sitDog.root);
+    sitDog.idle(1);
+    if (!T.told) {
+      T.told = true;
+      const q = D.SIT_QUIRKS[N.dog.traits[0]];
+      news({ title: `${N.dog.name} is staying with you`, text: `${T.owner} dropped ${N.dog.name} off for a day (about an hour). ${N.dog.name} ${q}. Feed, walk and cuddle ${N.dog.name}, and ${T.owner} will be back to pick ${N.dog.name} up.`, th: TH('dog', `${N.dog.breed}|${N.dog.coat}`) });
+      tip('sitting', { title: 'Dog sitting', text: 'A neighbor’s dog stays with you for a while. It comes on walks on its own leash, eats from your bowls and gets to know your dogs (not every pair gets along). Look after it well for a bigger thank-you.', icon: 'dog' });
+    }
+  }
+  function sitLeave() {
+    if (sitDog) { world.remove(sitDog.root); world.remove(sitDog.leash); sitDog = null; }
+    if (sitOwner) { sitOwner.root.parent && sitOwner.root.parent.remove(sitOwner.root); sitOwner = null; }
+  }
+  // time's up: the owner comes to the door
+  function sittingTick() {
+    const T = state.sitting;
+    if (!T) return;
+    if (T.pending) { if (place === 'home') sitArrive(); return; }
+    if (sitDog) T.data = { hunger: sitDog.hunger, thirst: sitDog.thirst, energy: sitDog.energy, happy: sitDog.happy, clean: sitDog.clean };
+    if (Date.now() > T.until && !T.ready) {
+      T.ready = true;
+      const N = D.NEIGHBORS.find((x) => x.owner === T.owner);
+      news({ title: `${T.owner} is back`, text: `${T.owner} is waiting at your front door to pick up ${N.dog.name}.`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
+    }
+    if (T.ready && place === 'home' && !sitOwner) {
+      const N = D.NEIGHBORS.find((x) => x.owner === T.owner);
+      sitOwner = ART.buildPlayer({ shirt: N.shirt, hair: N.hair });
+      sitOwner.root.position.copy(freeNear(CHUNK / 2 - 0.8, CHUNK - 0.8));
+      sitOwner.root.rotation.y = Math.PI;
+      const lb = textSprite(N.owner, 0.3); lb.position.y = 2.15; sitOwner.root.add(lb);
+      homeRoot.add(sitOwner.root);
+    }
+  }
+  const nearSitOwner = (pp) => sitOwner && place === 'home' && flatDist(sitOwner.root.position, pp) < 2.4;
+  function finishSitting() {
+    const T = state.sitting, N = T && D.NEIGHBORS.find((x) => x.owner === T.owner);
+    if (!T || !N) return;
+    const d = sitDog || { happy: (T.data || {}).happy || 60, hunger: (T.data || {}).hunger || 60 };
+    let score = 0;
+    if (T.walks >= 1) score++;
+    if (T.petted >= 3) score++;
+    if (d.happy >= 60) score++;
+    if (d.hunger >= 45 && d.thirst >= 40) score++;
+    const coins = D.SIT.coins[0] + score * Math.round((D.SIT.coins[1] - D.SIT.coins[0]) / 4);
+    addCoins(coins, player.root.position);
+    addNFriend(T.owner, 8 + score * 3);
+    if (sitDog) for (const x of dogs) addFriendship(x, sitDog, 3 + score);
+    for (const x of dogs) journalAdd(x, null, '🐕', `Looked after ${N.dog.name} for ${T.owner} together with you`);
+    state.stats.sits = (state.stats.sits || 0) + 1;
+    progress('sitting');
+    const misses = [T.walks < 1 && 'a walk', T.petted < 3 && 'more cuddles', !(d.hunger >= 45) && 'a full bowl'].filter(Boolean);
+    toast(`${T.owner}: ${nfill(pick(D.SIT_THANKS), N)} +🪙 ${coins}`);
+    if (misses.length) setTimeout(() => toast(`Next time ${N.dog.name} would like ${misses.join(' and ')}`), 2600);
+    confetti(player.root.position.clone().add(new V3(0, 1.4, 0)), 4);
+    state.sitting = null;
+    sitLeave();
+    save();
+  }
+
+  // ----- your name -----
+  function askName() {
+    $('playerNameInput').value = youName();
+    $('nameAsk').classList.remove('hidden');
+    setTimeout(() => { try { $('playerNameInput').focus(); } catch (_) { /* fine */ } }, 200);
+  }
+  const cleanName = (v) => String(v || '').replace(/[<>{}]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+  $('nameSave').addEventListener('click', () => { state.playerName = cleanName($('playerNameInput').value); state.nameAsked = true; $('nameAsk').classList.add('hidden'); if (youName()) toast(`Nice to meet you, ${youName()}! 🐾`); save(); });
+  $('nameSkip').addEventListener('click', () => { state.nameAsked = true; $('nameAsk').classList.add('hidden'); toast('You can add a name any time in Menu → You'); save(); });
+  // the name tag in photos (optional)
+  let nameTag = null;
+  function updateNameTag() {
+    const want = !!(state.photoName && youName() && document.body.classList.contains('photo') && player.root.visible);
+    if (want && (!nameTag || nameTag.userData.n !== youName())) {
+      if (nameTag) player.root.remove(nameTag);
+      nameTag = textSprite(youName(), 0.34);
+      nameTag.userData.n = youName();
+      nameTag.position.y = 2.2;
+      player.root.add(nameTag);
+    }
+    if (nameTag) nameTag.visible = want;
+    $('photoName').classList.toggle('off', !state.photoName);
+    $('photoName').classList.toggle('hidden', !youName());
+  }
+  $('photoName').addEventListener('click', () => { state.photoName = !state.photoName; updateNameTag(); save(); });
+
+  // ----- glue for the hobbies: the context button, the slow tick, walks -----
+  let walkStartT = 0;
+  function hobbyCtx(pp) {
+    if (fun || mode !== 'normal' || visit || title) return null;
+    if (place === 'home') {
+      if (nearSitOwner(pp)) return 'pickup';
+      if (bedSpot()) return 'bed';
+      return null;
+    }
+    if (nearTreasure(pp)) return 'treasure';
+    if (nearBottle(pp)) return 'bottle';
+    if (ringAt(pp)) return 'run';
+    if (nearBooth(pp) && tourneyToday()) return 'enter';
+    if (nearDucks(pp)) return 'ducks';
+    return null;
+  }
+  function hobbyAction(k) {
+    switch (k) {
+      case 'pickup': finishSitting(); return true;
+      case 'bed': digBed(); return true;
+      case 'treasure': digTreasure(); return true;
+      case 'bottle': pickBottle(); return true;
+      case 'run': { const id = ringAt(player.root.position); if (id) startAgility(groundsCourse(id)); return true; }
+      case 'enter': enterTourney(); return true;
+      case 'ducks': feedDucks(); return true;
+      default: return false;
+    }
+  }
+  let hobbyT = 0, bedTask = null;
+  function hobbySlow() {
+    if (visit || title) return;
+    growBeds();
+    mailTick();
+    sittingTick();
+    // letters open up: your first mailbox is a present
+    if (unlockedFeat('letters') && !state.mailboxGiven) {
+      state.mailboxGiven = true;
+      if (!hasItem('mailbox')) state.inventory.mailbox = (state.inventory.mailbox || 0) + 1;
+      news({ title: 'A mailbox for you', text: 'Place it at home (Menu → Decorate). Write to the neighbors you’ve chatted with, and they write back the next day.', th: thumbOf.item('mailbox') });
+    }
+  }
+  function hobbyUpdate(dt) {
+    if (place === 'park') { updateDucks(dt); if (bottle) { bottle.t += dt; bottle.g.position.y = groundAt(bottle.x, bottle.z) + Math.abs(Math.sin(bottle.t * 1.6)) * 0.05; } }
+    if (sitDog) { sitDog.update(dt); sitDog.updateLeash(); }
+    if (bedTask) {
+      const c = new V3(bedTask.i + 0.5, 0, bedTask.j + 0.5);
+      if (flatDist(player.root.position, c) < 1.4) { player.moveTarget = null; openBed(bedTask); bedTask = null; }
+      else if (!player.moveTarget) bedTask = null;
+    }
+    hobbyT -= dt;
+    if (hobbyT <= 0) { hobbyT = 2; hobbySlow(); }
+  }
+
   // Add ?debug to the game link to poke at the game from the browser console
   if (/[?&]debug\b/.test(location.search)) {
     window.VP = {
@@ -12353,6 +13630,9 @@
       setGameDay(gd) { gdOverride = gd; tickClock(); }, calNight, calProgress, get clockNowRaw() { return clockNow; }, exitDecorate, enterDecorate, set awayHours(v) { awayHours = v; }, updateHunts,
       doEcho, startSled, useRocket, usePortal, rideWheel, carnivalTrick, turnStatue, catchFloater, craterDig, travel, canVisitNow, ctxAction, get ctxKind() { return ctxKind; },
       layerH, groundAtY, onTopLevel, get actx() { return actx; },
+      rebuildFurniture, get beds() { return state.beds; }, digBed, growBeds, openBed, harvestBed, waterBed, renderBeds, bedSpot, homeCourse, groundsCourse, startAgility, agilityTap, enterTourney, tourneyToday, get agi() { return agi(); },
+      spawnDucks, feedDucks, get ducks() { return ducks; }, nearDucks, startPainting, paintAt, finishPainting, get paint() { return paint; }, openMail, mailTick, receive, sendLetter, get mail() { return mail(); },
+      spawnBottle, get bottle() { return bottle; }, pickBottle, makeMap, openTreasureMap, digTreasure, acceptSitting, sittingTick, finishSitting, get sitDog() { return sitDog; }, askName, youName, personal, hobbyCtx, openCourse, ringAt,
       get fun() { return fun; }, endFun, sitDown, homeSeat, nearestSeat, seatFrame, startSeek, startHide, hideFound, hideGiveUp, seekFound, startBrush, brushStroke, shakeOff, get playerWet() { return playerWet; },
       startRake, pileJump, spawnPatches, get patches() { return patches; }, pileKind, startSkip, skipThrow, waterNear, startGaze, gazeTap, canGaze, clearSky, startMusic, playKey, musicStyle, learnSing,
       startLead, leadStop, openPlay, funCtx, coverAt, hideSpot, get gazeK() { return gazeK; }, renderClutter, computeComfort, dogShape, setCtx, BASIC_TRICKS,
