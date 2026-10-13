@@ -1102,7 +1102,8 @@
   // =====================================================================
   // Collision + pathfinding
   // =====================================================================
-  function isSolid(x, z) {
+  function isSolid(x, z, y) {
+    if (y !== undefined && onTopLevel(x, z, y)) return !S.inside(x, z);
     if (place === 'home') {
       const i = Math.floor(x), j = Math.floor(z);
       if (!isHomeTile(i, j)) return true;
@@ -1155,6 +1156,18 @@
   // ground height on walks (places with hills, steps and coves); flat everywhere else
   const terrainOn = () => place === 'park' && !!(S && S.height);
   const groundAt = (x, z) => (terrainOn() ? S.height(x, z) : 0);
+  // two levels: a cove or a grotto you walk into has the hill's top right above it. ref = the height you are at now,
+  // and you stand on whichever level is closer
+  const layerH = (x, z, ref) => {
+    const lo = S.height(x, z);
+    if (!S.upper || ref === undefined) return lo;
+    const up = S.upper(x, z);
+    if (up - lo < 0.6) return lo;
+    return Math.abs(ref - up) < Math.abs(ref - lo) ? up : lo;
+  };
+  const groundAtY = (x, z, ref) => (terrainOn() ? layerH(x, z, ref) : 0);
+  // up on the top level, nothing from the cave below gets in the way
+  const onTopLevel = (x, z, y) => terrainOn() && !!S.upper && y !== undefined && S.upper(x, z) - S.height(x, z) >= 0.6 && Math.abs(y - S.upper(x, z)) < Math.abs(y - S.height(x, z));
   const CLIMB = 0.45;
   // ----- shaped places: ground you can walk under, hidden spots, and the map you fill in as you explore -----
   let roofOver = null;
@@ -1245,15 +1258,15 @@
   }
   function moveWithCollision(pos, dx, dz, r, climb = CLIMB) {
     // on hilly ground you can only step up or down so far: cliffs and ledges stop you like a wall
-    const terr = terrainOn(), h0 = terr ? S.height(pos.x, pos.z) : 0;
-    const stepOK = (x, z) => !terr || Math.abs(S.height(x, z) - h0) <= climb;
+    const terr = terrainOn(), h0 = terr ? layerH(pos.x, pos.z, pos.y) : 0, y = terr ? h0 : undefined;
+    const stepOK = (x, z) => !terr || Math.abs(layerH(x, z, h0) - h0) <= climb;
     if (dx) {
       const s = Math.sign(dx);
-      if (!(isSolid(pos.x + dx + s * r, pos.z) && !isSolid(pos.x + s * r, pos.z)) && stepOK(pos.x + dx + s * r, pos.z) && stepOK(pos.x + dx, pos.z)) pos.x += dx;
+      if (!(isSolid(pos.x + dx + s * r, pos.z, y) && !isSolid(pos.x + s * r, pos.z, y)) && stepOK(pos.x + dx + s * r, pos.z) && stepOK(pos.x + dx, pos.z)) pos.x += dx;
     }
     if (dz) {
       const s = Math.sign(dz);
-      if (!(isSolid(pos.x, pos.z + dz + s * r) && !isSolid(pos.x, pos.z + s * r)) && stepOK(pos.x, pos.z + dz + s * r) && stepOK(pos.x, pos.z + dz)) pos.z += dz;
+      if (!(isSolid(pos.x, pos.z + dz + s * r, y) && !isSolid(pos.x, pos.z + s * r, y)) && stepOK(pos.x, pos.z + dz + s * r) && stepOK(pos.x, pos.z + dz)) pos.z += dz;
     }
     const b = bounds();
     pos.x = clamp(pos.x, b.x0, b.x1);
@@ -1264,23 +1277,25 @@
     const f = furnitureAt(i, j);
     return !(f && D.ITEMS[f.type].solid);
   }
-  function lineClear(ax, az, bx, bz) {
+  function lineClear(ax, az, bx, bz, ay) {
     const dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz);
     if (d < 1e-3) return true;
     const px = (-dz / d) * 0.2, pz = (dx / d) * 0.2;
     const n = Math.ceil(d / 0.2);
-    let ph = groundAt(ax, az);
+    let ph = groundAtY(ax, az, ay);
     for (let k = 1; k <= n; k++) {
       const t = k / n, x = ax + dx * t, z = az + dz * t;
-      if (isSolid(x, z) || isSolid(x + px, z + pz) || isSolid(x - px, z - pz)) return false;
-      if (terrainOn()) { const h = S.height(x, z); if (Math.abs(h - ph) > CLIMB) return false; ph = h; }
+      const y = terrainOn() ? ph : undefined;
+      if (isSolid(x, z, y) || isSolid(x + px, z + pz, y) || isSolid(x - px, z - pz, y)) return false;
+      if (terrainOn()) { const h = layerH(x, z, ph); if (Math.abs(h - ph) > CLIMB) return false; ph = h; }
     }
     return true;
   }
   const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
   function findPath(from, to, climb = CLIMB) {
     const goal = new V3(to.x, 0, to.z);
-    if (lineClear(from.x, from.z, to.x, to.z)) return [goal];
+    const fy = terrainOn() ? from.y : undefined;
+    if (lineClear(from.x, from.z, to.x, to.z, fy)) return [goal];
     const si = Math.floor(from.x), sj = Math.floor(from.z), ti = Math.floor(to.x), tj = Math.floor(to.z);
     const key = (i, j) => i + ',' + j;
     const prev = new Map([[key(si, sj), null]]);
@@ -1289,10 +1304,16 @@
     // at home: tiles and furniture; on walks: the shape of the place, things in the way, and how steep it is
     const atHome = place === 'home';
     const memo = new Map(), memoMid = new Map();
-    const midOK = (si2, sj2) => { const k = si2 * 8192 + sj2; let v = memoMid.get(k); if (v === undefined) { v = !isSolid((si2 + 1) / 2, (sj2 + 1) / 2); memoMid.set(k, v); } return v; };
-    const pass = atHome ? passable : (i, j) => { const k = i * 4096 + j; let v = memo.get(k); if (v === undefined) { v = !isSolid(i + 0.5, j + 0.5); memo.set(k, v); } return v; };
+    // on two-level spots each cell keeps the height you reached it at
+    const hAt = new Map();
+    const two = !atHome && terrainOn() && !!S.upper;
+    const cellH = (i, j) => { const v = hAt.get(i * 4096 + j); return v !== undefined ? v : groundAtY(i + 0.5, j + 0.5, fy); };
+    const nextH = (i, j, ni, nj) => (terrainOn() ? layerH(ni + 0.5, nj + 0.5, cellH(i, j)) : 0);
+    const lvl = (x, z, y) => (two && onTopLevel(x, z, y) ? 1 : 0);
+    const midOK = (si2, sj2, y) => { const x = (si2 + 1) / 2, z = (sj2 + 1) / 2, k = (si2 * 8192 + sj2) * 2 + lvl(x, z, y); let v = memoMid.get(k); if (v === undefined) { v = !isSolid(x, z, y); memoMid.set(k, v); } return v; };
+    const pass = atHome ? passable : (i, j, y) => { const k = (i * 4096 + j) * 2 + lvl(i + 0.5, j + 0.5, y); let v = memo.get(k); if (v === undefined) { v = !isSolid(i + 0.5, j + 0.5, y); memo.set(k, v); } return v; };
     const tileIn = atHome ? isHomeTile : (i, j) => !S.inside || S.inside(i + 0.5, j + 0.5);
-    const climbOK = (i, j, ni, nj) => !terrainOn() || Math.abs(S.height(ni + 0.5, nj + 0.5) - S.height(i + 0.5, j + 0.5)) <= climb + 0.01;
+    const climbOK = (i, j, ni, nj) => !terrainOn() || Math.abs(nextH(i, j, ni, nj) - cellH(i, j)) <= climb + 0.01;
     for (let h = 0; h < queue.length && h < 9000; h++) {
       const [i, j] = queue[h];
       if (i === ti && j === tj) { found = true; break; }
@@ -1300,12 +1321,14 @@
         const ni = i + di, nj = j + dj, k = key(ni, nj);
         if (prev.has(k)) continue;
         const isGoal = ni === ti && nj === tj;
-        if (isGoal ? !tileIn(ni, nj) : !pass(ni, nj)) continue;
+        const nh = nextH(i, j, ni, nj);
+        if (isGoal ? !tileIn(ni, nj) : !pass(ni, nj, nh)) continue;
         if (!climbOK(i, j, ni, nj)) continue;
         // thin walls (an igloo, a tent) can sit between two cell centres
-        if (!atHome && !isGoal && !midOK(i + ni, j + nj)) continue;
-        if (di && dj && (!pass(i + di, j) || !pass(i, j + dj) || !climbOK(i, j, i + di, j) || !climbOK(i, j, i, j + dj))) continue;
+        if (!atHome && !isGoal && !midOK(i + ni, j + nj, nh)) continue;
+        if (di && dj && (!pass(i + di, j, nextH(i, j, i + di, j)) || !pass(i, j + dj, nextH(i, j, i, j + dj)) || !climbOK(i, j, i + di, j) || !climbOK(i, j, i, j + dj))) continue;
         prev.set(k, [i, j]);
+        if (two) hAt.set(ni * 4096 + nj, nh);
         queue.push([ni, nj]);
       }
     }
@@ -1321,7 +1344,7 @@
     let cx = from.x, cz = from.z, i = 0;
     while (i < pts.length) {
       let j = pts.length - 1;
-      while (j > i && !lineClear(cx, cz, pts[j].x, pts[j].z)) j--;
+      while (j > i && !lineClear(cx, cz, pts[j].x, pts[j].z, fy)) j--;
       out.push(pts[j]);
       cx = pts[j].x; cz = pts[j].z;
       i = j + 1;
@@ -1464,7 +1487,7 @@
     }
     player.root.rotation.y = angleLerp(player.root.rotation.y, player.face, damp(0.0002, dt));
 
-    if (terrainOn()) { const gy = S.height(pos.x, pos.z); pos.y += (gy - pos.y) * Math.min(1, dt * 16); }
+    if (terrainOn()) { const gy = layerH(pos.x, pos.z, pos.y); pos.y += (gy - pos.y) * Math.min(1, dt * 16); }
     if (place === 'park') {
       walkDist += moved;
       walkTotal += moved;
@@ -1817,7 +1840,7 @@
       if (this.state === 'fetch' || this.state === 'return') resetBall();
       this.releaseClaim();
       this.dropSpot();
-      this.root.position.y = groundAt(this.root.position.x, this.root.position.z);
+      this.root.position.y = groundAtY(this.root.position.x, this.root.position.z, this.root.position.y);
       this.onArrive = null;
       this.path = null;
       this.zoomLeft = 0;
@@ -1825,7 +1848,7 @@
     }
     wake() {
       this.releaseClaim();
-      this.root.position.y = groundAt(this.root.position.x, this.root.position.z);
+      this.root.position.y = groundAtY(this.root.position.x, this.root.position.z, this.root.position.y);
       this.idle(0.5);
     }
 
@@ -1944,7 +1967,7 @@
       N.t -= dt;
       N.ct = (N.ct || 0) - dt;
       if (N.ct <= 0 || Math.hypot(N.cx - tx, N.cz - tz) > 1 || Math.hypot(N.px - pos.x, N.pz - pos.z) > 1) {
-        N.clear = lineClear(pos.x, pos.z, tx, tz); N.ct = 0.25; N.cx = tx; N.cz = tz; N.px = pos.x; N.pz = pos.z;
+        N.clear = lineClear(pos.x, pos.z, tx, tz, pos.y); N.ct = 0.25; N.cx = tx; N.cz = tz; N.px = pos.x; N.pz = pos.z;
       }
       if (N.clear) { N.path = null; return null; }
       if (!N.path || N.t <= 0 || Math.hypot(N.tx - tx, N.tz - tz) > 1.5) {
@@ -1989,7 +2012,7 @@
       else this.root.rotation.y = angleLerp(this.root.rotation.y, this.face, damp(0.0004, dt));
       const A = this.state === 'act' && this.act;
       if (A && A.y !== undefined) this.root.position.y += (A.y - this.root.position.y) * Math.min(1, dt * 10);
-      else if (terrainOn() && this.state !== 'bath') { const gy = groundAt(this.root.position.x, this.root.position.z); this.root.position.y += (gy - this.root.position.y) * Math.min(1, dt * 14); }
+      else if (terrainOn() && this.state !== 'bath') { const gy = groundAtY(this.root.position.x, this.root.position.z, this.root.position.y); this.root.position.y += (gy - this.root.position.y) * Math.min(1, dt * 14); }
       else if (place === 'home' && this.root.position.y > 0.001 && this.state !== 'sleep' && this.state !== 'bath') this.root.position.y = Math.max(0, this.root.position.y - dt * 3);
       pastimeDogTick(this, dt);
       this.animate(dt);
@@ -2229,7 +2252,7 @@
       const a = player.root.rotation.y + Math.PI + (idx - (n - 1) / 2) * 0.75;
       let tx = pp.x + Math.sin(a) * 1.5, tz = pp.z + Math.cos(a) * 1.5;
       // the spot behind you is down a ledge? then just come to you
-      if (terrainOn() && (isSolid(tx, tz) || !lineClear(pp.x, pp.z, tx, tz))) { tx = pp.x + Math.sin(a) * 0.4; tz = pp.z + Math.cos(a) * 0.4; }
+      if (terrainOn() && (isSolid(tx, tz, pp.y) || !lineClear(pp.x, pp.z, tx, tz, pp.y))) { tx = pp.x + Math.sin(a) * 0.4; tz = pp.z + Math.cos(a) * 0.4; }
       const d = Math.hypot(tx - pos.x, tz - pos.z);
       const tired = this.energy < CRITICAL ? 0.6 : 1;
       if (d > 0.35) this.moveTowards(tx, tz, (d > 2.2 ? 4.2 : 2.4) * tired * (this.isPuppy() ? 0.9 : 1), dt);
@@ -2385,7 +2408,7 @@
       const pp = player.root.position, pos = this.root.position;
       const dx = pos.x - pp.x, dz = pos.z - pp.z, d = Math.hypot(dx, dz);
       // on hills the leash goes round corners: a dog walking the long way up the slope gets some slack
-      const clear = !terrainOn() || lineClear(pp.x, pp.z, pos.x, pos.z);
+      const clear = !terrainOn() || lineClear(pp.x, pp.z, pos.x, pos.z, pp.y);
       const L = clear ? 3.2 : 7;
       if (d > L) {
         if (clear) {
@@ -2395,7 +2418,7 @@
           // really stuck: the dog catches up at your side
           const f = player.root.rotation.y;
           pos.set(pp.x - Math.sin(f) * 0.9, pp.y, pp.z - Math.cos(f) * 0.9);
-          if (isSolid(pos.x, pos.z) || !lineClear(pp.x, pp.z, pos.x, pos.z)) pos.set(pp.x, pp.y, pp.z);
+          if (isSolid(pos.x, pos.z, pp.y) || !lineClear(pp.x, pp.z, pos.x, pos.z, pp.y)) pos.set(pp.x, pp.y, pp.z);
           if (this.nav) this.nav.path = null;
         }
         this.face = Math.atan2(-dx, -dz);
@@ -2487,7 +2510,7 @@
     startFetch() {
       this.releaseClaim();
       this.dropSpot();
-      this.root.position.y = groundAt(this.root.position.x, this.root.position.z);
+      this.root.position.y = groundAtY(this.root.position.x, this.root.position.z, this.root.position.y);
       this.onArrive = null;
       this.path = null;
       this.zoomLeft = 0;
@@ -3016,7 +3039,7 @@
       w.label.visible = pos.distanceTo(pp) < 9;
       // neighbors slow down for a moment when they pass you, so you can say hi
       if (!w.slowed && pos.distanceTo(pp) < 2.4) { w.slowed = true; w.pause = Math.max(w.pause, 2.2); w.parts.root.rotation.y = Math.atan2(pp.x - pos.x, pp.z - pos.z); }
-      if (terrainOn()) pos.y = S.height(pos.x, pos.z);
+      if (terrainOn()) pos.y = layerH(pos.x, pos.z, pos.y);
       w.dog.update(dt);
       w.dog.updateLeash();
     }
@@ -9700,6 +9723,7 @@
     if (actx) return actx;
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) { /* not supported */ }
     try { actx = new AC(); } catch (_) { return null; }
     master = actx.createGain(); master.gain.value = 0.55; master.connect(actx.destination);
     musicBus = actx.createGain(); musicBus.gain.value = 0; musicBus.connect(master);
@@ -9709,9 +9733,41 @@
     return actx;
   }
   // browsers only allow sound after the first touch
-  const wakeAudio = () => { const a = audio(); if (a && a.state === 'suspended') a.resume(); };
-  window.addEventListener('pointerdown', wakeAudio, { capture: true });
-  window.addEventListener('keydown', wakeAudio, { capture: true });
+  // iPhones are picky: sound only starts from a finished tap (touchend / click, not the first touch), the context can get
+  // "interrupted" after a call or switching apps, and the silent switch mutes web sound unless the page says it plays media
+  let audioPrimed = false, silentEl = null;
+  function silentWavURL() {
+    const n = 800, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true); v.setUint32(28, 16000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+    return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+  }
+  function wakeAudio() {
+    const a = audio();
+    if (!a) return;
+    try {
+      // let sounds play even with the ringer switch on silent (the game has its own Sound switch in Settings)
+      if (navigator.audioSession && prefs.sfx) navigator.audioSession.type = 'playback';
+    } catch (_) { /* not supported */ }
+    if (a.state !== 'running') { try { a.resume(); } catch (_) { /* try again on the next tap */ } }
+    if (!audioPrimed) {
+      audioPrimed = true;
+      try {
+        // a tiny silent sound, played from inside the tap, unlocks the speaker for good
+        const src = a.createBufferSource();
+        src.buffer = a.createBuffer(1, 1, 22050);
+        src.connect(a.destination);
+        src.start(0);
+      } catch (_) { audioPrimed = false; }
+      // older iPhones: a silent media element switches sound over to "playback" too
+      if (!navigator.audioSession && /iP(hone|ad|od)|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document) {
+        try { silentEl = new Audio(silentWavURL()); silentEl.loop = true; silentEl.volume = 0.01; silentEl.setAttribute('playsinline', ''); const pr = silentEl.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (_) { silentEl = null; }
+      }
+    }
+  }
+  for (const ev of ['pointerdown', 'touchend', 'click', 'keydown']) window.addEventListener(ev, wakeAudio, { capture: true, passive: true });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && actx && actx.state !== 'running') { try { actx.resume(); } catch (_) { /* next tap */ } } });
   function tone(f, dur, o = {}) {
     const a = actx, t = a.currentTime + (o.at || 0);
     const osc = a.createOscillator(), g = a.createGain();
@@ -10702,8 +10758,14 @@
       g.position.set(c.x, y, c.z);
       g.rotation.y = c.rot;
       sc.root.add(g);
-      const ax = Math.abs(Math.cos(c.rot)) > 0.5 ? 0.8 : 0.32, az = Math.abs(Math.cos(c.rot)) > 0.5 ? 0.32 : 0.8;
-      sc.colliders.push({ x0: c.x - ax, x1: c.x + ax, z0: c.z - az, z1: c.z + az, seat: true });
+      const along = Math.abs(Math.cos(c.rot)) > 0.5;
+      if (style === 'mush') {
+        // two little toadstools with a gap between them
+        for (const k of [-0.42, 0.42]) sc.colliders.push({ x: c.x + (along ? k : 0), z: c.z + (along ? 0 : k), r: 0.27, seat: true });
+      } else {
+        const ax = along ? 0.8 : 0.32, az = along ? 0.32 : 0.8;
+        sc.colliders.push({ x0: c.x - ax, x1: c.x + ax, z0: c.z - az, z1: c.z + az, seat: true });
+      }
       seats.push({ x: c.x, z: c.z, y, rot: c.rot, two: style !== 'mush', style, low: style === 'log' || style === 'stone' });
       added++;
     }
@@ -10994,7 +11056,7 @@
     P.t += dt;
     const close = flatDist(pos, pp);
     // found you!
-    if (close < 1.15 && (P.k >= P.steps || P.tr.nose || close < 0.8) && (place === 'home' || lineClear(pos.x, pos.z, pp.x, pp.z))) { seekFound(d); return true; }
+    if (close < 1.15 && (P.k >= P.steps || P.tr.nose || close < 0.8) && (place === 'home' || lineClear(pos.x, pos.z, pp.x, pp.z, pos.y))) { seekFound(d); return true; }
     if (P.napAt >= 0 && P.k >= P.napAt) {
       P.done = 'nap';
       d.act.pose = 'nap';
@@ -11227,7 +11289,7 @@
   // =====================================================================
   // Grooming: muddy paw prints, wet dogs shaking off, and brushing
   // =====================================================================
-  const PRINTS_MAX = 8;
+  const PRINTS_MAX = 6;
   let playerWet = 0;
   function pastimeDogTick(d, dt) {
     if (d.npc || !dogs.includes(d)) return;
@@ -11237,13 +11299,14 @@
     // muddy paws leave prints indoors
     if (place === 'home' && !visit && d.moving && d.state !== 'act') {
       const mud = (d.dirt.mud || 0) + (d.dirt.slush || 0) + (d.dirt.sand || 0) * 0.5;
-      if (mud > 2) {
+      // only properly dirty dogs (under half clean) track mud in
+      if (mud > 2 && d.clean < 50) {
         const p = d.root.position;
         if (!d.lastPrint) d.lastPrint = p.clone();
-        if (flatDist(p, d.lastPrint) > 1.4) {
+        if (flatDist(p, d.lastPrint) > 2.2) {
           d.lastPrint.copy(p);
           const i = Math.floor(p.x), j = Math.floor(p.z);
-          if (!isGardenTile(i, j) && !furnitureAt(i, j) && !state.clutter.some((c) => c.i === i && c.j === j) && state.clutter.filter((c) => c.kind === 'prints').length < PRINTS_MAX) {
+          if (Math.random() < 0.6 && !isGardenTile(i, j) && !furnitureAt(i, j) && !state.clutter.some((c) => c.i === i && c.j === j) && state.clutter.filter((c) => c.kind === 'prints').length < PRINTS_MAX) {
             state.clutter.push({ kind: 'prints', i, j, rot: d.face, seed: Math.floor(Math.random() * 1e6) });
             renderClutter();
             computeComfort();
@@ -12289,6 +12352,7 @@
       openJournal, journalAdd, showAway, awayLines, inboxAdd, openInbox, whatNow, haptic, reactToFurniture, get furnNew() { return furnNew; }, calOf, gdOf, evKnown, revealPlaceEvents,
       setGameDay(gd) { gdOverride = gd; tickClock(); }, calNight, calProgress, get clockNowRaw() { return clockNow; }, exitDecorate, enterDecorate, set awayHours(v) { awayHours = v; }, updateHunts,
       doEcho, startSled, useRocket, usePortal, rideWheel, carnivalTrick, turnStatue, catchFloater, craterDig, travel, canVisitNow, ctxAction, get ctxKind() { return ctxKind; },
+      layerH, groundAtY, onTopLevel, get actx() { return actx; },
       get fun() { return fun; }, endFun, sitDown, homeSeat, nearestSeat, seatFrame, startSeek, startHide, hideFound, hideGiveUp, seekFound, startBrush, brushStroke, shakeOff, get playerWet() { return playerWet; },
       startRake, pileJump, spawnPatches, get patches() { return patches; }, pileKind, startSkip, skipThrow, waterNear, startGaze, gazeTap, canGaze, clearSky, startMusic, playKey, musicStyle, learnSing,
       startLead, leadStop, openPlay, funCtx, coverAt, hideSpot, get gazeK() { return gazeK; }, renderClutter, computeComfort, dogShape, setCtx, BASIC_TRICKS,
