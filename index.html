@@ -126,6 +126,7 @@
 
   <div id="photoBar" class="hidden">
     <button class="roundBtn glass" id="photoMe" aria-label="Show or hide yourself"><i data-i="dog"></i></button>
+    <button class="roundBtn glass off hidden" id="photoName" aria-label="Show your name in the photo"><i data-i="person"></i></button>
     <button id="shutter" aria-label="Take photo"><span></span></button>
     <button class="roundBtn glass" id="photoExit" aria-label="Leave photo mode"><i data-i="x"></i></button>
   </div>
@@ -340,10 +341,69 @@
 
   <div id="away" class="modal center hidden">
     <div class="sheet awaySheet">
-      <h2>While you were away</h2>
+      <h2 id="awayTitle">While you were away</h2>
       <p class="sub" id="awaySub"></p>
       <div id="awayList"></div>
       <button class="primary" data-act="closeAway">Hello again!</button>
+    </div>
+  </div>
+
+  <div id="bedSheet" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2 id="bedTitle">Garden bed</h2><button class="x" id="bedClose" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="bedBody"></div>
+    </div>
+  </div>
+
+  <div id="courseSheet" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Your agility course</h2><button class="x" id="courseClose" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody"><div id="courseList"></div><button class="primary" id="courseRun">Run the course</button></div>
+    </div>
+  </div>
+
+  <div id="tourney" class="modal center hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2 id="tourneyTitle">Results</h2><button class="x" id="tourneyClose" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="tourneyList"></div>
+    </div>
+  </div>
+
+  <div id="paint" class="modal center hidden">
+    <div class="sheet paintSheet">
+      <div class="sheetHead"><h2 id="paintTitle">Painting</h2><button class="x" id="paintQuit" aria-label="Stop painting"><i data-i="x"></i></button></div>
+      <div class="sheetBody center">
+        <canvas id="paintCanvas" width="320" height="320"></canvas>
+        <div id="paintCols" class="swatches"></div>
+        <p class="sub" id="paintHint"></p>
+        <button class="primary" id="paintDone" disabled>Finish</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mail" class="modal hidden">
+    <div class="sheet tall">
+      <div class="sheetHead"><h2>Mailbox</h2><button class="x" id="mailClose" aria-label="Close"><i data-i="x"></i></button>
+        <div id="mailTabs" class="headRow segs"><button class="seg sel" data-mt="inbox">Letters</button><button class="seg" data-mt="write">Write</button></div></div>
+      <div class="sheetBody" id="mailBody"></div>
+    </div>
+  </div>
+
+  <div id="tmapSheet" class="modal center hidden">
+    <div class="sheet mapSheet">
+      <div class="sheetHead"><h2 id="tmapPlace">Treasure map</h2><button class="x" id="tmapClose" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody center"><canvas id="tmapCanvas" width="300" height="300"></canvas><p class="letterTxt" id="tmapNote"></p></div>
+    </div>
+  </div>
+
+  <div id="nameAsk" class="modal center hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>What should we call you?</h2></div>
+      <div class="sheetBody">
+        <p class="sub">Neighbors will greet you by name, and your dogs’ journals will use it. You can change it any time in Menu → You.</p>
+        <input id="playerNameInput" class="nameField" maxlength="16" placeholder="Your name" autocomplete="off">
+        <div class="btnRow"><button class="soft" id="nameSkip">Not now</button><button class="primary" id="nameSave">Save</button></div>
+      </div>
     </div>
   </div>
 
@@ -457,6 +517,7 @@
         <button class="x" data-act="closeBag" aria-label="Close"><i data-i="x"></i></button>
       </div>
       <div class="sheetBody">
+        <div id="bagExtra"></div>
         <p class="sub">Tap a toy to throw it next. Some toys can only be found on walks.</p>
         <div id="toyGrid"></div>
       </div>
