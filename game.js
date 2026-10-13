@@ -44,7 +44,8 @@
   }
   const newId = () => 'd' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
   const standardCoats = (b) => (D.BREEDS[b] || D.BREEDS.retriever).coats.filter((c) => !c.legacy);
-  const expandPrice = (n) => Math.round((CONFIG.EXPAND_BASE * Math.pow(CONFIG.EXPAND_GROWTH, n - 1)) / 5) * 5;
+  // each room costs a bit more than the last; past the first handful the price only grows gently
+  const expandPrice = (n) => Math.round(Math.min(CONFIG.EXPAND_BASE * Math.pow(CONFIG.EXPAND_GROWTH, n - 1), 200 * n + 8 * n * n) / 5) * 5;
   const traitList = () => Object.keys(D.TRAITS);
   function randomTraits(primary) {
     const p = primary && D.TRAITS[primary] ? primary : pick(traitList());
@@ -310,6 +311,8 @@
       chunks: [[0, 0]],
       build: null,
       rooms: {},
+      walls: {},
+      stairs: null,
       styles: freeStyles(),
       furniture: [
         { type: 'bed', i: 0, j: 3, rot: 1 },
@@ -344,6 +347,7 @@
       seen: { toys: [], coats: [], rares: [] },
       learned: [],                     // tricks any dog has learned
       seeds: {}, beds: [], bouquets: 0, paintings: [], playerName: '',   // the garden, paintings and your name
+      treats: {}, caught: {}, catchBook: {}, exhibits: {}, snowmen: [], fishCaught: {}, rivals: {}, favorsFrom: {},
       daily: null,                     // today's challenges
       tickets: 0,                      // carnival tickets
       portal: false,                   // fairy portal opened
@@ -526,6 +530,7 @@
   function syncChunkSet() {
     chunkSet = new Set(home().chunks.map(([x, z]) => chunkKey(x, z)));
     homeBounds = extentOf(home().chunks);
+    syncStairs();
   }
   const hasChunk = (cx, cz) => chunkSet.has(chunkKey(cx, cz));
   const isHomeTile = (i, j) => hasChunk(Math.floor(i / CHUNK), Math.floor(j / CHUNK));
@@ -534,6 +539,332 @@
   const isGardenTile = (i, j) => isGardenChunk(Math.floor(i / CHUNK), Math.floor(j / CHUNK));
   const gardensUnlocked = () => state.chunks.length >= D.GARDEN_UNLOCK_SECTIONS && unlockedFeat('gardens');
   const ARTS = ['#f6a5c0', '#9ad0a7', '#ffd27a', '#a7b8f5'];
+
+  // =====================================================================
+  // Upstairs, the staircase and walls between rooms.
+  // Upstairs rooms live in the same tile grid, shifted UPC chunks east (so paths, furniture and collisions just work);
+  // when drawing, everything over there is lifted up by FH and slid back over the rooms below.
+  // =====================================================================
+  const UPC = 50, UPX = UPC * CHUNK, FH = 2.7, UP_LIM = (UPC - 20) * CHUNK;
+  const isUpX = (x) => x >= UP_LIM;
+  const isUpChunk = (cx) => cx >= UPC - 20;
+  const floorOfX = (x) => (isUpX(x) ? 1 : 0);
+  const chunkFloor = ([cx]) => (isUpChunk(cx) ? 1 : 0);
+  const floorChunks = (fl, H = home()) => H.chunks.filter((c) => chunkFloor(c) === fl);
+  const hasUpstairs = (H = home()) => H.chunks.some((c) => chunkFloor(c) === 1);
+  const upCap = () => (D.HOUSE_TIERS[houseTier()].up || 0);
+  const upOpen = () => !!state.upOK || hasUpstairs(state);
+  // ascent directions for stairs: 0 = away from you (north), 1 = east, 2 = towards you, 3 = west
+  const DIR4 = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+  const STAIR_NAMES = ['Going up away from you', 'Going up to the right', 'Going up towards you', 'Going up to the left'];
+  // the tiles a staircase uses: steps (downstairs) = the stairwell (upstairs), the tile in front, the landing at the top
+  function stairCells(st) {
+    if (!st) return null;
+    const [di, dj] = DIR4[st.rot];
+    return {
+      steps: [0, 1, 2].map((k) => [st.i + di * k, st.j + dj * k]),
+      entry: [st.i - di, st.j - dj],
+      landing: [st.i + di * 3 + UPX, st.j + dj * 3],
+      di, dj,
+    };
+  }
+  let stairSet = new Set();
+  function syncStairs() {
+    stairSet = new Set();
+    const c = stairCells(home().stairs);
+    if (c) for (const [i, j] of c.steps) { stairSet.add(i + ',' + j); stairSet.add((i + UPX) + ',' + j); }
+  }
+  const stairSolid = (i, j) => stairSet.has(i + ',' + j);
+  const isStairEntry = (i, j) => { const c = stairCells(home().stairs); return !!c && c.entry[0] === i && c.entry[1] === j; };
+  const isStairLanding = (i, j) => { const c = stairCells(home().stairs); return !!c && c.landing[0] === i && c.landing[1] === j; };
+  // walls between rooms: key "cx,cz,e" is the east side of a room, "cx,cz,s" its south side. 'w' = wall, 'd' = doorway
+  const inDoor = (a) => a > 2.05 && a < CHUNK - 2.05;
+  function edgeKey(cx, cz, ncx, ncz) {
+    if (ncx !== cx) return `${Math.min(cx, ncx)},${cz},e`;
+    return `${cx},${Math.min(cz, ncz)},s`;
+  }
+  // stepping from one tile to the next (sideways or diagonal): does a wall stand in the way?
+  function wallBlocks(i, j, ni, nj) {
+    const W = home().walls;
+    if (!W) return false;
+    const cx = Math.floor(i / CHUNK), cz = Math.floor(j / CHUNK), ncx = Math.floor(ni / CHUNK), ncz = Math.floor(nj / CHUNK);
+    if (cx === ncx && cz === ncz) return false;
+    if (ncx !== cx && ncz !== cz) return true;   // corners: never squeeze past diagonally
+    const w = W[edgeKey(cx, cz, ncx, ncz)];
+    if (!w) return false;
+    if (w === 'd') return !inDoor((ncx !== cx ? j : i) - (ncx !== cx ? cz : cx) * CHUNK + 0.5);
+    return true;
+  }
+  // a point standing in a wall (thin walls sit right on the line between two rooms)
+  function wallSolidAt(x, z) {
+    const W = home().walls;
+    if (!W) return false;
+    const C = CHUNK, T = 0.14;
+    const bx = Math.round(x / C) * C;
+    if (Math.abs(x - bx) < T) {
+      const cz = Math.floor(z / C), w = W[`${bx / C - 1},${cz},e`];
+      if (w && !(w === 'd' && inDoor(z - cz * C))) return true;
+    }
+    const bz = Math.round(z / C) * C;
+    if (Math.abs(z - bz) < T) {
+      const cx = Math.floor(x / C), w = W[`${cx},${bz / C - 1},s`];
+      if (w && !(w === 'd' && inDoor(x - cx * C))) return true;
+    }
+    return false;
+  }
+  // is every room reachable (through open sides, doorways and the stairs)?
+  function homeConnected(chunks, walls, stairs) {
+    if (!chunks.length) return true;
+    const set = new Set(chunks.map(([x, z]) => chunkKey(x, z)));
+    const seen = new Set([chunkKey(...chunks.find((c) => chunkFloor(c) === 0) || chunks[0])]);
+    const q = [...seen].map((k) => k.split(',').map(Number));
+    const sc = stairs && [Math.floor(stairs.i / CHUNK), Math.floor(stairs.j / CHUNK)];
+    while (q.length) {
+      const [cx, cz] = q.shift();
+      const next = [];
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx, nz = cz + dz;
+        if (!set.has(chunkKey(nx, nz))) continue;
+        if ((walls || {})[edgeKey(cx, cz, nx, nz)] === 'w') continue;
+        next.push([nx, nz]);
+      }
+      if (sc && cx === sc[0] && cz === sc[1]) next.push([cx + UPC, cz]);
+      if (sc && cx === sc[0] + UPC && cz === sc[1]) next.push([sc[0], sc[1]]);
+      for (const n of next) { const k = chunkKey(...n); if (set.has(k) && !seen.has(k)) { seen.add(k); q.push(n); } }
+    }
+    return seen.size === set.size;
+  }
+
+  // ----- which floor is on screen -----
+  let editFloor = 0;   // the floor you're arranging in Decorate / room building
+  function viewFloor() {
+    if (place !== 'home') return 0;
+    if (mode === 'decorate' || mode === 'build') return editFloor;
+    const p = player.root.position;
+    return isUpX(p.x) || (player.climb && p.y > FH * 0.5) ? 1 : 0;
+  }
+  // slide everything upstairs into place for drawing or tapping (and back again afterwards)
+  const shifted = [];
+  function shiftWalk(o, hide) {
+    for (const c of o.children) {
+      if (c.position.x >= UP_LIM) {
+        shifted.push(c, c.visible);
+        c.position.x -= UPX;
+        c.position.y += FH;
+        if (hide && !c.userData.keepShown) c.visible = false;
+      } else if (c.children.length) shiftWalk(c, hide);
+    }
+  }
+  function shiftUp() {
+    if (place !== 'home' || !hasUpstairs() && !(home().build && isUpChunk(home().build.cx))) return false;
+    shiftWalk(world, viewFloor() === 0);
+    return true;
+  }
+  function shiftBack() {
+    for (let k = 0; k < shifted.length; k += 2) {
+      const c = shifted[k];
+      c.position.x += UPX;
+      c.position.y -= FH;
+      c.visible = shifted[k + 1];
+    }
+    shifted.length = 0;
+  }
+  function drawWorld() {
+    const on = shiftUp();
+    renderer.render(world, camera);
+    if (on) shiftBack();
+  }
+  function withShift(fn) {
+    const on = shiftUp();
+    if (on) world.updateMatrixWorld(true);
+    try { return fn(); } finally { if (on) { shiftBack(); world.updateMatrixWorld(true); } }
+  }
+
+  // ----- walking up and down the stairs -----
+  function stairGeom() {
+    const st = home().stairs, c = stairCells(st);
+    if (!c) return null;
+    const { di, dj } = c;
+    const cx = st.i + 0.5, cz = st.j + 0.5;
+    return {
+      E: { x: c.entry[0] + 0.5, z: c.entry[1] + 0.5, y: 0 },
+      B: { x: cx - di * 0.5, z: cz - dj * 0.5, y: 0 },
+      T: { x: cx + di * 2.5, z: cz + dj * 2.5, y: FH },
+      Tu: { x: cx + di * 2.5 + UPX, z: cz + dj * 2.5, y: 0 },
+      L: { x: c.landing[0] + 0.5, z: c.landing[1] + 0.5, y: 0 },
+      di, dj,
+    };
+  }
+  function startClimb(a, up) {
+    const G = stairGeom();
+    if (!G) return false;
+    const c = stairCells(home().stairs);
+    if (!isHomeTile(c.landing[0], c.landing[1]) || !isHomeTile(c.entry[0], c.entry[1])) return false;
+    a.climb = { pts: up ? [G.E, G.B, G.T, G.Tu, G.L] : [G.L, G.Tu, G.T, G.B, G.E], k: 1, up };
+    if (a === player) player.moveTarget = player.moveTarget && floorOfX(player.moveTarget.x) === (up ? 1 : 0) ? player.moveTarget : null;
+    return true;
+  }
+  // moves a climbing dog or you along the steps; returns how far it went
+  function climbStep(a, dt, speed) {
+    const C = a.climb, p = a.root.position;
+    let left = dt * speed, went = 0, face = null;
+    while (left > 1e-4 && C.k < C.pts.length) {
+      const q = C.pts[C.k];
+      if (floorOfX(q.x) !== floorOfX(p.x)) { p.set(q.x, q.y, q.z); C.k++; continue; }
+      const dx = q.x - p.x, dz = q.z - p.z, dy = q.y - p.y, d = Math.hypot(dx, dz, dy);
+      if (Math.hypot(dx, dz) > 1e-3) face = Math.atan2(dx, dz);
+      if (d <= left) { p.set(q.x, q.y, q.z); left -= d; went += d; C.k++; continue; }
+      p.x += (dx / d) * left; p.y += (dy / d) * left; p.z += (dz / d) * left; went += left; left = 0;
+    }
+    if (face !== null) {
+      if (a === player) player.face = face; else a.face = face;
+      a.root.rotation.y = angleLerp(a.root.rotation.y, face, damp(0.0004, dt));
+    }
+    if (C.k >= C.pts.length) { a.climb = null; p.y = 0; }
+    return went;
+  }
+  // the end of the stairs on the floor you're on (where you step on)
+  function stairEnd(fl) {
+    const G = stairGeom();
+    return G ? (fl === 1 ? G.L : G.E) : null;
+  }
+  // a dog headed for the other floor: walk to the stairs, then up or down
+  function dogFloorHop(d, tx) {
+    if (place !== 'home' || d.climb || !home().stairs) return null;
+    const pos = d.root.position, fl = floorOfX(pos.x);
+    if (floorOfX(tx) === fl) return null;
+    const P = stairEnd(fl);
+    if (!P) return null;
+    if (Math.hypot(P.x - pos.x, P.z - pos.z) < 0.4) { startClimb(d, fl === 0); return 'climb'; }
+    return P;
+  }
+  // you, pushing the stick into the stairs while standing in front of them
+  function playerStairPush(mx, mz) {
+    if (place !== 'home' || player.climb || !home().stairs) return false;
+    const c = stairCells(home().stairs), p = player.root.position;
+    const i = Math.floor(p.x), j = Math.floor(p.z);
+    if (i === c.entry[0] && j === c.entry[1] && mx * c.di + mz * c.dj > 0.55) return startClimb(player, true);
+    if (i === c.landing[0] && j === c.landing[1] && -(mx * c.di + mz * c.dj) > 0.55) return startClimb(player, false);
+    return false;
+  }
+
+  // ----- drawing: the staircase, the stairwell, walls between rooms -----
+  const stairGroup = pivot(homeRoot);
+  const innerWallGroup = pivot(homeRoot);
+  let innerWallKey = '';
+  const floorPieceMats = new Map();
+  function floorPieceMat(id, w, d, ox, oz) {
+    const k = [id, w, d, ox % 2, oz % 2].join('|');
+    if (floorPieceMats.has(k)) return floorPieceMats.get(k);
+    const base = ART.floorMaterial(id);
+    let m = base;
+    if (base.map) {
+      const t = base.map.clone();
+      t.needsUpdate = true;
+      if (t.repeat) t.repeat.set(w / 2, d / 2);
+      if (t.offset) t.offset.set((ox % 2) / 2, -(oz % 2) / 2);
+      m = new THREE.MeshLambertMaterial({ map: t });
+    }
+    floorPieceMats.set(k, m);
+    return m;
+  }
+  // the floor of an upstairs room with the stairwell in it: four pieces around the hole
+  function stairwellFloor(cx, cz, floorId) {
+    const c = stairCells(home().stairs);
+    const x0 = cx * CHUNK, z0 = cz * CHUNK;
+    const hs = c.steps.map(([i, j]) => [i + UPX, j]);
+    const hx0 = Math.min(...hs.map((h) => h[0])), hx1 = Math.max(...hs.map((h) => h[0])) + 1;
+    const hz0 = Math.min(...hs.map((h) => h[1])), hz1 = Math.max(...hs.map((h) => h[1])) + 1;
+    const pieces = [
+      [x0, x0 + CHUNK, z0, hz0], [x0, x0 + CHUNK, hz1, z0 + CHUNK],
+      [x0, hx0, hz0, hz1], [hx1, x0 + CHUNK, hz0, hz1],
+    ];
+    for (const [a, b, e, f] of pieces) {
+      if (b - a < 0.01 || f - e < 0.01) continue;
+      const m = new THREE.Mesh(geo(b - a, 0.12, f - e), floorPieceMat(floorId, b - a, f - e, a - x0, e - z0));
+      m.position.set((a + b) / 2, -0.06, (e + f) / 2);
+      roomGroup.add(m);
+    }
+    // a railing round the hole, open at the top of the stairs
+    const rail = '#8d6e4c';
+    const sides = [[hx0, hx0, hz0, hz1, 'w'], [hx1, hx1, hz0, hz1, 'e'], [hx0, hx1, hz0, hz0, 'n'], [hx0, hx1, hz1, hz1, 's']];
+    const topSide = c.di === 1 ? 'e' : c.di === -1 ? 'w' : c.dj === 1 ? 's' : 'n';
+    for (const [a, b, e, f, side] of sides) {
+      if (side === topSide) continue;
+      const len = Math.max(b - a, f - e), along = b - a > f - e;
+      box(roomGroup, along ? len : 0.08, 0.06, along ? 0.08 : len, rail, (a + b) / 2, 0.9, (e + f) / 2);
+      for (let k = 0; k <= len + 0.01; k += 0.5) box(roomGroup, 0.06, 0.9, 0.06, rail, along ? a + k : a, 0.45, along ? e : e + k);
+    }
+  }
+  function buildStairs() {
+    stairGroup.clear();
+    const st = home().stairs;
+    if (!st || !hasUpstairs()) return;
+    const c = stairCells(st), G = stairGeom();
+    const g = pivot(stairGroup, st.i + 0.5, 0, st.j + 0.5);
+    g.rotation.y = Math.atan2(-c.di, -c.dj);   // the steps rise towards local -z
+    const N = 9, run = 3 / N, rise = FH / N;
+    for (let k = 0; k < N; k++) {
+      const y = (k + 1) * rise;
+      box(g, 0.94, y, run + 0.01, k % 2 ? '#b58b5f' : '#a97f55', 0, y / 2, 0.5 - run * (k + 0.5));
+      box(g, 0.96, 0.05, run + 0.03, '#d8b98d', 0, y + 0.02, 0.5 - run * (k + 0.5));
+    }
+    for (const x of [-0.5, 0.5]) {
+      box(g, 0.06, 0.06, 3.3, '#6d4c41', x, FH * 0.5 + 0.85, -1);
+      g.children[g.children.length - 1].rotation.x = Math.atan2(FH, 3);
+      for (let k = 0; k < 4; k++) box(g, 0.05, 0.9, 0.05, '#6d4c41', x, (k + 0.5) * FH / 4 + 0.45, 0.4 - k * 0.95);
+    }
+    void G;
+  }
+  // walls between rooms. In front of you (between you and the camera) they're cut down so you can see in.
+  function buildInnerWalls(force) {
+    const H = home(), W = H.walls || {};
+    const p = player.root.position;
+    const cut = mode === 'build' || mode === 'decorate';
+    const pcx = Math.floor(p.x / CHUNK), pcz = Math.floor(p.z / CHUNK);
+    const key = Object.entries(W).map((e) => e.join(':')).join('|') + '/' + (cut ? 'c' : pcx + ',' + pcz) + '/' + H.chunks.length + '/' + Object.keys(H.rooms || {}).length;
+    if (!force && key === innerWallKey) return;
+    innerWallKey = key;
+    innerWallGroup.clear();
+    for (const [k, w] of Object.entries(W)) {
+      const [cx, cz, side] = k.split(','), x = +cx, z = +cz;
+      const east = side === 'e';
+      const a = [x, z], b = east ? [x + 1, z] : [x, z + 1];
+      if (!hasChunk(...a) || !hasChunk(...b)) continue;
+      // in front of you = the wall's line is south or east of where you stand
+      const front = cut || (east ? (x + 1) * CHUNK > p.x && Math.abs((z + 0.5) * CHUNK - p.z) < CHUNK * 1.6 : (z + 1) * CHUNK > p.z && Math.abs((x + 0.5) * CHUNK - p.x) < CHUNK * 1.6) && !(east ? pcx === x + 1 : pcz === z + 1);
+      const h = front ? 0.45 : 2.4;
+      const sideStyle = (c) => (isGardenChunk(...c) ? null : roomStyle(...c));
+      const sA = sideStyle(a), sB = sideStyle(b);
+      const L0 = east ? z * CHUNK : x * CHUNK;
+      const segs = w === 'd' ? [[0, 2], [CHUNK - 2, CHUNK]] : [[0, CHUNK]];
+      for (const [u0, u1] of segs) {
+        const len = u1 - u0, mid = L0 + (u0 + u1) / 2;
+        for (const [st, off] of [[sA, -0.06], [sB, 0.06]]) {
+          const matC = st ? (front ? (D.WALLS[st.wall] || D.WALLS.cream).c1 : ART.wallMaterial(st.wall, len)) : '#e8e2d6';
+          if (east) box(innerWallGroup, 0.12, h, len, matC, (x + 1) * CHUNK + off, h / 2, mid);
+          else box(innerWallGroup, len, h, 0.12, matC, mid, h / 2, (z + 1) * CHUNK + off);
+        }
+        const trim = sA ? (D.WALLS[sA.wall] || D.WALLS.cream).trim : '#c9b9a0';
+        if (east) box(innerWallGroup, 0.28, 0.08, len, trim, (x + 1) * CHUNK, h + 0.03, mid);
+        else box(innerWallGroup, len, 0.08, 0.28, trim, mid, h + 0.03, (z + 1) * CHUNK);
+      }
+      if (w === 'd') {
+        // a doorway: a frame (no door), with the wall over it when the wall is full height
+        const trim = sA ? (D.WALLS[sA.wall] || D.WALLS.cream).trim : '#c9b9a0';
+        const m0 = L0 + 2, m1 = L0 + CHUNK - 2;
+        for (const u of [m0, m1]) {
+          if (east) box(innerWallGroup, 0.3, h + 0.02, 0.1, trim, (x + 1) * CHUNK, (h + 0.02) / 2, u);
+          else box(innerWallGroup, 0.1, h + 0.02, 0.3, trim, u, (h + 0.02) / 2, (z + 1) * CHUNK);
+        }
+        if (!front) {
+          const lw = m1 - m0, mm = (m0 + m1) / 2, sm = sA ? (D.WALLS[sA.wall] || D.WALLS.cream).c1 : '#e8e2d6';
+          if (east) { box(innerWallGroup, 0.24, 0.4, lw, sm, (x + 1) * CHUNK, 2.2, mm); box(innerWallGroup, 0.3, 0.1, lw + 0.1, trim, (x + 1) * CHUNK, 1.98, mm); }
+          else { box(innerWallGroup, lw, 0.4, 0.24, sm, mm, 2.2, (z + 1) * CHUNK); box(innerWallGroup, lw + 0.1, 0.1, 0.3, trim, mm, 1.98, (z + 1) * CHUNK); }
+        }
+      }
+    }
+  }
 
   function buildRoom() {
     roomGroup.clear();
@@ -544,9 +875,15 @@
       if (isGardenChunk(cx, cz)) { buildGardenChunk(cx, cz); return; }
       const st = roomStyle(cx, cz);
       const W = D.WALLS[st.wall] || D.WALLS.cream;
-      const floor = new THREE.Mesh(geo(C, 0.12, C), ART.floorMaterial(st.floor));
-      floor.position.set(x0 + h, -0.06, z0 + h);
-      roomGroup.add(floor);
+      const sc = home().stairs && stairCells(home().stairs);
+      if (sc && isUpChunk(cx) && Math.floor(sc.steps[0][0] / C) === cx - UPC && Math.floor(sc.steps[0][1] / C) === cz) stairwellFloor(cx, cz, st.floor);
+      else {
+        const floor = new THREE.Mesh(geo(C, 0.12, C), ART.floorMaterial(st.floor));
+        floor.position.set(x0 + h, -0.06, z0 + h);
+        roomGroup.add(floor);
+      }
+      // upstairs rooms rest on a thick ceiling over the room below
+      if (isUpChunk(cx)) box(roomGroup, C + 0.02, 0.26, C + 0.02, W.trim, x0 + h, -0.25, z0 + h);
 
       const grid = new THREE.GridHelper(C, C, 0x7a5a3a, 0x7a5a3a);
       grid.material.transparent = true;
@@ -576,6 +913,8 @@
       if (!hasChunk(cx, cz + 1)) box(roomGroup, C, 0.14, 0.08, W.trim, x0 + h, -0.06, z0 + C + 0.04);
       if (!hasChunk(cx + 1, cz)) box(roomGroup, 0.08, 0.14, C + 0.08, W.trim, x0 + C + 0.04, -0.06, z0 + h + 0.04);
     });
+    buildStairs();
+    buildInnerWalls(true);
   }
 
   // gardens: grass, an open sky and a low picket fence on the outside edges
@@ -832,6 +1171,7 @@
     siteLabel.renderOrder = 10;
     siteLabel.position.set(x0 + h, 2.7, z0 + h);
     siteGroup.add(siteLabel);
+    siteGroup.children.forEach((c) => { c.userData.keepShown = true; });
   }
 
   let buildCands = [];
@@ -839,30 +1179,6 @@
   const candMat = new THREE.MeshBasicMaterial({ color: 0x6ccf6c, transparent: true, opacity: 0.4, depthWrite: false });
   const candSelMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.6, depthWrite: false });
   const plusMat = new THREE.SpriteMaterial({ map: emojiTexture('➕'), transparent: true, depthWrite: false });
-  function findCandidates() {
-    const out = [], seen = new Set();
-    for (const [cx, cz] of state.chunks) {
-      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const k = chunkKey(cx + dx, cz + dz);
-        if (!chunkSet.has(k) && !seen.has(k)) { seen.add(k); out.push([cx + dx, cz + dz]); }
-      }
-    }
-    return out;
-  }
-  function showCandidates() {
-    candGroup.clear();
-    for (const [cx, cz] of buildCands) {
-      const isPick = buildPick && buildPick[0] === cx && buildPick[1] === cz;
-      const m = new THREE.Mesh(geo(CHUNK - 0.3, 0.04, CHUNK - 0.3), isPick ? candSelMat : candMat);
-      m.position.set(cx * CHUNK + CHUNK / 2, 0.03, cz * CHUNK + CHUNK / 2);
-      candGroup.add(m);
-      const s = new THREE.Sprite(plusMat);
-      s.scale.set(1.3, 1.3, 1);
-      s.position.set(cx * CHUNK + CHUNK / 2, 0.9, cz * CHUNK + CHUNK / 2);
-      candGroup.add(s);
-    }
-  }
-
   // =====================================================================
   // Places to walk: the park and the places that unlock later.
   // Each place is built the first time you go there. place === 'park' means "out on a walk";
@@ -1109,7 +1425,7 @@
     if (y !== undefined && onTopLevel(x, z, y)) return !S.inside(x, z);
     if (place === 'home') {
       const i = Math.floor(x), j = Math.floor(z);
-      if (!isHomeTile(i, j)) return true;
+      if (!isHomeTile(i, j) || stairSolid(i, j) || wallSolidAt(x, z)) return true;
       const f = furnitureAt(i, j);
       return !!(f && D.ITEMS[f.type].solid);
     }
@@ -1276,7 +1592,7 @@
     pos.z = clamp(pos.z, b.z0, b.z1);
   }
   function passable(i, j) {
-    if (!isHomeTile(i, j)) return false;
+    if (!isHomeTile(i, j) || stairSolid(i, j)) return false;
     const f = furnitureAt(i, j);
     return !(f && D.ITEMS[f.type].solid);
   }
@@ -1317,12 +1633,22 @@
     const pass = atHome ? passable : (i, j, y) => { const k = (i * 4096 + j) * 2 + lvl(i + 0.5, j + 0.5, y); let v = memo.get(k); if (v === undefined) { v = !isSolid(i + 0.5, j + 0.5, y); memo.set(k, v); } return v; };
     const tileIn = atHome ? isHomeTile : (i, j) => !S.inside || S.inside(i + 0.5, j + 0.5);
     const climbOK = (i, j, ni, nj) => !terrainOn() || Math.abs(nextH(i, j, ni, nj) - cellH(i, j)) <= climb + 0.01;
+    // at home the stairs link the tile in front of them with the landing upstairs
+    const sc = atHome && home().stairs && hasUpstairs() ? stairCells(home().stairs) : null;
     for (let h = 0; h < queue.length && h < 9000; h++) {
       const [i, j] = queue[h];
       if (i === ti && j === tj) { found = true; break; }
+      if (sc) {
+        for (const [a, b] of [[sc.entry, sc.landing], [sc.landing, sc.entry]]) {
+          if (a[0] !== i || a[1] !== j) continue;
+          const k = key(b[0], b[1]);
+          if (!prev.has(k) && passable(b[0], b[1])) { prev.set(k, [i, j]); queue.push([b[0], b[1]]); }
+        }
+      }
       for (const [di, dj] of DIRS8) {
         const ni = i + di, nj = j + dj, k = key(ni, nj);
         if (prev.has(k)) continue;
+        if (atHome && (wallBlocks(i, j, ni, nj) || (di && dj && (wallBlocks(i, j, i + di, j) || wallBlocks(i, j, i, j + dj) || wallBlocks(i + di, j, ni, nj) || wallBlocks(i, j + dj, ni, nj))))) continue;
         const isGoal = ni === ti && nj === tj;
         const nh = nextH(i, j, ni, nj);
         if (isGoal ? !tileIn(ni, nj) : !pass(ni, nj, nh)) continue;
@@ -1455,6 +1781,17 @@
     // sitting, lying back, playing: a push of the stick gets you up again (and you take the lead back from your dog)
     if (fun && (fun.still || fun.kind === 'lead') && Math.hypot(ix, iy) > 0.35) { if (fun.kind === 'lead') toast('You take the lead again 🦮'); endFun('move'); }
     if (player.pose || (fun && fun.still)) { poseTick(dt); return; }
+    if (player.climb) {
+      if (place !== 'home') player.climb = null;
+      else {
+        const went = climbStep(player, dt, 2.6);
+        player.phase += went * 4.2;
+        player.blend = lerp(player.blend, 1, damp(0.0005, dt));
+        const s2 = Math.sin(player.phase) * 0.7 * player.blend;
+        player.legL.rotation.x = s2; player.legR.rotation.x = -s2; player.armL.rotation.x = -s2 * 0.8; player.armR.rotation.x = s2 * 0.8;
+        return;
+      }
+    }
 
     let mx = 0, mz = 0, mag = 0;
     if (ix || iy) {
@@ -1473,6 +1810,12 @@
         if (player.pathFor !== goal) { player.path = findPath(pos, goal); player.pathFor = goal; }
         while (player.path.length > 1 && Math.hypot(player.path[0].x - pos.x, player.path[0].z - pos.z) < 0.25) player.path.shift();
         tgt = player.path[0] || goal;
+        // the next step is on the other floor: take the stairs
+        if (place === 'home' && floorOfX(tgt.x) !== floorOfX(pos.x)) {
+          const P = stairEnd(floorOfX(pos.x));
+          if (P && Math.hypot(P.x - pos.x, P.z - pos.z) < 0.45) { startClimb(player, floorOfX(pos.x) === 0); player.path = null; player.pathFor = null; return; }
+          if (P) tgt = P;
+        }
       }
       const d = Math.hypot(goal.x - pos.x, goal.z - pos.z);
       const dx = tgt.x - pos.x, dz = tgt.z - pos.z, dt2 = Math.hypot(dx, dz) || 1;
@@ -1481,6 +1824,7 @@
     }
 
     let moved = 0;
+    if (mag > 0.05 && !player.moveTarget && playerStairPush(mx, mz)) return;
     if (mag > 0.05) {
       const ox = pos.x, oz = pos.z;
       moveWithCollision(pos, mx * 3.3 * mag * dt, mz * 3.3 * mag * dt, 0.25);
@@ -1984,6 +2328,10 @@
       const pos = this.root.position;
       const gx = tx, gz = tz;
       if (terrainOn()) { const w = this.navPoint(tx, tz, dt); if (w) { tx = w.x; tz = w.z; } }
+      // headed for the other floor: to the stairs first, then up or down
+      const hop = place === 'home' ? dogFloorHop(this, tx) : null;
+      if (hop === 'climb') { this.moving = true; return Math.hypot(gx - pos.x, gz - pos.z); }
+      if (hop) { tx = hop.x; tz = hop.z; }
       const dx = tx - pos.x, dz = tz - pos.z;
       const d = Math.hypot(dx, dz);
       if (d < 1e-4) return Math.hypot(gx - pos.x, gz - pos.z);
@@ -2000,6 +2348,10 @@
       this.stateTime += dt;
       this.moving = false;
       this.tickNeeds(dt);
+      if (this.climb) {
+        if (place !== 'home') this.climb = null;
+        else { climbStep(this, dt, 2.2); this.moving = true; this.curSpeed = 2.2; this.animate(dt); this.updateBubble(); return; }
+      }
       if (this.tumbleT > 0) {
         this.tumbleT -= dt;
       } else {
@@ -2139,7 +2491,14 @@
           this.goTo(beside, 1.8, () => { this.setState('sleep'); this.zTimer = 0.5; spawnEmoji('💕', this.headWorld(0.3), { size: 0.35 }); }, 0.25);
           return;
         }
-        const bed = findFurniture('bed', this, false, this.root.position);
+        let bed = findFurniture('bed', this, false, this.root.position);
+        // never right next to a rival who's asleep already
+        const rv = bed && dogs.find((o) => o !== this && o.state === 'sleep' && isRival(this, o) && flatDist(o.root.position, tileCenter(bed)) < 3);
+        if (rv) {
+          const far = home().furniture.filter((f) => roleOf(f) === 'bed' && !(furnRT.get(f) || {}).claim && flatDist(rv.root.position, tileCenter(f)) >= 3);
+          bed = far.length ? far.sort((x, y) => flatDist(this.root.position, tileCenter(x)) - flatDist(this.root.position, tileCenter(y)))[0] : null;
+          if (Math.random() < 0.3) toast(fill(pick(D.RIVAL_LINES.avoid), { a: this.name, b: rv.name }));
+        }
         if (bed) {
           this.claimItem(bed);
           this.goTo(tileCenter(bed), 1.8, () => {
@@ -2172,6 +2531,7 @@
         if (spot) { this.goTo(spot, 2, () => pullToyOut(this, tb), 0.45); return; }
       }
       if (!visit && gardenDogIdea(this)) return;
+      if (!visit && critterChaseIdea(this)) return;
       if (this.flag('digs') && !visit && Object.keys(state.gardens).length && Math.random() < 0.12) {
         const t = randomGardenPoint();
         if (t) { this.goTo(t, 2, () => this.setState('dig', 2), 0.3); return; }
@@ -2880,6 +3240,8 @@
     const mine = [a, b].filter((d) => !d.npc);
     if (kind !== 'scuffle') mine.forEach((d) => addSpec(d, 'charmer', 4));
     if (kind === 'play' && mine.length === 1) { const npc = [a, b].find((d) => d.npc); if (npc) setTimeout(() => storyPlay(npc), 1200); }
+    if (kind === 'play') addRivalry(a, b, -D.RIVAL.play);
+    if (kind === 'scuffle') addRivalry(a, b, D.RIVAL.scuffle);
     if (kind === 'play') {
       addFriendship(a, b, 8);
       mine.forEach((d) => { d.happy = Math.min(100, d.happy + 10); });
@@ -3021,9 +3383,16 @@
       const pos = w.parts.root.position;
       let moved = 0;
       const [ax, az] = loopPoint(w.t + w.dir * w.speed * dt * 8);
+      const near = flatDist(pos, pp);
+      // neighbors stop whenever you stand next to them (and all through a chat), and turn to face you
+      const facing = !w.visit && (w.talking || near < 2.4);
+      if (facing) {
+        w.pause = Math.max(w.pause, w.talking ? 999 : 1.4);
+        w.parts.root.rotation.y = angleLerp(w.parts.root.rotation.y, Math.atan2(pp.x - pos.x, pp.z - pos.z), damp(0.0005, dt));
+      }
       if (w.visit) moved = benchWalker(w, dt);
+      else if (w.talking || w.waiting) { /* stays put while you chat, or while your dog looks for their things */ }
       else if (w.pause > 0) w.pause -= dt;
-      else if (w.talking) { /* stays put while you chat */ }
       else if (quirkSolid(ax, az) && !quirkSolid(pos.x, pos.z)) { /* neighbors wait for green too */ }
       else {
         w.t += w.dir * w.speed * dt;
@@ -3043,7 +3412,6 @@
       if (!w.met && pos.distanceTo(pp) < 2.2) { w.met = true; if (!storyMeet(w)) neighborGift(w); }
       w.label.visible = pos.distanceTo(pp) < 9;
       // neighbors slow down for a moment when they pass you, so you can say hi
-      if (!w.slowed && pos.distanceTo(pp) < 2.4) { w.slowed = true; w.pause = Math.max(w.pause, 2.2); w.parts.root.rotation.y = Math.atan2(pp.x - pos.x, pp.z - pos.z); }
       if (terrainOn()) pos.y = layerH(pos.x, pos.z, pos.y);
       w.dog.update(dt);
       w.dog.updateLeash();
@@ -3316,6 +3684,8 @@
     if (d.flag('stormFear')) p += place === 'home' ? 0.05 : -0.08;
     if (d.hasBadge('bronze')) p += 0.05;
     p += [0, 0.03, 0.06, 0.1][d.specAs('performer')];
+    // training bones from the oven: a few easier tries
+    if (d.trainBoost > 0) { p += 0.12; d.trainBoost--; }
     p = clamp(p, 0.05, 0.99);
     if (Math.random() < p) { performTrick(d, id); examTry(id, id); return; }
     if (lvl === 0) d.tricks[id] = (d.tricks[id] || 0) + 0.35;
@@ -3696,22 +4066,25 @@
   }
   function renderHouse() {
     const t = houseTier(), cur = D.HOUSE_TIERS[t];
-    $('hsNow').innerHTML = `<div class="ic">${IC('home')}</div><div class="txt"><b>${esc(cur.name)}</b><small>${t ? esc(cur.perk) : 'Upgrade it to fit more rooms and make life nicer for your dogs.'} · room for ${cur.rooms} rooms</small></div>`;
+    const upTxt = (T) => (T.up ? ` + ${T.up} upstairs` : '');
+    $('hsNow').innerHTML = `<div class="ic">${IC('home')}</div><div class="txt"><b>${esc(cur.name)}</b><small>${t ? esc(cur.perk) : 'Upgrade it to fit more rooms and make life nicer for your dogs.'} · room for ${cur.rooms} rooms${upOpen() ? upTxt(cur) : ''}</small>` +
+      (unlockedFeat('rooms') && !visit ? `<button class="small" data-act="rooms">${IC('crane')} Rooms: add, move, walls${upOpen() ? ', stairs' : ''}</button>` : '') + `</div>`;
     $('hsList').innerHTML = D.HOUSE_TIERS.map((T, i) => {
       if (i === 0) return '';
       const done = i <= t, next = i === t + 1;
       const head = `<div class="ic tierNo${done ? ' done' : ''}">${i + 1}</div>`;
       if (done) return `<div class="row badgeRow got">${head}<div class="txt"><b>${esc(T.name)}</b><small>${esc(T.perk)}</small></div></div>`;
-      if (!next) return `<div class="row badgeRow later">${head}<div class="txt"><b>${esc(T.name)}</b><small>Rank ${T.rank} · ${T.rooms} rooms · ${esc(T.perk)}</small></div></div>`;
+      if (!next) return `<div class="row badgeRow later">${head}<div class="txt"><b>${esc(T.name)}</b><small>Rank ${T.rank} · ${T.rooms} rooms${upTxt(T)} · ${esc(T.perk)}</small></div></div>`;
       const rows = houseRows(T).map((r) => `<div class="req${r.ok ? ' done' : ''}">${IC(r.ok ? 'check' : 'dot')}<div><small class="note">${esc(r.text)}</small>${r.need > 1 ? `<div class="track"><div class="fill" style="width:${Math.round((r.have / r.need) * 100)}%"></div></div><small class="prog">${r.have} of ${r.need}</small>` : ''}</div></div>`).join('');
       const why = houseBlock(T);
-      return `<div class="row badgeRow next">${head}<div class="txt"><b>${esc(T.name)}</b><small>${esc(T.perk)} · room for ${T.rooms} rooms · a new wallpaper and floor</small>${rows}` +
+      return `<div class="row badgeRow next">${head}<div class="txt"><b>${esc(T.name)}</b><small>${esc(T.perk)} · room for ${T.rooms} rooms${T.up ? ` (and ${T.up} upstairs, once every room downstairs is built)` : ''} · a new wallpaper and floor</small>${rows}` +
         `<button class="primary small" data-act="upgradeHouse"${why ? ' disabled' : ''}>${why ? esc(why) : `Upgrade for ${T.cost} coins`}</button></div></div>`;
     }).join('');
   }
   $('house').addEventListener('click', (e) => {
     if (e.target.id === 'house' || e.target.closest('[data-act="closeHouse"]')) { $('house').classList.add('hidden'); return; }
     if (e.target.closest('[data-act="upgradeHouse"]')) upgradeHouse();
+    if (e.target.closest('[data-act="rooms"]')) { $('house').classList.add('hidden'); if (place !== 'home') { toast('Head home first 🏠'); return; } enterBuildMode('move'); }
   });
 
   // =====================================================================
@@ -4164,7 +4537,12 @@
     }
     const bf = bestFriend(d);
     const friendLine = bf && bf.value >= 15 ? `<div>${bf.value >= D.FRIEND_LEVEL ? 'Best friend' : 'Getting to know'}: ${esc(bf.name)} 💕</div>` : '';
-    u.favs.innerHTML = `<div>Favorite toy: ${esc(fav)}</div>${spot}${friendLine}`;
+    // favorite playmate among your own dogs, and a rival if there is one
+    const pal = dogs.filter((o) => o !== d).sort((a, b) => friendship(d.id, b.id) - friendship(d.id, a.id))[0];
+    const palLine = pal && friendship(d.id, pal.id) >= 25 && !(bf && bf.name === pal.name) ? `<div>Favorite playmate: ${esc(pal.name)} 🐾</div>` : '';
+    const rv = rivalOf(d);
+    const rivalLine = rv ? `<div>Doesn’t get along with: ${esc(rv.name)} 💢</div>` : '';
+    u.favs.innerHTML = `<div>Favorite toy: ${esc(fav)}</div>${spot}${friendLine}${palLine}${rivalLine}`;
     u.bondRow.innerHTML = bondLine(d);
   }
   function updatePack() {
@@ -4330,6 +4708,8 @@
       computeComfort();
       d.happy = Math.min(100, d.happy + 6);
       d.setState('playtoy', rand(3, 5));
+      const tn = (D.TOYS[state.clutter[state.clutter.length - 1].type] || { name: 'toy' }).name.toLowerCase();
+      setTimeout(() => { if (place === 'home' && d.state === 'playtoy') toyPals(d, tn); }, 1500);
       return;
     }
     d.idle();
@@ -4437,6 +4817,7 @@
     if (!it.use && D.SEATS[f.type]) { sitDown(homeSeat(f)); return; }
     if (it.use === 'paint') { startPainting(f); return; }
     if (it.use === 'mail') { openMail(); return; }
+    if (it.use === 'bake') { openBake(); return; }
     if (it.use === 'piano') { startMusic(f); return; }
     const toggle = (label, onMsg, offMsg) => {
       f.on = !(f.on ?? label);
@@ -5058,7 +5439,15 @@
     mealDog = d;
     const L = $('mealList');
     L.innerHTML = '';
-    $('mealSub').textContent = state.meals.length ? `Pick a treat for ${d.name}` : 'No treats yet — cook some at a 🍳 Stove, or buy some from vendors on walks.';
+    const tin = Object.entries(state.treats || {}).filter(([k, n]) => n > 0 && D.BAKES[k]);
+    $('mealSub').textContent = state.meals.length || tin.length ? `Pick a treat for ${d.name}` : 'No treats yet — cook some at a 🍳 Stove, bake some in an oven, or buy some from vendors on walks.';
+    for (const [k, n] of tin) {
+      const B = D.BAKES[k], b = document.createElement('button');
+      b.className = 'toyCard';
+      b.innerHTML = `${thumbOf.pic(B.icon)}<b>${esc(B.name)}</b><small>Homemade ×${n}</small>`;
+      b.addEventListener('click', () => giveTreat(d, k));
+      L.appendChild(b);
+    }
     const groups = {};
     state.meals.forEach((m, idx) => { const k = m.id + '|' + m.q; (groups[k] = groups[k] || []).push(idx); });
     for (const [k, idxs] of Object.entries(groups)) {
@@ -5264,7 +5653,7 @@
     const name = dogs[0] ? dogs[0].name : 'A friend';
     const payload = {
       k: 1, uid: state.uid, name: `${name}${dogs.length > 1 ? ' & friends' : ''}`,
-      chunks: state.chunks, gardens: Object.keys(state.gardens), rooms: state.rooms,
+      chunks: state.chunks, gardens: Object.keys(state.gardens), rooms: state.rooms, walls: state.walls, stairs: state.stairs,
       f: state.furniture.map((f) => [f.type, f.i, f.j, f.rot || 0, f.on ? 1 : 0, f.gift || 0]),
       dogs: dogs.map((d) => [d.name, d.breed, d.coat, d.acc]),
     };
@@ -5279,7 +5668,7 @@
     if (!p || p.k !== 1 || !Array.isArray(p.chunks)) return null;
     return {
       uid: p.uid, name: p.name, build: null, clutter: [],
-      chunks: p.chunks, rooms: p.rooms || {}, gardens: Object.fromEntries((p.gardens || []).map((k) => [k, true])),
+      chunks: p.chunks, rooms: p.rooms || {}, gardens: Object.fromEntries((p.gardens || []).map((k) => [k, true])), walls: p.walls || {}, stairs: p.stairs || null,
       furniture: (p.f || []).filter((x) => D.ITEMS[x[0]]).map(([type, i, j, rot, on, gift]) => ({ type, i, j, rot, on: !!on, gift: gift || null, filled: true })),
       dogs: (p.dogs || []).map(([name, breed, coat, acc]) => ({ name, breed, coat, acc })),
     };
@@ -5482,7 +5871,14 @@
         text: `${d.name} was born on this day.`, task: { kind: 'progress', ev: 'pet', n: 3, how: `Give ${d.name} 3 birthday cuddles` }, reward: { coins: 40, xp: 40 } };
     });
   }
-  const calEvents = () => D.CAL_EVENTS.filter((e) => !e.need || locUnlocked(e.need)).concat(birthdayEvents(), tourneyEvents());
+  const calEvents = () => D.CAL_EVENTS.filter((e) => !e.need || locUnlocked(e.need)).concat(birthdayEvents(), tourneyEvents(), discEvents());
+  function discEvents() {
+    if (!locUnlocked('beach') || !unlockedFeat('disc')) return [];
+    const out = [];
+    for (let m = 1; m <= 12; m++) for (const d0 of D.DISC.cup) out.push({ id: `discup:${m}:${d0}`, tourney: true, name: 'Disc Cup', icon: '🥏', m, d0, d1: d0, loc: 'beach',
+      text: 'Play disc dog on the mat at the beach. Your first round of the day counts for the cup.', task: { kind: 'progress', ev: 'disc', n: 1, how: 'Play a round of disc dog at the beach' }, reward: { coins: 20, xp: 30 } });
+    return out;
+  }
   const evKnown = (e) => !!e.bday || !!e.tourney || calState().seen.includes(e.id);
   const evRange = (e, y) => [gdOf(y, e.m, e.d0), gdOf(y, e.m, e.d1) + 1];
   function evActive(e) { const [a, b] = evRange(e, clockNow.year); return clockNow.gameDay >= a && clockNow.gameDay < b; }
@@ -6068,6 +6464,10 @@
     const ripe = (state.beds || []).filter((b) => b.seed && b.stage >= 4 && !D.SEEDS[b.seed].flower).length;
     if (ripe) add(IC('sprout'), `${ripe} bed${ripe > 1 ? 's are' : ' is'} ready to pick in your garden.`, home ? '' : 'home', home ? '' : 'Go home');
     if (locUnlocked('grounds') && tourneyToday() && agi().entered !== clockNow.gameDay) add(TH('pic', '🏆'), `It’s tournament day at the Tournament Grounds (${D.CLASSES[agi().cls]}).`, 'walk:grounds', 'Go');
+    if (unlockedFeat('disc') && locUnlocked('beach') && discCupToday() && disc().cupDay !== clockNow.gameDay) add(TH('pic', '🥏'), `Disc Cup today at the beach (${D.CLASSES[disc().cls]}).${state.toys.includes('frisbee') ? '' : ' You’ll need a frisbee from the kiosk.'}`, 'walk:beach', 'Go');
+    if (unlockedFeat('market') && locUnlocked('oldtown') && marketDay() && state.marketDay !== clockNow.gameDay) add(TH('pic', '🧺'), 'It’s market day in Old Town. Bring crops, treats or bouquets to sell.', 'walk:oldtown', 'Go');
+    if (unlockedFeat('museum') && locUnlocked('oldtown') && state.museum && state.museum.pending >= 20) add(TH('pic', '🏛️'), `The museum is holding 🪙 ${Math.floor(state.museum.pending)} in ticket money for you.`, 'walk:oldtown', 'Go');
+    if (unlockedFeat('museum') && locUnlocked('oldtown') && (!state.museum || !Object.values(state.museum.halls || {}).some((h) => h.slots.some(Boolean)))) add(TH('pic', '🏛️'), 'The museum in Old Town would love to show some of your finds.', 'walk:oldtown', 'Go');
     // pastimes that fit right now
     const kind = pileKind();
     if (kind && unlockedFeat('piles') && out.length < 5) add(IC('rake'), kind === 'snow' ? 'It’s snowy: shovel a snow pile for your dogs to jump in.' : 'Leaves are falling: rake a pile for your dogs to jump in.', home ? '' : '', '');
@@ -6211,6 +6611,7 @@
     spawnPatches();
     spawnDucks();
     spawnBottle();
+    round3Walk();
     walkStartT = Date.now();
     if (sitDog) { sitDog.reset && sitDog.releaseClaim(); sitDog.root.position.set(0.9, groundAt(0.9, 17.3), 17.3); sitDog.root.rotation.y = sitDog.face = Math.PI; sitDog.setState('follow'); if (state.sitting) state.sitting.walks = (state.sitting.walks || 0) + 1; }
     placeMeetup();
@@ -6244,6 +6645,7 @@
     endFun('leave');
     clearPatches();
     clearDucks();
+    clearCatchables();
     if (bottle) { bottle.g.parent && bottle.g.parent.remove(bottle.g); bottle = null; }
     clearLostDog();
     const wasAt = loc;
@@ -6279,6 +6681,7 @@
     if (sitDog) { sitDog.dropSpot(); sitDog.offLeash = false; sitDog.returning = false; sitDog.leash.visible = false; sitDog.root.position.copy(freeNear(CHUNK / 2 + 0.9, CHUNK - 2)); sitDog.idle(rand(1, 3)); }
     renderBeds();
     sittingTick();
+    round3Home();
     // a dog that got wet on the walk shakes off at the door, right next to you
     const wet = dogs.find((d) => d.wetT > 0);
     if (wet) setTimeout(() => { if (place === 'home') shakeOff(wet, 'walk'); }, 1400);
@@ -6540,7 +6943,9 @@
       case 'moon': updateMoon(dt, q, pp); break;
       default: break;
     }
-    if (!want && !talk && nearestWalker(pp) && !fun) want = 'talk';
+    // the museum door, your market stall, the pier and the disc mat come before a chat
+    if (!want && !fun) { const r3 = round3Ctx(pp); if (r3 && r3 !== 'favor' && r3 !== 'catch' && r3 !== 'snowman') want = r3; }
+    if (!want && !talk && nearestWalker(pp) && !fun) want = favorW && favorW.favor && nearestWalker(pp) === favorW ? 'favor' : 'talk';
     if (!want) want = funCtx();
     if (fun && fun.kind !== 'lead' && fun.kind !== 'seek' && fun.kind !== 'hide') want = null;
     updateTalk();
@@ -6673,7 +7078,8 @@
   // the extra button in the walk bar changes with what's nearby
   const CTX = { talk: ['chat', 'Talk'], stay: ['hand', 'Stay'], echo: ['echo', 'Speak'], sled: ['sled', 'Sled'], ferris: ['ferris', 'Ride'], portal: ['portal', 'Portal'], rocket: ['rocket', 'Rocket'],
     sit: ['seat', 'Sit'], skip: ['stone', 'Skip'], stars: ['star', 'Stars'], rake: ['rake', 'Rake'], shovel: ['rake', 'Shovel'],
-    pickup: ['person', 'Hand over'], bed: ['sprout', 'Dig a bed'], treasure: ['map', 'Dig here'], bottle: ['search', 'Bottle'], run: ['flag', 'Run'], enter: ['flag', 'Enter'], ducks: ['wave', 'Feed ducks'] };
+    pickup: ['person', 'Hand over'], bed: ['sprout', 'Dig a bed'], treasure: ['map', 'Dig here'], bottle: ['search', 'Bottle'], run: ['flag', 'Run'], enter: ['flag', 'Enter'], ducks: ['wave', 'Feed ducks'],
+    catch: ['net', 'Catch'], museum: ['museum', 'Museum'], market: ['stall', 'Market'], fish: ['fish', 'Fish'], disc: ['disc', 'Disc dog'], favor: ['search', 'Help'], snowman: ['snowman', 'Snowman'], flakes: ['snow', 'Snowflakes'] };
   let ctxKind = null;
   function setCtx(k) {
     if (k === ctxKind) return;
@@ -6698,7 +7104,7 @@
       case 'skip': startSkip(); break;
       case 'stars': startGaze(); break;
       case 'rake': case 'shovel': startRake(); break;
-      default: hobbyAction(ctxKind); break;
+      default: if (!hobbyAction(ctxKind)) round3Action(ctxKind); break;
     }
   }
   const flatDist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -7580,6 +7986,11 @@
     if (need === 'beds' && !(state.beds || []).some((b) => b.seed)) return null;
     if (need === 'agilityok' && !(unlockedFeat('agility') && (locUnlocked('grounds') || state.furniture.filter((f) => D.ITEMS[f.type].agility).length >= 3))) return null;
     if (need === 'mailbox' && !(unlockedFeat('letters') && hasItem('mailbox'))) return null;
+    if (need === 'oven' && !(unlockedFeat('baking') && hasItem('oven'))) return null;
+    if (need === 'rod' && !(unlockedFeat('fishing') && hasGadget('rod') && locUnlocked('beach'))) return null;
+    if (need === 'net' && !(unlockedFeat('catching') && hasGadget('net'))) return null;
+    if (need === 'discok' && !(unlockedFeat('disc') && locUnlocked('beach') && state.toys.includes('frisbee'))) return null;
+    if (need === 'winter' && !(unlockedFeat('winter') && (isWinter() || locUnlocked('snowy')))) return null;
     if (need === 'trick' && !unlockedFeat('tricks')) return null;
     if (need === 'stove' && !unlockedFeat('kitchen')) return null;
     if (need === 'bathtub' && !unlockedFeat('bath')) return null;
@@ -7621,6 +8032,7 @@
   function progress(ev, amt = 1) {
     if (visit) return;
     calProgress(ev, amt);
+    weekStat(ev, amt);
     if (CRITTER_EV[ev] && place === 'park') spotCritter(CRITTER_EV[ev], null);
     if (!shortWalk) {
       if (D.XP[ev]) earn(ev, amt);
@@ -7821,7 +8233,7 @@
     const p = player.root.position;
     let tx, tz, dist;
     if (place === 'home' && mode === 'build') {
-      const e = extentOf(state.chunks.concat(buildCands));
+      const e = extentOf(floorChunks(editFloor).concat(floorChunks(0).length && editFloor ? floorChunks(0).map(([x, z]) => [x + UPC, z]) : []).concat(buildCands));
       tx = (e.x0 + e.x1) / 2;
       tz = (e.z0 + e.z1) / 2;
       dist = 5.5 + Math.max(e.x1 - e.x0, e.z1 - e.z0) * 0.8;
@@ -7848,7 +8260,12 @@
     }
     dist *= clamp(0.8 / camera.aspect, 1, 1.6) * (mode === 'build' ? 1 : zoom);
     const k = snap ? 1 : damp(camFocus ? 0.005 : 0.02, dt);
-    const ly = 0.5 + (terrainOn() ? p.y : 0);
+    let ly = 0.5 + (terrainOn() ? p.y : 0);
+    // upstairs: look at the floor above (what's drawn there is slid back over the rooms below)
+    if (place === 'home') {
+      if (isUpX(tx)) tx -= UPX;
+      ly = 0.5 + (mode === 'build' || mode === 'decorate' ? editFloor * FH : isUpX(p.x) ? FH : p.y);
+    }
     camLook.set(lerp(camLook.x, tx, k), snap ? ly : lerp(camLook.y, ly, damp(0.05, dt)), lerp(camLook.z, tz, k));
     camDist = lerp(camDist, dist, snap ? 1 : damp(0.05, dt));
     fogPush = Math.max(0, camDist - 12);
@@ -7866,7 +8283,7 @@
   // the joystick stays out of the way: faint from the start, nearly gone after a moment of steady walking
   let joyAng = null, joyFadeT = null;
   const joyWake = () => { joyBase.classList.remove('fade'); clearTimeout(joyFadeT); joyFadeT = setTimeout(() => joyBase.classList.add('fade'), 1100); };
-  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet', 'bedSheet', 'courseSheet', 'tourney', 'paint', 'mail', 'tmapSheet', 'nameAsk'];
+  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet', 'bedSheet', 'courseSheet', 'tourney', 'paint', 'mail', 'tmapSheet', 'nameAsk', 'bake', 'stall', 'museum', 'critters', 'gazette'];
   // sheets: a soft sound when they open and close; tips step aside while one is open
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
@@ -7954,11 +8371,15 @@
   const groundPlane = new THREE.Plane(new V3(0, 1, 0), 0);
 
   function handleTap(cx, cy) {
+    lastTap = { x: cx, y: cy };
     ndc.set((cx / window.innerWidth) * 2 - 1, -(cy / window.innerHeight) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
     const gp = new V3();
-    groundPlane.constant = terrainOn() ? -player.root.position.y : 0;
+    const vf = viewFloor();
+    groundPlane.constant = terrainOn() ? -player.root.position.y : place === 'home' && vf === 1 ? -FH : 0;
     const hitGround = raycaster.ray.intersectPlane(groundPlane, gp);
+    // upstairs taps land on the floor above: turn them into upstairs tiles
+    if (hitGround && place === 'home' && vf === 1) { gp.x += UPX; gp.y = 0; }
 
     if (mode === 'decorate') { if (hitGround) decorateTap(gp); return; }
     if (mode === 'build') { if (hitGround) buildTap(gp); return; }
@@ -7966,7 +8387,8 @@
     if (funTap()) return;
 
     let dog = null;
-    const hits = raycaster.intersectObjects(dogs.map((d) => d.root).concat(sitDog ? [sitDog.root] : []), true);
+    const onView = (d) => place !== 'home' || floorOfX(d.root.position.x) === vf;
+    const hits = withShift(() => raycaster.intersectObjects(dogs.filter(onView).map((d) => d.root).concat(sitDog && onView(sitDog) ? [sitDog.root] : []), true));
     for (const h of hits) {
       let o = h.object;
       while (o && !o.userData.dog) o = o.parent;
@@ -7975,6 +8397,7 @@
     if (!dog && hitGround) {
       let best = 0.85;
       for (const d of sitDog ? dogs.concat(sitDog) : dogs) {
+        if (!onView(d)) continue;
         const dd = Math.hypot(d.root.position.x - gp.x, d.root.position.z - gp.z);
         if (dd < best) { best = dd; dog = d; }
       }
@@ -8027,11 +8450,14 @@
   // what furniture (with a use) or clutter did the tap hit?
   function tapFurniture(ray, gp) {
     if (place !== 'home') return null;
-    const hits = ray.intersectObjects(clutterGroup.children.concat(furnGroup.children), true);
+    const vf = viewFloor();
+    const hits = withShift(() => ray.intersectObjects(clutterGroup.children.concat(furnGroup.children), true));
     for (const h of hits) {
       let o = h.object;
       while (o && !o.userData.f && !o.userData.clutter) o = o.parent;
       if (!o) continue;
+      const it = o.userData.f || o.userData.clutter;
+      if (it && floorOfX(it.i) !== vf) continue;
       if (o.userData.clutter) return { clutter: o.userData.clutter, at: o.position };
       if (D.ITEMS[o.userData.f.type].use || D.SEATS[o.userData.f.type]) return { f: o.userData.f, at: o.position };
     }
@@ -8073,14 +8499,17 @@
   function enterDecorate() {
     endFun('switch');
     refreshGates();
+    editFloor = viewFloor();
     mode = 'decorate';
     camFocus = null;
+    buildInnerWalls(true);
     if (!selectedInv || !(state.inventory[selectedInv] > 0)) selectedInv = firstInv();
     renderInv();
     refreshUI();
   }
   function exitDecorate() {
     mode = 'normal';
+    buildInnerWalls(true);
     refreshUI();
     save();
     reactToFurniture();
@@ -8088,7 +8517,9 @@
   function renderInv() {
     const list = $('invList');
     list.innerHTML = '';
-    document.querySelectorAll('.decoTab').forEach((b) => b.classList.toggle('sel', b.dataset.tab === decoTab));
+    document.querySelectorAll('#decoBar .decoTab').forEach((b) => b.classList.toggle('sel', b.dataset.tab === decoTab));
+    $('decoFloorBtn').classList.toggle('hidden', !hasUpstairs());
+    $('decoFloorLbl').textContent = editFloor ? 'Downstairs' : 'Upstairs';
     $('rotBtn').classList.toggle('hidden', decoTab !== 'furn');
     $('decoHelp').textContent = decoTab === 'furn' ? 'Tap a floor tile to place · Tap an item to pick it up' : 'Pick a wallpaper or floor, then tap a room to apply it';
     if (decoTab === 'style') {
@@ -8148,6 +8579,8 @@
     if (!selectedInv || !(state.inventory[selectedInv] > 0)) { toast('Pick an item from the bar first'); return; }
     if (D.ITEMS[selectedInv].garden && !isGardenTile(i, j)) { toast(`${D.ITEMS[selectedInv].name} only fits in a garden`); return; }
     if (state.clutter.some((c) => c.i === i && c.j === j)) { toast('Tidy up that spot first'); return; }
+    if (stairSolid(i, j)) { toast('That’s where the stairs are 🪜'); return; }
+    if ((isStairEntry(i, j) || isStairLanding(i, j)) && D.ITEMS[selectedInv].solid) { toast('Keep the way to the stairs free 🪜'); return; }
     if (bedAt(i, j)) { toast('There’s a garden bed there'); return; }
     let pid;
     if (selectedInv === 'painting') { const P = freePainting(); if (!P) { toast('All your paintings are up already'); return; } pid = P.id; }
@@ -8174,30 +8607,283 @@
   // =====================================================================
   // Home expansion
   // =====================================================================
-  function enterBuildMode() {
+
+  // =====================================================================
+  // Rooms mode: add, move and remove rooms, walls between rooms, and the stairs
+  // =====================================================================
+  let buildTool = 'add';
+  let movePick = null;     // the room being moved
+  let stairDraft = null;   // { room: [cx, cz], i, j, rot } while placing the stairs
+  const downCount = () => floorChunks(0, state).length;
+  const upCount = () => floorChunks(1, state).length;
+  const roomFull = (fl) => (fl ? upCount() >= upCap() : downCount() >= roomCap());
+  const isRoomChunk = (cx, cz) => hasChunk(cx, cz) && !isGardenChunk(cx, cz);
+  const movePrice = () => Math.max(100, Math.round((expandPrice(Math.max(1, state.chunks.length - 1)) * D.HOME_BUILD.moveShare) / 5) * 5);
+  const stairsRoom = () => (state.stairs ? [Math.floor(state.stairs.i / CHUNK), Math.floor(state.stairs.j / CHUNK)] : null);
+  function checkUpstairsOpen() {
+    if (state.upOK || visit) return;
+    if (houseTier() >= D.HOME_BUILD.upFrom && downCount() >= roomCap()) {
+      state.upOK = true;
+      news({ title: 'Your home can grow upward!', text: `Every room downstairs is built. Open Rooms (Shop → Add a room), switch to Upstairs and place the stairs in any room. Your ${D.HOUSE_TIERS[houseTier()].name.toLowerCase()} can have ${upCap()} rooms up there.`, th: IC('home') });
+    }
+  }
+  function nbrs(cx, cz) { return [[cx + 1, cz], [cx - 1, cz], [cx, cz + 1], [cx, cz - 1]]; }
+  // free spots next to a set of rooms on one floor (upstairs only over rooms, never over gardens)
+  function freeAround(list, fl, skip) {
+    const out = [], seen = new Set();
+    for (const [cx, cz] of list) {
+      for (const [x, z] of nbrs(cx, cz)) {
+        const k = chunkKey(x, z);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (chunkSet.has(k) && !(skip && skip[0] === x && skip[1] === z)) continue;
+        if (state.build && state.build.cx === x && state.build.cz === z) continue;
+        if (fl === 1 && !isRoomChunk(x - UPC, z)) continue;
+        if (fl === 0 && isUpChunk(x)) continue;
+        out.push([x, z]);
+      }
+    }
+    return out;
+  }
+  function canMoveFrom([cx, cz]) {
+    if (state.build) return 'Wait until the builders are done 🏗️';
+    if (!isUpChunk(cx) && hasChunk(cx + UPC, cz)) return 'There’s a room upstairs on top of this one';
+    const sr = stairsRoom();
+    if (isUpChunk(cx) && sr && sr[0] + UPC === cx && sr[1] === cz) return 'The stairs come up here. Move the stairs first';
+    return null;
+  }
+  function canRemove([cx, cz]) {
+    if (state.build) return 'Wait until the builders are done 🏗️';
+    const up = isUpChunk(cx);
+    if (!up && downCount() <= 1) return 'That’s your last room';
+    if (!up && hasChunk(cx + UPC, cz)) return 'There’s a room upstairs on top of this one';
+    if (dogs.length > state.chunks.length - 1) return 'Your dogs need every room you have';
+    const sr = stairsRoom(), stairsHere = up && sr && sr[0] + UPC === cx && sr[1] === cz;
+    if (stairsHere && upCount() > 1) return 'The stairs come up here. Move the stairs first';
+    const rest = state.chunks.filter(([x, z]) => !(x === cx && z === cz));
+    if (!homeConnected(rest, state.walls, stairsHere ? null : state.stairs)) return 'The other rooms would be cut off';
+    return null;
+  }
+  function moveTargets(from) {
+    const [fx, fz] = from, fl = isUpChunk(fx) ? 1 : 0;
+    const rest = state.chunks.filter(([x, z]) => !(x === fx && z === fz));
+    const walls = Object.fromEntries(Object.entries(state.walls || {}).filter(([k]) => !wallTouches(k, fx, fz)));
+    return freeAround(rest.filter((c) => chunkFloor(c) === fl), fl, from).filter(([x, z]) => !(x === fx && z === fz) && homeConnected(rest.concat([[x, z]]), walls, state.stairs));
+  }
+  function wallTouches(k, cx, cz) {
+    const [x, z, side] = k.split(','), X = +x, Z = +z;
+    return (X === cx && Z === cz) || (side === 'e' ? X + 1 === cx && Z === cz : X === cx && Z + 1 === cz);
+  }
+  function findCandidates() {
+    const fl = editFloor;
+    if (buildTool === 'add') {
+      if (fl === 1 && !hasUpstairs(state)) return [];
+      if (roomFull(fl)) return [];
+      return freeAround(floorChunks(fl, state), fl);
+    }
+    if (buildTool === 'move') return movePick ? moveTargets(movePick) : floorChunks(fl, state).filter((c) => !canMoveFrom(c));
+    if (buildTool === 'remove') return floorChunks(fl, state);
+    if (buildTool === 'stairs') {
+      if (stairDraft) return [stairDraft.room];
+      return floorChunks(0, state).filter(([x, z]) => isRoomChunk(x, z) && (!hasUpstairs(state) || hasChunk(x + UPC, z)));
+    }
+    return [];
+  }
+  // every place two rooms on this floor touch
+  function innerEdges(fl) {
+    const out = [];
+    for (const [cx, cz] of floorChunks(fl, state)) {
+      if (hasChunk(cx + 1, cz)) out.push({ k: `${cx},${cz},e`, x: (cx + 1) * CHUNK, z: (cz + 0.5) * CHUNK, east: true });
+      if (hasChunk(cx, cz + 1)) out.push({ k: `${cx},${cz},s`, x: (cx + 0.5) * CHUNK, z: (cz + 1) * CHUNK, east: false });
+    }
+    return out;
+  }
+  const edgeMats = { open: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }), w: new THREE.MeshBasicMaterial({ color: 0xe57373, transparent: true, opacity: 0.8, depthWrite: false }), d: new THREE.MeshBasicMaterial({ color: 0x64b5f6, transparent: true, opacity: 0.8, depthWrite: false }) };
+  const pickMat = new THREE.MeshBasicMaterial({ color: 0xffb74d, transparent: true, opacity: 0.5, depthWrite: false });
+  const delMat = new THREE.MeshBasicMaterial({ color: 0xe57373, transparent: true, opacity: 0.4, depthWrite: false });
+  function plate(cx, cz, m, y = 0.03) {
+    const p = new THREE.Mesh(geo(CHUNK - 0.3, 0.04, CHUNK - 0.3), m);
+    p.position.set(cx * CHUNK + CHUNK / 2, y, cz * CHUNK + CHUNK / 2);
+    candGroup.add(p);
+    return p;
+  }
+  function tilePlate(i, j, color, y = 0.06) {
+    const p = new THREE.Mesh(geo(0.92, 0.05, 0.92), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
+    p.position.set(i + 0.5, y, j + 0.5);
+    candGroup.add(p);
+  }
+  function showCandidates() {
+    candGroup.clear();
+    if (buildTool === 'walls') {
+      for (const E of innerEdges(editFloor)) {
+        const w = (state.walls || {})[E.k] || 'open';
+        const m = new THREE.Mesh(geo(E.east ? 0.3 : CHUNK - 0.6, 0.1, E.east ? CHUNK - 0.6 : 0.3), edgeMats[w]);
+        m.position.set(E.x, 0.08, E.z);
+        candGroup.add(m);
+        const s = emojiSprite(w === 'w' ? '🧱' : w === 'd' ? '🚪' : '➕', 0.9);
+        s.position.set(E.x, 0.9, E.z);
+        candGroup.add(s);
+      }
+      return;
+    }
+    if (buildTool === 'stairs' && stairDraft) {
+      const c = stairCells(stairDraft), ok = stairOK(stairDraft);
+      for (const [i, j] of c.steps) tilePlate(i, j, ok ? 0xffb74d : 0xe57373);
+      tilePlate(c.entry[0], c.entry[1], 0x81c784);
+      tilePlate(c.landing[0] - UPX, c.landing[1], 0x64b5f6, 0.09);
+      const a = emojiSprite('⬆️', 0.8);
+      a.position.set(c.steps[1][0] + 0.5, 1.2, c.steps[1][1] + 0.5);
+      candGroup.add(a);
+      return;
+    }
+    for (const [cx, cz] of buildCands) {
+      const isPick = buildPick && buildPick[0] === cx && buildPick[1] === cz;
+      plate(cx, cz, buildTool === 'remove' ? delMat : buildTool === 'move' && !movePick ? pickMat : isPick ? candSelMat : candMat);
+      const s = new THREE.Sprite(buildTool === 'add' || (buildTool === 'move' && movePick) ? plusMat : new THREE.SpriteMaterial({ map: emojiTexture(buildTool === 'remove' ? '🔨' : buildTool === 'stairs' ? '🪜' : '✋'), transparent: true, depthWrite: false }));
+      s.scale.set(1.3, 1.3, 1);
+      s.position.set(cx * CHUNK + CHUNK / 2, 0.9, cz * CHUNK + CHUNK / 2);
+      candGroup.add(s);
+    }
+    if (movePick) plate(movePick[0], movePick[1], pickMat, 0.05);
+  }
+  // ----- the bar at the bottom -----
+  const TOOL_NAMES = { add: 'Add', move: 'Move', walls: 'Walls', remove: 'Remove', stairs: 'Stairs' };
+  function renderBuildBar() {
+    const tools = ['add', 'move', 'walls', 'remove'].concat(upOpen() ? ['stairs'] : []);
+    $('buildTabs').innerHTML = tools.map((t) => `<button class="decoTab${t === buildTool ? ' sel' : ''}" data-act="buildTool" data-tool="${t}">${TOOL_NAMES[t]}</button>`).join('');
+    const fl = editFloor, where = fl ? 'upstairs' : 'downstairs';
+    let title = '', help = '';
+    switch (buildTool) {
+      case 'add':
+        if (fl === 1 && !hasUpstairs(state)) { title = 'First, the stairs'; help = 'Switch to Stairs and pick the room they go in'; }
+        else if (roomFull(fl)) { title = fl ? `Upstairs is full (${upCap()} rooms)` : `Room for ${roomCap()} rooms`; help = fl ? 'A bigger home allows more rooms upstairs' : upOpen() ? 'Build upstairs, or upgrade your home for more' : 'Upgrade your home for more rooms'; }
+        else { title = `New room ${where}: 🪙 ${expandPrice(state.chunks.length)}`; help = fl ? 'Tap a green area over a room downstairs' : 'Tap a green area next to your home'; }
+        break;
+      case 'move':
+        title = movePick ? `Move it where? 🪙 ${movePrice()}` : 'Which room should move?';
+        help = movePick ? 'Tap a green area. Furniture moves along' : 'Tap a room. Rooms with a room on top stay put';
+        break;
+      case 'walls':
+        title = `Walls between rooms: 🪙 ${D.HOME_BUILD.wall} each`;
+        help = innerEdges(fl).length ? 'Tap the line between two rooms: open → wall → doorway' : 'Only where two rooms touch';
+        break;
+      case 'remove':
+        title = 'Tear down a room (no refund)';
+        help = 'Furniture goes back to your inventory. The next room gets cheaper again';
+        break;
+      case 'stairs':
+        if (stairDraft) { title = STAIR_NAMES[stairDraft.rot]; help = stairOK(stairDraft) ? 'Tap a tile to move them · Turn · Place' : 'They don’t fit here. Tap another tile or turn them'; }
+        else { title = hasUpstairs(state) ? `Move the stairs: 🪙 ${D.HOME_BUILD.stairsMove}` : `Stairs and a first room upstairs: 🪙 ${expandPrice(state.chunks.length)}`; help = hasUpstairs(state) ? 'Tap a room that has a room above it' : 'Tap the room the stairs should go in'; }
+        break;
+    }
+    $('buildTitle').textContent = title;
+    $('buildHelp').textContent = help;
+    const showFloor = upOpen() && buildTool !== 'stairs';
+    $('buildFloorBtn').classList.toggle('hidden', !showFloor);
+    $('buildFloorLbl').textContent = fl ? 'Downstairs' : 'Upstairs';
+    $('stairTurnBtn').classList.toggle('hidden', !stairDraft);
+    $('stairPlaceBtn').classList.toggle('hidden', !stairDraft);
+    $('stairPlaceBtn').disabled = !(stairDraft && stairOK(stairDraft));
+  }
+  function refreshBuild() {
+    buildCands = findCandidates();
+    showCandidates();
+    renderBuildBar();
+  }
+  function enterBuildMode(tool) {
     if (!needRank('rooms')) return;
-    if (state.build) { toast('Already building — wait for it to finish 🏗️'); return; }
-    if (state.chunks.length >= roomCap()) { toast(`Your ${D.HOUSE_TIERS[houseTier()].name.toLowerCase()} has room for ${roomCap()} rooms. Upgrade your home for more.`); return; }
+    endFun('switch');
+    editFloor = place === 'home' && mode === 'normal' ? viewFloor() : 0;
     mode = 'build';
     camFocus = null;
-    buildCands = findCandidates();
-    buildPick = null;
-    showCandidates();
+    buildTool = tool || 'add';
+    if (editFloor === 1 && !hasUpstairs(state)) editFloor = 0;
+    movePick = null; stairDraft = null; buildPick = null;
+    if (buildTool === 'stairs') editFloor = 0;
+    refreshBuild();
     refreshUI();
+    buildInnerWalls(true);
   }
   function exitBuildMode() {
     mode = 'normal';
-    buildPick = null;
+    buildPick = null; movePick = null; stairDraft = null;
     buildCands = [];
     candGroup.clear();
     refreshUI();
+    buildInnerWalls(true);
+  }
+  function setBuildTool(t) {
+    buildTool = t;
+    movePick = null; stairDraft = null; buildPick = null;
+    if (t === 'stairs') editFloor = 0;
+    refreshBuild();
+  }
+  function toggleBuildFloor() {
+    editFloor = editFloor ? 0 : 1;
+    movePick = null; stairDraft = null; buildPick = null;
+    if (editFloor === 1 && !hasUpstairs(state) && buildTool !== 'walls') { buildTool = 'stairs'; editFloor = 0; toast('First, the stairs: tap the room they should go in 🪜'); }
+    refreshBuild();
   }
   function buildTap(gp) {
     const cx = Math.floor(gp.x / CHUNK), cz = Math.floor(gp.z / CHUNK);
-    if (!buildCands.some(([x, z]) => x === cx && z === cz)) return;
+    const isCand = buildCands.some(([x, z]) => x === cx && z === cz);
+    switch (buildTool) {
+      case 'add': if (isCand) addRoomAt(cx, cz); return;
+      case 'move':
+        if (!movePick) {
+          if (!hasChunk(cx, cz) || chunkFloor([cx]) !== editFloor) return;
+          const why = canMoveFrom([cx, cz]);
+          if (why) { toast(why); return; }
+          movePick = [cx, cz];
+          refreshBuild();
+          if (!buildCands.length) { toast('There’s nowhere else this room could go'); movePick = null; refreshBuild(); }
+          return;
+        }
+        if (cx === movePick[0] && cz === movePick[1]) { movePick = null; refreshBuild(); return; }
+        if (!isCand) return;
+        {
+          const price = movePrice(), from = movePick, to = [cx, cz];
+          confirmBox('Move this room here?', `Costs 🪙 ${price}. Everything in it moves along. Walls along its sides come down.`, `Move for 🪙 ${price}`, state.coins >= price,
+            () => { if (state.coins < price) { toast('Not enough coins yet'); return; } state.coins -= price; moveRoom(from, to); movePick = null; refreshBuild(); updateHud(); save(); });
+        }
+        return;
+      case 'remove': {
+        if (!hasChunk(cx, cz) || chunkFloor([cx]) !== editFloor) return;
+        const why = canRemove([cx, cz]);
+        if (why) { toast(why); return; }
+        const garden = isGardenChunk(cx, cz), last = isUpChunk(cx) && upCount() === 1;
+        confirmBox(garden ? 'Tear down this garden?' : 'Tear down this room?', `You don’t get the coins back. Furniture goes to your inventory.${last ? ' The stairs go too.' : ''} The next room costs 🪙 ${expandPrice(state.chunks.length - 1)}.`, 'Tear it down', true,
+          () => { removeRoom([cx, cz]); refreshBuild(); save(); });
+        return;
+      }
+      case 'walls': {
+        const E = innerEdges(editFloor).map((e) => Object.assign(e, { d: e.east ? Math.abs(gp.x - e.x) + Math.max(0, Math.abs(gp.z - e.z) - CHUNK / 2) : Math.abs(gp.z - e.z) + Math.max(0, Math.abs(gp.x - e.x) - CHUNK / 2) })).sort((a, b) => a.d - b.d)[0];
+        if (!E || E.d > 1.4) return;
+        cycleWall(E.k);
+        return;
+      }
+      case 'stairs': {
+        if (!stairDraft) {
+          if (!isCand) return;
+          stairDraft = autoStairs([cx, cz]);
+          if (!stairDraft) { toast('The stairs don’t fit in that room. Is it full of furniture?'); return; }
+          refreshBuild();
+          return;
+        }
+        const i = Math.floor(gp.x), j = Math.floor(gp.z);
+        if (cx !== stairDraft.room[0] || cz !== stairDraft.room[1]) return;
+        // keep the direction if it fits, otherwise find one that does
+        const tries = [0, 1, 2, 3].map((k) => (stairDraft.rot + k) % 4);
+        const rot = tries.find((r) => stairOK(Object.assign({}, stairDraft, { i, j, rot: r })));
+        Object.assign(stairDraft, { i, j, rot: rot === undefined ? stairDraft.rot : rot });
+        refreshBuild();
+      }
+    }
+  }
+  function addRoomAt(cx, cz) {
+    const price = expandPrice(state.chunks.length), up = isUpChunk(cx);
     buildPick = [cx, cz];
     showCandidates();
-    const price = expandPrice(state.chunks.length);
     const go = (kind) => {
       if (state.coins < price) { toast('Not enough coins yet'); return; }
       state.coins -= price;
@@ -8208,10 +8894,188 @@
       toast(`${kind === 'garden' ? '🌷 Garden' : '🏠 Room'} under construction! Ready in ${CONFIG.BUILD_MINUTES} minutes 🏗️`);
       save();
     };
-    const garden = gardensUnlocked();
+    const garden = !up && gardensUnlocked();
     confirmBox('Build here?', `Costs 🪙 ${price} · ready in ${CONFIG.BUILD_MINUTES} minutes${garden ? ' · a room, or an open garden with grass and a fence' : ''}`,
       `🏠 Room for 🪙 ${price}`, state.coins >= price, () => go('room'), () => { buildPick = null; showCandidates(); },
       garden ? { label: `🌷 Garden for 🪙 ${price}`, enabled: state.coins >= price, fn: () => go('garden') } : null);
+  }
+  // ----- walls -----
+  function cycleWall(k) {
+    state.walls = state.walls || {};
+    const cur = state.walls[k] || null, next = cur === null ? 'w' : cur === 'w' ? 'd' : null;
+    const walls = Object.assign({}, state.walls);
+    if (next) walls[k] = next; else delete walls[k];
+    if (next === 'w' && !homeConnected(state.chunks, walls, state.stairs)) {
+      // a full wall would cut a room off: go straight to a doorway instead
+      walls[k] = 'd';
+      toast('A full wall here would shut a room off, so it’s a doorway');
+    }
+    const cost = walls[k] && !cur ? D.HOME_BUILD.wall : 0;
+    if (cost && state.coins < cost) { toast('Not enough coins yet'); return; }
+    state.coins -= cost;
+    state.walls = walls;
+    if (cost) updateHud();
+    sfx(walls[k] ? 'place' : 'tap');
+    buildInnerWalls(true);
+    dogs.forEach((d) => { d.path = null; });
+    showCandidates();
+    save();
+  }
+  // ----- the stairs -----
+  function stairOK(dr) {
+    const c = stairCells(dr), [rx, rz] = dr.room;
+    const inRoom = ([i, j]) => Math.floor(i / CHUNK) === rx && Math.floor(j / CHUNK) === rz;
+    if (!c.steps.every(inRoom) || !inRoom(c.entry) || !inRoom([c.landing[0] - UPX, c.landing[1]])) return false;
+    return true;
+  }
+  function autoStairs(room) {
+    const [rx, rz] = room, x0 = rx * CHUNK, z0 = rz * CHUNK;
+    let best = null, bs = -1;
+    for (let rot = 0; rot < 4; rot++) {
+      for (let i = x0; i < x0 + CHUNK; i++) for (let j = z0; j < z0 + CHUNK; j++) {
+        const dr = { room, i, j, rot };
+        if (!stairOK(dr)) continue;
+        const c = stairCells(dr);
+        // prefer a spot along a wall with nothing in the way
+        const busy = c.steps.concat([c.entry]).filter(([a, b]) => furnitureAt(a, b)).length;
+        const wallSide = Math.min(i - x0, x0 + CHUNK - 1 - i, j - z0, z0 + CHUNK - 1 - j) === 0 ? 2 : 0;
+        const sc = 10 - busy * 4 + wallSide + (rot === 0 ? 1 : 0);
+        if (sc > bs) { bs = sc; best = dr; }
+      }
+    }
+    return best;
+  }
+  // whatever stands where the stairs go is put back in your inventory
+  function clearForStairs(st) {
+    const c = stairCells(st);
+    const cells = c.steps.concat([c.entry], c.steps.map(([i, j]) => [i + UPX, j]), [c.landing]);
+    let moved = 0;
+    for (const [i, j] of cells) {
+      const f = furnitureAt(i, j);
+      const isWalk = (i === c.entry[0] && j === c.entry[1]) || (i === c.landing[0] && j === c.landing[1]);
+      if (f && (!isWalk || D.ITEMS[f.type].solid)) {
+        if (f.gift) { returnGift(f.gift); f.gift = null; }
+        state.furniture.splice(state.furniture.indexOf(f), 1);
+        state.inventory[f.type] = (state.inventory[f.type] || 0) + 1;
+        furnMap.delete(i + ',' + j);
+        moved++;
+      }
+      state.clutter = state.clutter.filter((x) => !(x.i === i && x.j === j));
+    }
+    return moved;
+  }
+  function placeStairs() {
+    if (!stairDraft || !stairOK(stairDraft)) return;
+    const st = { i: stairDraft.i, j: stairDraft.j, rot: stairDraft.rot };
+    if (!hasUpstairs(state)) {
+      // the first room upstairs comes with the stairs
+      const price = expandPrice(state.chunks.length), [rx, rz] = stairDraft.room;
+      confirmBox('Stairs and a room upstairs?', `Costs 🪙 ${price} · ready in ${CONFIG.BUILD_MINUTES} minutes. Anything standing where the stairs go is put away.`, `Build for 🪙 ${price}`, state.coins >= price, () => {
+        if (state.coins < price) { toast('Not enough coins yet'); return; }
+        state.coins -= price;
+        state.build = { cx: rx + UPC, cz: rz, kind: 'room', readyAt: Date.now() + CONFIG.BUILD_MINUTES * 60000, stairs: st };
+        exitBuildMode();
+        rebuildSite();
+        updateHud();
+        toast(`🪜 The builders are on it! Your upstairs is ready in ${CONFIG.BUILD_MINUTES} minutes 🏗️`);
+        save();
+      });
+      return;
+    }
+    const price = D.HOME_BUILD.stairsMove;
+    if (!homeConnected(state.chunks, state.walls, st)) { toast('From there you couldn’t reach every room upstairs'); return; }
+    confirmBox('Move the stairs here?', `Costs 🪙 ${price}. Anything standing where they go is put away.`, `Move for 🪙 ${price}`, state.coins >= price, () => {
+      if (state.coins < price) { toast('Not enough coins yet'); return; }
+      state.coins -= price;
+      setStairs(st);
+      stairDraft = null;
+      refreshBuild();
+      updateHud();
+      toast('🪜 The stairs are in their new spot');
+      save();
+    });
+  }
+  function setStairs(st) {
+    if (st) { const n = clearForStairs(st); if (n) toast(`${n} thing${n > 1 ? 's were' : ' was'} in the way and went back to your inventory`); }
+    state.stairs = st;
+    syncChunkSet();
+    buildRoom();
+    rebuildFurniture();
+    renderClutter();
+    // anyone standing in the way steps aside
+    for (const a of [player].concat(dogs, sitDog ? [sitDog] : [])) {
+      const p = a.root.position;
+      a.climb = null;
+      if (isSolid(p.x, p.z)) { const q = randomFreePoint(); p.set(q.x, 0, q.z); }
+    }
+    dogs.forEach((d) => d.reset());
+  }
+  // ----- moving and removing -----
+  function forRoom(cx, cz, fn) {
+    const inRoom = (i, j) => Math.floor(i / CHUNK) === cx && Math.floor(j / CHUNK) === cz;
+    for (const f of state.furniture.slice()) if (inRoom(f.i, f.j)) fn('furn', f);
+    for (const c of state.clutter.slice()) if (inRoom(c.i, c.j)) fn('clutter', c);
+    for (const b of bedsOf().slice()) if (inRoom(b.i, b.j)) fn('bed', b);
+  }
+  function moveRoom(from, to) {
+    const [fx, fz] = from, [tx, tz] = to, di = (tx - fx) * CHUNK, dj = (tz - fz) * CHUNK;
+    const kf = chunkKey(fx, fz), kt = chunkKey(tx, tz);
+    forRoom(fx, fz, (_k, o) => { o.i += di; o.j += dj; });
+    if (state.rooms[kf]) { state.rooms[kt] = state.rooms[kf]; delete state.rooms[kf]; }
+    if (state.gardens[kf]) { state.gardens[kt] = true; delete state.gardens[kf]; }
+    if (state.exhibits && state.exhibits[kf]) { state.exhibits[kt] = state.exhibits[kf]; delete state.exhibits[kf]; }
+    for (const k of Object.keys(state.walls || {})) if (wallTouches(k, fx, fz)) delete state.walls[k];
+    const c = state.chunks.find(([x, z]) => x === fx && z === fz);
+    c[0] = tx; c[1] = tz;
+    for (const a of [player].concat(dogs, sitDog ? [sitDog] : [])) {
+      const p = a.root.position;
+      if (Math.floor(p.x / CHUNK) === fx && Math.floor(p.z / CHUNK) === fz) { p.x += di; p.z += dj; }
+    }
+    afterRoomsChange();
+    confetti(new V3(tx * CHUNK + CHUNK / 2, 1.5, tz * CHUNK + CHUNK / 2));
+    toast('🚚 Room moved!');
+    sfx('unlock');
+  }
+  function removeRoom([cx, cz]) {
+    const k = chunkKey(cx, cz);
+    let items = 0;
+    forRoom(cx, cz, (kind, o) => {
+      if (kind === 'furn') {
+        if (o.gift) { returnGift(o.gift); o.gift = null; }
+        state.furniture.splice(state.furniture.indexOf(o), 1);
+        state.inventory[o.type] = (state.inventory[o.type] || 0) + 1;
+        items++;
+      } else if (kind === 'clutter') state.clutter.splice(state.clutter.indexOf(o), 1);
+      else if (kind === 'bed') { if (o.seed && o.stage < 4) state.seeds[o.seed] = (state.seeds[o.seed] || 0) + 1; state.beds.splice(state.beds.indexOf(o), 1); }
+    });
+    if (state.exhibits && state.exhibits[k]) { for (const id of state.exhibits[k]) state.caught[id] = (state.caught[id] || 0) + 1; delete state.exhibits[k]; }
+    delete state.rooms[k];
+    delete state.gardens[k];
+    for (const w of Object.keys(state.walls || {})) if (wallTouches(w, cx, cz)) delete state.walls[w];
+    state.chunks = state.chunks.filter(([x, z]) => !(x === cx && z === cz));
+    if (!hasUpstairs(state)) state.stairs = null;
+    afterRoomsChange();
+    for (const a of [player].concat(dogs, sitDog ? [sitDog] : [])) {
+      const p = a.root.position;
+      a.climb = null;
+      if (!isHomeTile(Math.floor(p.x), Math.floor(p.z)) || isSolid(p.x, p.z)) { const q = randomFreePoint(); p.set(q.x, 0, q.z); }
+    }
+    if (player.root.position.x >= UP_LIM && !hasUpstairs()) editFloor = 0;
+    toast(`🔨 Torn down${items ? `. ${items} thing${items > 1 ? 's' : ''} went back to your inventory` : ''}`);
+    sfx('tap');
+  }
+  function afterRoomsChange() {
+    syncChunkSet();
+    buildRoom();
+    rebuildFurniture();
+    renderClutter();
+    renderBeds();
+    if (typeof renderExhibits === 'function') renderExhibits();
+    computeComfort();
+    renderComfortChip();
+    dogs.forEach((d) => d.reset());
+    player.moveTarget = null;
+    updateHud();
   }
   function checkBuild() {
     const b = state.build;
@@ -8219,12 +9083,15 @@
     state.chunks.push([b.cx, b.cz]);
     if (b.kind === 'garden') state.gardens[chunkKey(b.cx, b.cz)] = true;
     state.build = null;
+    if (b.stairs) setStairs(b.stairs);
     syncChunkSet();
     buildRoom();
     rebuildSite();
     if (place === 'home') confetti(new V3(b.cx * CHUNK + CHUNK / 2, 1.5, b.cz * CHUNK + CHUNK / 2));
     gainXP(D.XP_MISC.room);
-    toast(b.kind === 'garden' ? '🌷 Your new garden is ready! Garden items are in the 🛒 Shop.' : '🎉 Your new room is finished! Room for one more dog.');
+    if (isUpChunk(b.cx)) state.stats.upRooms = upCount();
+    toast(b.stairs ? '🪜 Your upstairs is ready! Walk up the stairs to have a look.' : b.kind === 'garden' ? '🌷 Your new garden is ready! Garden items are in the 🛒 Shop.' : '🎉 Your new room is finished! Room for one more dog.');
+    checkUpstairsOpen();
     updateHud();
     save();
   }
@@ -8364,10 +9231,11 @@
     } else {
       section('home', 'Home');
       const n = state.chunks.length;
+      const downFull = downCount() >= roomCap(), allFull = downFull && (!upOpen() || upCount() >= upCap());
       if (state.build) card(TH('loc', 'room'), 'Add a room', `Building… ready in ${fmtTime(state.build.readyAt - Date.now())}`, null, null, { label: 'Busy' });
-      else if (n >= CONFIG.MAX_CHUNKS) card(TH('loc', 'room'), 'Add a room', 'Your home is as big as it gets', null, null, { label: 'Max' });
-      else if (n >= roomCap() && unlockedFeat('rooms')) card(TH('loc', 'room'), 'Add a room', `Your ${D.HOUSE_TIERS[houseTier()].name.toLowerCase()} has room for ${roomCap()}. Upgrade your home for more.`, 0, () => { closeShop(); openHouse(); }, { keep: true, label: 'See home' });
-      else card(TH('loc', 'room'), 'Add a room', `You have ${n} · +1 dog · ${CONFIG.BUILD_MINUTES} min to build`, expandPrice(n), () => { closeShop(); enterBuildMode(); }, { keep: true, feat: 'rooms' });
+      else if (allFull) card(TH('loc', 'room'), 'Rooms', `All ${n} rooms built. Move rooms, add walls${upOpen() ? ' or move the stairs' : ''}`, 0, () => { closeShop(); enterBuildMode('move'); }, { keep: true, label: 'Rearrange', feat: 'rooms' });
+      else card(TH('loc', 'room'), downFull ? 'Add a room upstairs' : 'Add a room', `You have ${n} · +1 dog · ${CONFIG.BUILD_MINUTES} min to build. Move rooms and add walls in there too`, expandPrice(n), () => { closeShop(); if (downFull && !hasUpstairs(state)) { enterBuildMode('stairs'); } else { enterBuildMode('add'); if (downFull) toggleBuildFloor(); } }, { keep: true, feat: 'rooms' });
+      if (!state.build && downFull && !upOpen() && unlockedFeat('rooms') && n < CONFIG.MAX_CHUNKS) card(TH('loc', 'room'), 'More rooms', `Your ${D.HOUSE_TIERS[houseTier()].name.toLowerCase()} has room for ${roomCap()}. Upgrade your home for more${houseTier() + 1 >= D.HOME_BUILD.upFrom ? ', and an upstairs' : ''}.`, 0, () => { closeShop(); openHouse(); }, { keep: true, label: 'See home' });
       const cap = capacity(), full = dogs.length >= cap;
       const pup = todayLitter().pups.find((x) => !x.taken) || todayLitter().pups[0];
       card(TH('dog', `${pup.breed}|${pup.coat}`), 'Adopt a puppy', full ? `Home is full (${dogs.length}/${cap}). Add a room first` : `${dogs.length}/${cap} dogs · a new litter every day`, adoptPrice(), () => { closeShop(); openLitter(); }, { keep: true, disabled: full, label: full ? null : 'See litter', feat: dogs.length ? 'adopt' : null });
@@ -8388,9 +9256,9 @@
       }
       section('toys', 'Toys');
       for (const [k, G] of Object.entries(D.GADGETS)) {
-        if (G.feat) continue;
+        if (G.feat === 'farming') continue;
         const owned = (state.gadgets || []).includes(k);
-        card(TH('pic', G.icon), G.name, owned ? 'You carry it on walks' : G.desc, G.price, (pr) => { pay(pr); state.gadgets = (state.gadgets || []).concat(k); toast(`${G.name} bought. ${G.bought}`); done(); }, { owned });
+        card(TH('pic', G.icon), G.name, owned ? 'You carry it on walks' : G.desc, G.price, (pr) => { pay(pr); state.gadgets = (state.gadgets || []).concat(k); toast(`${G.name} bought. ${G.bought}`); done(); }, { owned, feat: G.feat || null });
       }
       for (const [k, t] of Object.entries(D.TOYS)) {
         if (t.price == null || k === 'tennis' || t.vendor) continue;
@@ -8458,7 +9326,7 @@
           const owned = (state.inventory[t] || 0) + state.furniture.filter((f) => f.type === t).length;
           const kind = locked ? 'Needs gardens' : it.use === 'bath' ? 'Tap it for bath time' : it.use === 'cook' ? 'Tap it to cook' : it.use === 'gift' ? 'Pack gifts for visitors' : it.auto ? 'Refills itself' : it.role === 'bed' ? (it.regen ? 'Dogs rest extra fast' : 'Dogs nap on it') : it.role === 'food' ? 'Fill it with Bowls' : it.role === 'water' ? 'Fill it with Bowls' : it.use ? 'Tap it to use' : it.lounge ? 'Couch Potatoes love it' : it.garden ? 'For gardens' : it.solid ? 'Decoration' : 'Dogs can walk on it';
           const use = it.use;
-          const feat = use === 'bath' ? 'bath' : use === 'cook' ? 'kitchen' : use === 'gift' ? 'gifts' : use === 'paint' ? 'painting' : use === 'mail' ? 'letters' : it.agility ? 'agility' : null;
+          const feat = use === 'bath' ? 'bath' : use === 'cook' ? 'kitchen' : use === 'bake' ? 'baking' : use === 'gift' ? 'gifts' : use === 'paint' ? 'painting' : use === 'mail' ? 'letters' : it.agility ? 'agility' : (t === 'terrarium' || t === 'insecthotel') ? 'catching' : null;
           card(thumbOf.item(t), it.name, owned ? `You have ${owned} · ${it.agility ? 'part of your agility course' : use === 'paint' ? 'paint your dogs' : use === 'mail' ? 'write to neighbors' : kind}` : it.agility ? `Agility obstacle · ${D.OBSTACLES[it.agility].name}` : use === 'paint' ? 'Tap it to paint your dogs' : use === 'mail' ? 'Write to the neighbors' : kind, it.price, (pr) => { pay(pr); state.inventory[t] = (state.inventory[t] || 0) + 1; selectedInv = t; toast(`${it.name} added. Place it in Decorate`); done(); }, { disabled: locked, label: locked ? 'Locked' : null, count: owned, feat, off: wk('item', t) });
         }
       }
@@ -8531,6 +9399,8 @@
   function renderBag() {
     const seeds = Object.entries(state.seeds || {}).filter(([, n]) => n > 0);
     $('bagExtra').innerHTML = (state.tmap ? `<button class="row bagMap" data-act="tmap"><div class="ic">${TH('pic', '🗺️')}</div><div class="txt"><b>Treasure map</b><small>${esc(D.LOCATIONS[state.tmap.loc].name)} · tap to look</small></div></button>` : '') +
+      (unlockedFeat('catching') && (hasGadget('net') || Object.keys(state.catchBook || {}).length) ? `<button class="row bagMap" data-act="critters"><div class="ic">${TH('pic', '🦋')}</div><div class="txt"><b>Critters</b><small>${Object.values(state.caught || {}).reduce((a, n) => a + n, 0)} in your jar · ${Object.keys(state.catchBook || {}).length} kinds caught</small></div></button>` : '') +
+      (Object.values(state.treats || {}).some((n) => n > 0) ? `<p class="sub">Treat tin: ${Object.entries(state.treats).filter(([, n]) => n > 0).map(([k, n]) => `${D.BAKES[k].icon} ${n}`).join(' · ')}</p>` : '') +
       (seeds.length || state.bouquets ? `<p class="sub">${seeds.map(([k, n]) => `${D.SEEDS[k].icon} ${n}`).join(' · ')}${state.bouquets ? `${seeds.length ? ' · ' : ''}💐 ${state.bouquets} bouquet${state.bouquets > 1 ? 's' : ''}` : ''}</p>` : '');
     const G = $('toyGrid');
     G.innerHTML = '';
@@ -9097,6 +9967,7 @@
     else if (act === 'album') openAlbum();
     else if (act === 'ctx') ctxAction();
     else if (act === 'tmap') { $('bag').classList.add('hidden'); openTreasureMap(); }
+    else if (act === 'critters') { $('bag').classList.add('hidden'); openCritters(); }
     else if (act === 'locinfo') locChipInfo();
     else if (act === 'home') goHome();
     else if (act === 'decorate') enterDecorate();
@@ -9105,6 +9976,11 @@
     else if (act === 'bag') openBag();
     else if (act === 'settings') openSettings();
     else if (act === 'cancelBuild') exitBuildMode();
+    else if (act === 'buildTool') setBuildTool(b.dataset.tool);
+    else if (act === 'buildFloor') toggleBuildFloor();
+    else if (act === 'stairTurn') { if (stairDraft) { const tries = [1, 2, 3].map((k) => (stairDraft.rot + k) % 4); const r = tries.find((x) => stairOK(Object.assign({}, stairDraft, { rot: x }))); stairDraft.rot = r === undefined ? (stairDraft.rot + 1) % 4 : r; refreshBuild(); } }
+    else if (act === 'stairPlace') placeStairs();
+    else if (act === 'decoFloor') { editFloor = editFloor ? 0 : 1; renderInv(); }
     else if (act === 'tricks') enterTrickMode(selected && dogs.includes(selected) ? selected : dogs[0]);
     else if (act === 'comfort') openComfort();
     else if (act === 'leaveVisit') leaveVisit();
@@ -9335,6 +10211,20 @@
     if (!st.toys.includes(st.toy)) st.toy = 'tennis';
     if (st.build && !(st.build.readyAt > 0)) st.build = null;
     if (!st.rooms || typeof st.rooms !== 'object') st.rooms = {};
+    // walls between rooms and the stairs (both need the rooms they belong to)
+    {
+      const has = new Set(st.chunks.map(([x, z]) => x + ',' + z));
+      if (!st.walls || typeof st.walls !== 'object') st.walls = {};
+      for (const [k, v] of Object.entries(st.walls)) {
+        const [x, z, side] = k.split(','), X = +x, Z = +z;
+        const other = side === 'e' ? (X + 1) + ',' + Z : X + ',' + (Z + 1);
+        if (!['w', 'd'].includes(v) || !has.has(X + ',' + Z) || !has.has(other)) delete st.walls[k];
+      }
+      const up = st.chunks.some(([x]) => x >= UPC - 20);
+      const okSt = (o) => o && Number.isFinite(o.i) && Number.isFinite(o.j) && [0, 1, 2, 3].includes(o.rot);
+      if (!okSt(st.stairs) || (!up && !(st.build && st.build.stairs))) st.stairs = up && okSt(st.stairs) ? st.stairs : null;
+      if (st.build && st.build.stairs && !okSt(st.build.stairs)) st.build = null;
+    }
     if (!Array.isArray(st.styles)) st.styles = freeStyles();
     for (const f of freeStyles()) if (!st.styles.includes(f)) st.styles.push(f);
     if (!Array.isArray(st.dogs)) st.dogs = [];
@@ -9356,6 +10246,19 @@
     st.paintings = Array.isArray(st.paintings) ? st.paintings.filter((p) => p && p.id && typeof p.url === 'string') : [];
     st.furniture = st.furniture.filter((f) => f.type !== 'painting' || st.paintings.some((p) => p.id === f.pid));
     st.playerName = String(st.playerName || '').replace(/[<>{}]/g, '').trim().slice(0, 16);
+    // round 3: treat tin, critters, snow figures, fish, rivals, the museum
+    const obj3 = (o) => (o && typeof o === 'object' && !Array.isArray(o) ? o : {});
+    const nums = (o, ok) => { const r = {}; for (const [k, v] of Object.entries(obj3(o))) if (ok(k) && Number.isFinite(+v) && +v > 0) r[k] = Math.floor(+v); return r; };
+    st.treats = nums(st.treats, (k) => !!D.BAKES[k]);
+    st.caught = nums(st.caught, (k) => !!D.CATCH[k]);
+    st.catchBook = nums(st.catchBook, (k) => !!D.CATCH[k]);
+    st.exhibits = Object.fromEntries(Object.entries(obj3(st.exhibits)).map(([k, v]) => [k, (Array.isArray(v) ? v : []).filter((x) => D.CATCH[x])]));
+    st.snowmen = (Array.isArray(st.snowmen) ? st.snowmen : []).filter((x) => x && Number.isFinite(x.x) && Number.isFinite(x.z));
+    st.fishCaught = Object.fromEntries(Object.entries(obj3(st.fishCaught)).filter(([k, v]) => D.FISH[k] && v && v.n > 0));
+    st.rivals = obj3(st.rivals);
+    st.favorsFrom = obj3(st.favorsFrom);
+    if (st.museum && (typeof st.museum !== 'object' || !st.museum.halls)) st.museum = null;
+    if (st.museum) for (const [k, h] of Object.entries(st.museum.halls)) if (!h || !Array.isArray(h.slots)) delete st.museum.halls[k];
     if (st.tmap && !(st.tmap.loc && D.LOCATIONS[st.tmap.loc])) st.tmap = null;
     if (st.sitting && !D.NEIGHBORS.some((N) => N.owner === st.sitting.owner)) st.sitting = null;
     st.clutter = Array.isArray(st.clutter) ? st.clutter.filter((c) => c && (c.kind === 'hole' || c.kind === 'prints' || (c.kind === 'toy' && D.TOYS[c.type]))) : [];
@@ -9615,6 +10518,7 @@
       if (!d) { sp.classList.add('hidden'); return; }
       try {
         d.root.getWorldPosition(_sv); _sv.y += 0.4;
+        if (isUpX(_sv.x)) { _sv.x -= UPX; _sv.y += FH; }
         _sv.project(camera);
       } catch (_) { sp.classList.add('hidden'); return; }
       x = (_sv.x * 0.5 + 0.5) * window.innerWidth; y = (-_sv.y * 0.5 + 0.5) * window.innerHeight; r = 46;
@@ -10161,7 +11065,7 @@
     updateNameTag();
   }
   function takePhoto() {
-    renderer.render(world, camera);
+    drawWorld();
     const src = renderer.domElement;
     const c = document.createElement('canvas');
     c.width = src.width; c.height = src.height;
@@ -10496,6 +11400,8 @@
     updatePlayer(dt);
     funUpdate(dt);
     hobbyUpdate(dt);
+    round3Update(dt);
+    round3Slow(dt);
     updateTowelTask();
     updateUseTask();
     cookTick(dt);
@@ -10518,6 +11424,7 @@
     } else {
       for (const r of furnRT.values()) if (r.group.userData.anim) r.group.userData.anim(animT);
       if (mode === 'normal') setCtx(funCtx());
+      buildInnerWalls();
     }
     for (const d of dogs) d.updateLeash();
     calTick(dt);
@@ -10562,7 +11469,7 @@
       slowTimer = 1;
       tickClock();
       for (const d of dogs) { d.applyGrowth(); d.updateDirtLook(); d.checkFavSwitch(); }
-      if (!visit) { autoRefill(); computeComfort(); noteSeen(); checkUnlocks(); renderComfortChip(); checkLocUnlocks(); ensureDaily(); ensureEvent(); updateLocChip(); checkTips(); }
+      if (!visit) { autoRefill(); computeComfort(); noteSeen(); checkUnlocks(); checkUpstairsOpen(); renderComfortChip(); checkLocUnlocks(); ensureDaily(); ensureEvent(); updateLocChip(); checkTips(); }
     }
     saveTimer -= dt;
     if (saveTimer <= 0) { saveTimer = 5; save(); }
@@ -10572,7 +11479,7 @@
     requestAnimationFrame(loop);
     const dt = Math.min(clock.getDelta(), 0.05);
     update(dt);
-    renderer.render(world, camera);
+    drawWorld();
   }
 
   // =====================================================================
@@ -10644,6 +11551,9 @@
     selected = dogs[0] || null;
     growBeds();
     renderBeds();
+    meltSnowmen();
+    renderSnow();
+    renderExhibits();
     if (state.sitting && !state.sitting.pending) sitArrive();
     updateToyIcons();
     refreshLeashBtn();
@@ -12347,6 +13257,7 @@
       row('hide', 'search', `Hide and seek: ${d.name} hides`, 'You cover your eyes, then go looking', lock('hideseek')) +
       row('brush', 'brush', `Brush ${d.name}`, d.fluffed ? 'Already lovely and fluffy, but dogs never say no' : 'A fluffy coat, and a happy dog', lock('brush')) +
       row('lead', 'lead', `Let ${d.name} lead`, 'Follow your dog wherever it wants to go', lock('lead'), walk ? '' : 'On walks only') +
+      row('flakes', 'snow', 'Catch snowflakes', `Tap big snowflakes as they fall and ${d.name} jumps for them`, lock('winter'), flakesNow() ? '' : 'When it’s snowing') +
       row('course', 'flag', 'Agility course', (() => { const n = homeCourse().list.length; return n >= 3 ? `${n} obstacles at home · set the order and run it` : `Place 3 obstacles or more at home (Shop → Agility). You have ${n}`; })(), lock('agility'), walk ? 'At home (or at the Tournament Grounds)' : '') +
       '<div class="section">More to try</div>' +
       info('seat', 'Sit down', 'Tap a sofa, chair, dog bed or rug at home, or stand by a bench on a walk') +
@@ -12360,7 +13271,16 @@
       info('chat', 'Letters', 'Tap your mailbox at home', lock('letters')) +
       info('search', 'Messages in bottles', 'Look along the shore at the beach', lock('bottles')) +
       info('flag', 'Tournaments', locUnlocked('grounds') ? `At the Tournament Grounds on the ${D.TOURNEY.days.join('th and ')}th of each month` : 'At the Tournament Grounds, once you’ve found them') +
-      info('dog', 'Dog sitting', 'Neighbors who know you well sometimes ask by letter', lock('sitting'));
+      info('dog', 'Dog sitting', 'Neighbors who know you well sometimes ask by letter', lock('sitting')) +
+      info('snowman', 'Snowmen and snow dogs', 'When there’s snow on the ground, on walks or in your garden', lock('winter')) +
+      info('fish', 'Fishing', hasGadget('rod') ? 'Walk to the end of the pier at the beach' : 'Buy a fishing rod (Shop → Gadgets), then go to the pier at the beach', lock('fishing')) +
+      info('net', 'Catching critters', hasGadget('net') ? 'Look for critters on walks. Your catches can live in your garden (Bag → Critters)' : 'Buy a critter net (Shop → Gadgets)', lock('catching')) +
+      info('oven', 'Baking', 'Tap a baking oven at home (Shop → Kitchen). Treats come from your harvest', lock('baking')) +
+      info('search', 'Neighbor favors', 'Look for a neighbor with an exclamation mark over their head on your walks', lock('favors')) +
+      info('stall', 'Market stall', 'In Old Town, every Saturday and Sunday', lock('market')) +
+      info('museum', 'Town museum', 'The building with the columns in Old Town', lock('museum')) +
+      info('disc', 'Disc dog', state.toys.includes('frisbee') ? 'The blue mat at the beach · Disc Cup on the 14th' : 'Get a frisbee at the beach kiosk, then use the blue mat · Disc Cup on the 14th', lock('disc')) +
+      info('paper', 'The Gazette', 'Every Monday in your mailbox', lock('gazette'));
   }
   $('playList').addEventListener('click', (e) => {
     const b = e.target.closest('[data-play]');
@@ -12375,6 +13295,7 @@
       case 'brush': startBrush(d); break;
       case 'lead': startLead(d); break;
       case 'course': if (place === 'home') openCourse(); else toast('Your course is at home. Here, stand on a ring’s red start mat'); break;
+      case 'flakes': startFlakes(); break;
       default: break;
     }
   });
@@ -12387,7 +13308,7 @@
   function funCtx() {
     if (fun || mode !== 'normal' || visit || title) return null;
     const pp = player.root.position;
-    const hc = hobbyCtx(pp);
+    const hc = hobbyCtx(pp) || round3Ctx(pp);
     if (hc) return hc;
     if (unlockedFeat('piles') && patches.length && nearPatch(pp, 2.2)) return patches[0].kind === 'snow' ? 'shovel' : 'rake';
     if (place === 'park') {
@@ -12406,6 +13327,8 @@
   function funTap() {
     if (!fun) return false;
     if (fun.kind === 'gaze') { gazeTap(); return true; }
+    if (fun.kind === 'flakes') return flakesTap();
+    if (fun.kind === 'fish' || fun.kind === 'disc') return true;
     if (fun.kind === 'brush' || fun.kind === 'music' || (fun.kind === 'hide' && fun.phase === 'count')) return true;
     return false;
   }
@@ -12491,7 +13414,7 @@
   }
   // tapping a bed: walk over, then the bed sheet
   function tapBed(ray, gp) {
-    if (place !== 'home' || visit || !bedsOf().length) return null;
+    if (place !== 'home' || visit || !bedsOf().length || viewFloor() === 1) return null;
     const hits = ray.intersectObjects(bedGroup.children, true);
     for (const h of hits) { let o = h.object; while (o && !o.userData.bed) o = o.parent; if (o) return o.userData.bed; }
     if (gp) return bedAt(Math.floor(gp.x), Math.floor(gp.z)) || null;
@@ -12680,6 +13603,8 @@
       legs.push({ kind, a: new V3(x - Math.sin(r) * len, 0, z - Math.cos(r) * len), c: new V3(x, 0, z), b: new V3(x + Math.sin(r) * len, 0, z + Math.cos(r) * len), r });
     }
     const st = agilityStats(d);
+    // a pumpkin heart before the run: a little faster
+    if (d.zoomTreat) { st.v *= 1.08; d.zoomTreat = false; toast(`${d.name} is full of pumpkin power 🧡`); }
     fun = { kind: 'agility', still: true, dog: d, course, legs, i: 0, phase: 'toStart', t: 0, faults: 0, tapped: null, start, st, opt, cue: 0, onBtn: () => agilityTap() };
     funBar(`Get ready… ${d.name} heads to the start`, 'Go!', 0);
     $('funMeter').classList.add('needle', 'cue');
@@ -13130,7 +14055,8 @@
     mail().inbox.unshift(Object.assign({ id: newId(), gd: clockNow.gameDay, read: false }, o));
     state.mail.inbox = state.mail.inbox.slice(0, 30);
     const N = D.NEIGHBORS.find((x) => x.owner === o.from);
-    news({ title: `📬 A letter from ${o.from}`, text: hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it (Shop → Decor).', th: N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : TH('pic', '💌') });
+    if (o.gazette) news({ title: `📰 ${o.gazette.name}, issue ${o.gazette.no}`, text: `“${o.gazette.head[0]}” and your week in numbers. ${hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it.'}`, th: IC('paper') });
+    else news({ title: `📬 A letter from ${o.from}`, text: hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it (Shop → Decor).', th: N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : TH('pic', '💌') });
     mailFlags();
   }
   function seedGift(n) { const pool = Object.keys(D.SEEDS); const out = {}; for (let k = 0; k < n; k++) { const s = pick(pool); out[s] = (out[s] || 0) + 1; } return { seeds: out }; }
@@ -13218,6 +14144,7 @@
     if (mailTab === 'inbox') {
       if (!M.inbox.length) { B.innerHTML = '<p class="sub">No letters yet. Write to a neighbor, and they’ll write back the next day.</p>'; return; }
       B.innerHTML = M.inbox.map((m) => {
+        if (m.gazette) return `<div class="row letter gz${m.read ? '' : ' unread'}" data-ml="${m.id}"><div class="ic">${IC('paper')}</div><div class="txt"><b>${esc(m.gazette.name)}</b><small>Issue ${m.gazette.no}: ${esc(m.gazette.head[0])}</small></div></div>`;
         const N = D.NEIGHBORS.find((x) => x.owner === m.from);
         const open = m.id === mailOpenId;
         return `<div class="row letter${m.read ? '' : ' unread'}" data-ml="${m.id}">${N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : TH('pic', '💌')}<div class="txt"><b>${esc(m.from)}</b><small>${esc(open ? '' : m.text.split('\n')[1] || '')}</small>${open ? `<p class="letterTxt">${esc(m.text).replace(/\n/g, '<br>')}</p>${m.gift ? `<p class="sub">Enclosed: ${esc(giftText(m.gift))}${m.gotGift ? ' (collected)' : ''}</p>` : ''}${m.ask === 'sit' && !m.answered ? `<div class="btnRow"><button class="primary small" data-sit="yes" data-m="${m.id}">Yes, I’ll look after ${esc(N ? N.dog.name : 'the dog')}</button><button class="soft small" data-sit="no" data-m="${m.id}">Not this time</button></div>` : ''}` : ''}</div></div>`;
@@ -13235,6 +14162,7 @@
       h += '<div class="section">Put something in (optional)</div><div class="mailKinds">' +
         `<button class="soft${!mailGift ? ' sel' : ''}" data-gift="">Nothing</button>` +
         (state.bouquets > 0 ? `<button class="soft${mailGift === 'bouquet' ? ' sel' : ''}" data-gift="bouquet">💐 A bouquet (${state.bouquets})</button>` : '') +
+        Object.entries(state.treats || {}).filter(([k, n]) => n > 0 && D.BAKES[k]).map(([k, n]) => `<button class="soft${mailGift === 'treat:' + k ? ' sel' : ''}" data-gift="treat:${k}">${D.BAKES[k].icon} ${esc(D.BAKES[k].name)} (${n})</button>`).join('') +
         pantry.map(([k, n]) => `<button class="soft${mailGift === 'ing:' + k ? ' sel' : ''}" data-gift="ing:${k}">${D.INGREDIENTS[k].icon} ${esc(D.INGREDIENTS[k].name)} (${n})</button>`).join('') + '</div>';
       if (mailKind) {
         const N = D.NEIGHBORS.find((x) => x.owner === mailTo);
@@ -13261,6 +14189,7 @@
     if (l) {
       const m = M.inbox.find((x) => x.id === l.dataset.ml);
       if (!m) return;
+      if (m.gazette) { m.read = true; mailFlags(); openGazette(m.gazette); renderMail(); save(); return; }
       mailOpenId = mailOpenId === m.id ? null : m.id;
       if (!m.read) { m.read = true; if (m.gift && !m.gotGift) { m.gotGift = true; claimGift(m.gift); toast(`Enclosed: ${giftText(m.gift)}`); } mailFlags(); }
       renderMail();
@@ -13280,6 +14209,7 @@
     let giftName = '';
     if (mailGift === 'bouquet' && state.bouquets > 0) { state.bouquets--; giftName = 'a lovely bouquet'; }
     else if (mailGift && mailGift.startsWith('ing:')) { const k = mailGift.slice(4); if (state.pantry[k] > 0) { state.pantry[k]--; giftName = `a ${D.INGREDIENTS[k].name.toLowerCase().replace(/s$/, '')}`; } }
+    else if (mailGift && mailGift.startsWith('treat:')) { const k = mailGift.slice(6), B = D.BAKES[k]; if (B && (state.treats || {})[k] > 0) { state.treats[k]--; giftName = `homemade ${B.name.toLowerCase()}`; if (B.effect.gift) addNFriend(mailTo, 6); } }
     mail().out.push({ to: mailTo, kind: mailKind, gift: !!giftName, giftName, gd: clockNow.gameDay });
     addNFriend(mailTo, 2);
     progress('letter');
@@ -13601,6 +14531,1571 @@
     if (hobbyT <= 0) { hobbyT = 2; hobbySlow(); }
   }
 
+
+  // =====================================================================
+  // Baking: roll out dough, press cookie cutters into it (as many as fit), ice one, and into the oven.
+  // Treats go in a tin (state.treats) and are given from the dog's treat sheet.
+  // =====================================================================
+  let bake = null;
+  const treats = () => (state.treats = state.treats || {});
+  const haveBake = (B) => Object.entries(B.needs).every(([k, n]) => (state.pantry[k] || 0) >= n);
+  // cutter outlines in a box from -1 to 1
+  function cutterPath(x, shape, cx, cy, s) {
+    x.beginPath();
+    const P = (u, v) => [cx + u * s, cy + v * s];
+    switch (shape) {
+      case 'bone': {
+        for (const [u, v] of [[-0.62, -0.28], [-0.62, 0.28], [0.62, -0.28], [0.62, 0.28]]) { const [a, b] = P(u, v); x.moveTo(a + 0.3 * s, b); x.arc(a, b, 0.3 * s, 0, TAU); }
+        const [a, b] = P(-0.62, -0.2); x.rect(a, b, 1.24 * s, 0.4 * s);
+        break;
+      }
+      case 'paw': {
+        const [a, b] = P(0, 0.25); x.moveTo(a + 0.48 * s, b); x.ellipse(a, b, 0.48 * s, 0.4 * s, 0, 0, TAU);
+        for (const [u, v] of [[-0.62, -0.25], [-0.22, -0.62], [0.22, -0.62], [0.62, -0.25]]) { const [c, d] = P(u, v); x.moveTo(c + 0.2 * s, d); x.arc(c, d, 0.2 * s, 0, TAU); }
+        break;
+      }
+      case 'heart': {
+        const [a, b] = P(0, 0.85); x.moveTo(a, b);
+        x.bezierCurveTo(...P(-1.1, 0.1), ...P(-0.75, -0.95), ...P(0, -0.4));
+        x.bezierCurveTo(...P(0.75, -0.95), ...P(1.1, 0.1), a, b);
+        break;
+      }
+      case 'star': {
+        for (let k = 0; k < 10; k++) { const r = k % 2 ? 0.42 : 0.95, an = -Math.PI / 2 + (k * Math.PI) / 5; const [a, b] = P(Math.cos(an) * r, Math.sin(an) * r); if (k) x.lineTo(a, b); else x.moveTo(a, b); }
+        x.closePath();
+        break;
+      }
+      case 'drop': {
+        const [a, b] = P(0, -0.95); x.moveTo(a, b);
+        x.bezierCurveTo(...P(0.25, -0.5), ...P(0.75, 0.05), ...P(0.75, 0.35));
+        x.arc(cx, cy + 0.35 * s, 0.75 * s, 0, Math.PI);
+        x.bezierCurveTo(...P(-0.75, 0.05), ...P(-0.25, -0.5), a, b);
+        break;
+      }
+      default: { // fish
+        const [a, b] = P(0.95, -0.45); x.moveTo(a, b);
+        x.lineTo(...P(0.5, 0)); x.lineTo(...P(0.95, 0.45));
+        x.bezierCurveTo(...P(0.4, 0.15), ...P(0.05, 0.6), ...P(-0.45, 0.5));
+        x.bezierCurveTo(...P(-0.95, 0.4), ...P(-0.95, -0.4), ...P(-0.45, -0.5));
+        x.bezierCurveTo(...P(0.05, -0.6), ...P(0.4, -0.15), a, b);
+      }
+    }
+  }
+  const DOUGH = { x0: 26, x1: 294, y0: 70, y1: 262, r: 31 };
+  function openBake() {
+    if (!needRank('baking')) return;
+    bake = null;
+    renderBakeList();
+    $('bake').classList.remove('hidden');
+    tip('baking', { title: 'Baking', text: 'Press the cutter into the dough as often as it fits (no overlapping!). Then pipe icing along the dotted line on one of them. More cutters, more treats.', icon: 'oven' });
+  }
+  function renderBakeList() {
+    $('bakeGame').classList.add('hidden');
+    const L = $('bakeList');
+    L.classList.remove('hidden');
+    const have = Object.entries(state.pantry).filter(([, n]) => n > 0);
+    $('bakePantry').innerHTML = have.length ? `<span class="lbl">Pantry</span>${have.map(([k, n]) => `<span class="ingr">${thumbOf.ing(k)}<b>${n}</b></span>`).join('')}` : 'Your pantry is empty. Grow crops in your garden, or buy basics in the Shop.';
+    L.innerHTML = Object.entries(D.BAKES).map(([id, B]) => {
+      const needs = Object.entries(B.needs).map(([k, n]) => `<span class="ingr${(state.pantry[k] || 0) < n ? ' miss' : ''}">${thumbOf.ing(k)}${n > 1 ? `<b>×${n}</b>` : ''}</span>`).join('');
+      return `<div class="row"><div class="ic">${thumbOf.pic(B.icon)}</div><div class="txt"><b>${esc(B.name)}</b><small>${esc(B.desc)}${treats()[id] ? ` · ${treats()[id]} in the tin` : ''}</small><span class="needs">${needs}</span></div><button class="buy" data-bake="${id}"${haveBake(B) ? '' : ' disabled'}>Bake</button></div>`;
+    }).join('');
+  }
+  function startBake(id) {
+    const B = D.BAKES[id];
+    if (!B || !haveBake(B)) return;
+    for (const [k, n] of Object.entries(B.needs)) state.pantry[k] -= n;
+    bake = { id, phase: 'cut', cuts: [], ice: null, hover: null };
+    $('bakeList').classList.add('hidden');
+    $('bakeGame').classList.remove('hidden');
+    $('bakeNext').textContent = 'Into the oven';
+    $('bakeNext').disabled = true;
+    $('bakeHint').textContent = `Tap the dough to press the ${B.shape} cutter. As many as fit, without overlapping.`;
+    drawBake();
+    save();
+  }
+  function drawBake() {
+    const c = $('bakeCanvas'), x = c.getContext('2d'), B = D.BAKES[bake.id];
+    x.clearRect(0, 0, c.width, c.height);
+    x.fillStyle = '#c99a6b'; x.fillRect(0, 0, c.width, c.height);
+    for (let k = 0; k < 14; k++) { x.fillStyle = k % 2 ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.04)'; x.fillRect(0, k * 23, c.width, 11); }
+    if (bake.phase === 'cut') {
+      // the dough
+      x.fillStyle = '#f3dcb1';
+      x.beginPath(); x.roundRect ? x.roundRect(DOUGH.x0, DOUGH.y0, DOUGH.x1 - DOUGH.x0, DOUGH.y1 - DOUGH.y0, 22) : x.rect(DOUGH.x0, DOUGH.y0, DOUGH.x1 - DOUGH.x0, DOUGH.y1 - DOUGH.y0); x.fill();
+      x.fillStyle = 'rgba(255,255,255,.35)'; for (let k = 0; k < 18; k++) x.fillRect(DOUGH.x0 + ((k * 53) % (DOUGH.x1 - DOUGH.x0 - 8)), DOUGH.y0 + ((k * 37) % (DOUGH.y1 - DOUGH.y0 - 6)), 5, 3);
+      for (const [px, py] of bake.cuts) {
+        cutterPath(x, B.shape, px, py, DOUGH.r * 0.92);
+        x.fillStyle = '#e8c48c'; x.fill(); x.strokeStyle = '#b8864f'; x.lineWidth = 2.5; x.stroke();
+      }
+      if (bake.hover) {
+        const [hx, hy] = bake.hover, ok = cutFits(hx, hy);
+        cutterPath(x, B.shape, hx, hy, DOUGH.r * 0.92);
+        x.strokeStyle = ok ? '#5d8a3a' : '#d84a3a'; x.lineWidth = 3; x.setLineDash([6, 5]); x.stroke(); x.setLineDash([]);
+      }
+      x.fillStyle = '#5b3d22'; x.font = 'bold 18px system-ui, sans-serif'; x.textAlign = 'center';
+      x.fillText(`${bake.cuts.length} of ${D.BAKE.dough}`, c.width / 2, 40);
+    } else if (bake.phase === 'ice') {
+      // one big treat, a dotted line to pipe along
+      cutterPath(x, B.shape, 160, 165, 118);
+      x.fillStyle = '#e8c48c'; x.fill(); x.strokeStyle = '#b8864f'; x.lineWidth = 4; x.stroke();
+      x.fillStyle = 'rgba(91,61,34,.45)';
+      for (const [gx, gy] of bake.ice.guide) { x.beginPath(); x.arc(gx, gy, 2.6, 0, TAU); x.fill(); }
+      x.strokeStyle = bake.ice.col; x.lineWidth = 9; x.lineCap = 'round'; x.lineJoin = 'round';
+      for (const st of bake.ice.strokes) { x.beginPath(); st.forEach(([a, b], k) => (k ? x.lineTo(a, b) : x.moveTo(a, b))); x.stroke(); }
+    } else {
+      // the oven
+      x.fillStyle = '#4a4a52'; x.fillRect(30, 50, 260, 220);
+      x.fillStyle = '#2b2b31'; x.fillRect(50, 80, 220, 150);
+      const t = clamp(bake.ovenT / 2.2, 0, 1);
+      x.fillStyle = `rgba(255,${Math.round(150 - t * 60)},40,${0.25 + t * 0.4})`; x.fillRect(50, 80, 220, 150);
+      for (let k = 0; k < Math.min(bake.cuts.length, 8); k++) { cutterPath(x, B.shape, 85 + (k % 4) * 50, 130 + Math.floor(k / 4) * 55, 20); x.fillStyle = `rgb(${Math.round(232 - t * 40)},${Math.round(196 - t * 60)},${Math.round(140 - t * 70)})`; x.fill(); }
+      x.fillStyle = '#ffffff'; x.font = 'bold 18px system-ui, sans-serif'; x.textAlign = 'center';
+      x.fillText(t < 1 ? 'Baking…' : 'Done!', 160, 255);
+    }
+  }
+  function cutFits(px, py) {
+    const r = DOUGH.r;
+    if (px - r < DOUGH.x0 + 4 || px + r > DOUGH.x1 - 4 || py - r < DOUGH.y0 + 4 || py + r > DOUGH.y1 - 4) return false;
+    return bake.cuts.every(([a, b]) => Math.hypot(a - px, b - py) >= r * 1.95);
+  }
+  function bakeCut(px, py) {
+    if (!bake || bake.phase !== 'cut') return;
+    if (bake.cuts.length >= D.BAKE.dough) return;
+    if (!cutFits(px, py)) { sfx('tap'); haptic('light'); $('bakeHint').textContent = 'That one doesn’t fit there. Leave a little gap.'; return; }
+    bake.cuts.push([px, py]);
+    sfx('tap');
+    $('bakeNext').disabled = false;
+    $('bakeNext').textContent = bake.cuts.length >= D.BAKE.dough ? 'Ice one' : `Ice one (${bake.cuts.length})`;
+    $('bakeHint').textContent = bake.cuts.length >= D.BAKE.dough ? 'The tray is full! Now ice one of them.' : 'Keep going, or ice one now.';
+    drawBake();
+  }
+  const ICE_COLS = ['#ffffff', '#f8bbd0', '#b3e5fc', '#fff59d'];
+  function bakeToIce() {
+    // the dotted icing line: a zigzag, a wave or a loop, depending on the treat
+    const pat = ['zigzag', 'wave', 'loop'][Object.keys(D.BAKES).indexOf(bake.id) % 3], guide = [];
+    for (let k = 0; k <= 60; k++) {
+      const t = k / 60;
+      if (pat === 'loop') { const a = t * TAU * 1.0; guide.push([160 + Math.cos(a) * 48 * (1 - t * 0.35), 165 + Math.sin(a) * 40 * (1 - t * 0.35)]); }
+      else if (pat === 'wave') guide.push([95 + t * 130, 165 + Math.sin(t * TAU * 1.5) * 28]);
+      else { const z = (t * 4) % 1; guide.push([95 + t * 130, 165 + (z < 0.5 ? z : 1 - z) * 4 * 30 - 30]); }
+    }
+    bake.phase = 'ice';
+    bake.ice = { guide, strokes: [], hit: new Set(), ink: 0, stray: 0, col: pick(ICE_COLS) };
+    $('bakeNext').textContent = 'Into the oven';
+    $('bakeNext').disabled = true;
+    $('bakeHint').textContent = 'Pipe icing along the dotted line with your finger.';
+    drawBake();
+  }
+  function iceAt(px, py, start) {
+    const I = bake && bake.phase === 'ice' && bake.ice;
+    if (!I) return;
+    if (start || !I.strokes.length) I.strokes.push([]);
+    I.strokes[I.strokes.length - 1].push([px, py]);
+    let near = false;
+    I.guide.forEach(([gx, gy], k) => { if (Math.hypot(gx - px, gy - py) < 14) { I.hit.add(k); near = true; } });
+    I.ink++;
+    if (!near) I.stray++;
+    if (I.hit.size > I.guide.length * 0.4) $('bakeNext').disabled = false;
+    drawBake();
+  }
+  const iceScore = () => { const I = bake.ice; return clamp((I.hit.size / I.guide.length) * (1 - 0.6 * (I.stray / Math.max(1, I.ink))), 0, 1); };
+  function bakeOven() {
+    if (!bake || bake.phase !== 'ice') return;
+    const acc = iceScore();
+    bake.stars = acc >= D.BAKE.icingGood ? 3 : acc >= 0.55 ? 2 : 1;
+    bake.phase = 'oven';
+    bake.ovenT = 0;
+    $('bakeNext').disabled = true;
+    $('bakeHint').textContent = 'Mmm, it smells amazing…';
+    sfx('bubble');
+  }
+  function bakeTick(dt) {
+    if (!bake || bake.phase !== 'oven') return;
+    bake.ovenT += dt;
+    drawBake();
+    if (bake.ovenT >= 2.4 && !bake.done) finishBake();
+  }
+  function finishBake() {
+    const B = D.BAKES[bake.id];
+    bake.done = true;
+    const n = bake.cuts.length + (bake.stars - 1);
+    treats()[bake.id] = (treats()[bake.id] || 0) + n;
+    state.stats.baked = (state.stats.baked || 0) + n;
+    weekStat('baked', n);
+    earn('bake');
+    progress('bake');
+    $('bakeHint').innerHTML = `${'★'.repeat(bake.stars)}${'☆'.repeat(3 - bake.stars)} · ${n} ${esc(B.name.toLowerCase())} in the tin${bake.stars === 3 ? ' (perfect icing: two extra!)' : bake.stars === 2 ? ' (nice icing: one extra)' : ''}. Give them from a dog’s card.`;
+    $('bakeNext').textContent = 'Bake more';
+    $('bakeNext').disabled = false;
+    bake.phase = 'done';
+    sfx('find');
+    // the dogs smell it
+    for (const d of dogs) if (d.state !== 'sleep' && Math.random() < 0.7) d.goTo(() => player.root.position, 2.6, () => { d.faceTo(player.root.position); spawnEmoji('🤤', d.headWorld(0.3), { size: 0.35 }); d.setState('sit', 3); }, 1.2);
+    save();
+  }
+  (function bakeInput() {
+    const c = $('bakeCanvas');
+    const pt = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * (c.width / r.width), (e.clientY - r.top) * (c.height / r.height)]; };
+    let down = false;
+    c.addEventListener('pointerdown', (e) => {
+      if (!bake) return;
+      e.preventDefault();
+      const p = pt(e);
+      if (bake.phase === 'cut') { bake.hover = p; drawBake(); }
+      if (bake.phase === 'ice') { down = true; iceAt(p[0], p[1], true); try { c.setPointerCapture(e.pointerId); } catch (_) { /* fine */ } }
+    });
+    c.addEventListener('pointermove', (e) => {
+      if (!bake) return;
+      const p = pt(e);
+      if (bake.phase === 'cut' && e.pointerType === 'mouse') { bake.hover = p; drawBake(); }
+      if (bake.phase === 'ice' && down) iceAt(p[0], p[1], false);
+    });
+    c.addEventListener('pointerup', (e) => {
+      if (!bake) return;
+      if (bake.phase === 'cut') { const p = pt(e); bake.hover = null; bakeCut(p[0], p[1]); }
+      down = false;
+    });
+    c.addEventListener('pointercancel', () => { down = false; });
+  })();
+  $('bake').addEventListener('click', (e) => {
+    if (e.target.id === 'bake' || e.target.closest('[data-act="closeBake"]')) { if (bake && bake.phase !== 'done' && bake.phase !== 'oven' && bake.cuts.length) { bake.cuts.length = Math.max(1, bake.cuts.length); bake.stars = 1; bake.phase = 'oven'; finishBake(); } bake = null; $('bake').classList.add('hidden'); return; }
+    const b = e.target.closest('[data-bake]');
+    if (b) startBake(b.dataset.bake);
+  });
+  $('bakeNext').addEventListener('click', () => {
+    if (!bake) return;
+    if (bake.phase === 'cut') bakeToIce();
+    else if (bake.phase === 'ice') bakeOven();
+    else if (bake.phase === 'done') { bake = null; renderBakeList(); }
+  });
+  // giving a treat from the tin
+  function giveTreat(d, id) {
+    const B = D.BAKES[id];
+    if (!B || !(treats()[id] > 0)) return;
+    treats()[id]--;
+    const E = B.effect;
+    if (E.hunger) d.hunger = Math.min(100, d.hunger + E.hunger);
+    if (E.energy) d.energy = Math.min(100, d.energy + E.energy);
+    if (E.clean) d.clean = Math.min(100, d.clean + E.clean);
+    if (E.happy) d.happy = Math.min(d.missing() ? CONFIG.MISS_CAP : 100, d.happy + E.happy * d.mod('mealJoy'));
+    d.addBond(E.bond || 1);
+    if (E.train) d.trainBoost = (d.trainBoost || 0) + E.train;
+    if (E.zoom) d.zoomTreat = true;
+    d.life.meals['bake:' + id] = (d.life.meals['bake:' + id] || 0) + 1;
+    journalAdd(d, 'bake:' + id, B.icon, `Tasted homemade ${B.name.toLowerCase()} for the first time`);
+    treatDog = d; progress('treat'); treatDog = null;
+    spawnEmoji('😋', d.headWorld(0.4), { size: 0.45 });
+    toast(`${d.name} loved the ${B.name.toLowerCase()}!${E.train ? ' Tricks come easier for a bit.' : E.zoom ? ' Ready to zoom round a course!' : ''}`);
+    $('meals').classList.add('hidden');
+    save();
+  }
+
+  // =====================================================================
+  // The market in Old Town, on Saturdays and Sundays: set up a stall and serve the neighbors
+  // =====================================================================
+  let stall = null;
+  const marketDay = () => D.MARKET.days.includes(clockNow.weekday);
+  const marketSpot = () => (place === 'park' && loc === 'oldtown' && S && S.q && S.q.market ? S.q.market : null);
+  function nearMarket(pp) {
+    const M = marketSpot();
+    return !!M && M.g.visible && unlockedFeat('market') && flatDist(pp, M.front) < 2.2;
+  }
+  // what you could sell: [key, name, thumb, how many, coins each]
+  function marketStock() {
+    const out = [];
+    const hot = weekHot();
+    const price = (k, base) => Math.round(base * (k === hot ? D.MARKET.hot : 1));
+    for (const [k, G] of Object.entries(D.MARKET_GOODS)) {
+      if (G.kind === 'pantry' && (state.pantry[k] || 0) > 0) out.push([k, D.INGREDIENTS[k].name, thumbOf.ing(k), state.pantry[k], price(k, G.base)]);
+      if (G.kind === 'bouquet' && (state.bouquets || 0) > 0) out.push([k, G.name, thumbOf.pic(G.icon), state.bouquets, price(k, G.base)]);
+      if (G.kind === 'painting') { const n = (state.paintings || []).filter((P) => !state.furniture.some((f) => f.pid === P.id)).length; if (n) out.push([k, G.name, thumbOf.pic(G.icon), n, price(k, G.base)]); }
+    }
+    for (const [k, B] of Object.entries(D.BAKES)) if (treats()[k] > 0) out.push(['t:' + k, B.name, thumbOf.pic(B.icon), treats()[k], price('t:' + k, B.price)]);
+    return out;
+  }
+  function takeStock(k) {
+    if (k.startsWith('t:')) { treats()[k.slice(2)]--; return; }
+    const G = D.MARKET_GOODS[k];
+    if (G.kind === 'pantry') state.pantry[k]--;
+    else if (G.kind === 'bouquet') state.bouquets--;
+    else if (G.kind === 'painting') {
+      const P = (state.paintings || []).find((x) => !state.furniture.some((f) => f.pid === x.id));
+      if (P) { state.paintings.splice(state.paintings.indexOf(P), 1); state.inventory.painting = Math.max(0, (state.inventory.painting || 0) - 1); }
+    }
+  }
+  function openStall() {
+    if (!needRank('market')) return;
+    if (!marketDay()) { toast('The market is on Saturdays and Sundays'); return; }
+    if (state.marketDay === clockNow.gameDay) { toast('You had your stall today already. See you next market day!'); return; }
+    stall = { pick: new Set(), price: 1, phase: 'setup' };
+    renderStall();
+    $('stall').classList.remove('hidden');
+    tip('market', { title: 'Your market stall', text: 'Pick up to six things to sell and a price. Then serve the customers: tap what they ask for before they lose patience. Cheap sells more, pricey earns more per sale.', icon: 'stall' });
+  }
+  function renderStall() {
+    const B = $('stallBody');
+    if (stall.phase === 'setup') {
+      const stock = marketStock(), hot = weekHot();
+      const hotName = hot ? (hot.startsWith('t:') ? D.BAKES[hot.slice(2)].name : D.INGREDIENTS[hot] ? D.INGREDIENTS[hot].name : D.MARKET_GOODS[hot].name) : '';
+      B.innerHTML = `<p class="sub">${hot ? `This week everyone wants <b>${esc(hotName)}</b> (it sells for more). ` : ''}Pick up to ${D.MARKET.slots} things to sell.</p>` +
+        (stock.length ? `<div class="stallGoods">${stock.map(([k, n, th, c, pr]) => `<button class="toyCard${stall.pick.has(k) ? ' sel' : ''}" data-good="${k}">${th}<b>${esc(n)}</b><small>×${c} · 🪙 ${pr}${k === hot ? ' 🔥' : ''}</small></button>`).join('')}</div>`
+          : '<div class="empty">Nothing to sell yet. Harvest crops, bake treats, pick bouquets or paint.</div>') +
+        `<div class="segs priceSegs">${D.MARKET.prices.map(([nm], i) => `<button class="seg${stall.price === i ? ' sel' : ''}" data-price="${i}">${nm}</button>`).join('')}</div>` +
+        `<button class="primary" id="stallOpen"${stall.pick.size ? '' : ' disabled'}>Open the stall</button>`;
+      return;
+    }
+    if (stall.phase === 'run') {
+      B.innerHTML = `<div class="stallTop"><span>${IC('coin')} <b id="stEarn">${stall.earned}</b></span><span id="stClock">${Math.ceil(stall.left)}s</span><span>${IC('person')} ${stall.served}</span></div>` +
+        `<div id="stQueue" class="stQueue"></div><div class="stallGoods run" id="stGoods"></div>`;
+      renderStallRun();
+      return;
+    }
+    B.innerHTML = `<div class="stallDone"><h3>Stall closed</h3><p>You served ${stall.served} customer${stall.served === 1 ? '' : 's'} and sold ${stall.sold} thing${stall.sold === 1 ? '' : 's'}.</p><p class="big">${IC('coin')} ${stall.earned}</p>${stall.lost ? `<p class="sub">${stall.lost} went home without anything.</p>` : ''}<button class="primary" data-act="closeStall">Pack up</button></div>`;
+  }
+  function renderStallRun() {
+    const Q = $('stQueue'), G = $('stGoods');
+    if (!Q) return;
+    Q.innerHTML = stall.queue.map((c, i) => `<div class="cust${i ? '' : ' first'}${c.sad ? ' sad' : ''}"><img src="${ART.personPortraitURL(c.N)}" alt=""><div class="wish">${c.thumb}</div><div class="pat"><i style="width:${Math.round(clamp(c.pat / c.max, 0, 1) * 100)}%"></i></div><small>${esc(c.line)}</small></div>`).join('') || '<div class="empty">Waiting for customers…</div>';
+    G.innerHTML = stall.goods.map(([k, n, th, , pr]) => `<button class="toyCard" data-sell="${k}"${stall.left > 0 && stall.count[k] > 0 ? '' : ' disabled'}>${th}<b>${esc(n)}</b><small>×${stall.count[k]} · 🪙 ${Math.round(pr * D.MARKET.prices[stall.price][1])}</small></button>`).join('');
+  }
+  function startStall() {
+    const stock = marketStock().filter(([k]) => stall.pick.has(k));
+    if (!stock.length) return;
+    state.marketDay = clockNow.gameDay;
+    stall.phase = 'run';
+    stall.goods = stock;
+    stall.count = Object.fromEntries(stock.map(([k, , , c]) => [k, c]));
+    stall.left = D.MARKET.seconds;
+    stall.queue = [];
+    stall.next = 1.2;
+    stall.earned = 0; stall.served = 0; stall.sold = 0; stall.lost = 0;
+    // a happy dog at your stall draws a crowd
+    stall.charm = 1 + Math.min(0.5, dogs.filter((d) => d.happy > 70).length * 0.12 + Math.max(0, ...dogs.map((d) => d.specAs('performer'))) * 0.1);
+    renderStall();
+    save();
+  }
+  function stallTick(dt) {
+    if (!stall || stall.phase !== 'run' || $('stall').classList.contains('hidden')) return;
+    stall.left -= dt;
+    stall.next -= dt * stall.charm;
+    const P = D.MARKET.prices[stall.price];
+    if (stall.next <= 0 && stall.left > 4 && stall.queue.length < 3) {
+      stall.next = rand(2.6, 4.6) / P[2];
+      const have = stall.goods.filter(([k]) => stall.count[k] > 0);
+      if (have.length) {
+        const N = pick(D.NEIGHBORS);
+        // mostly they want what you have; sometimes the hot item of the week
+        const g = pick(have);
+        const max = 8 * P[2] + (stall.price === 2 ? -1 : 0);
+        stall.queue.push({ N, k: g[0], thumb: g[2], pat: max, max, line: pick(D.MARKET_LINES.hello) });
+      }
+    }
+    for (const c of stall.queue) c.pat -= dt;
+    const gone = stall.queue.filter((c) => c.pat <= 0);
+    if (gone.length) { stall.lost += gone.length; stall.queue = stall.queue.filter((c) => c.pat > 0); }
+    if (stall.left <= 0 || (!stall.goods.some(([k]) => stall.count[k] > 0) && !stall.queue.length)) { endStall(); return; }
+    stall.ui = (stall.ui || 0) - dt;
+    if (stall.ui <= 0) {
+      stall.ui = 0.2;
+      const cl = $('stClock'); if (cl) cl.textContent = `${Math.max(0, Math.ceil(stall.left))}s`;
+      renderStallRun();
+    }
+  }
+  function stallSell(k) {
+    if (!stall || stall.phase !== 'run' || !(stall.count[k] > 0)) return;
+    const c = stall.queue[0];
+    if (!c) return;
+    if (c.k !== k) { c.pat -= 1.5; c.line = 'Hmm, that’s not what I asked for…'; c.sad = true; sfx('tap'); renderStallRun(); return; }
+    const g = stall.goods.find((x) => x[0] === k), P = D.MARKET.prices[stall.price];
+    const coins = Math.round(g[4] * P[1]);
+    stall.count[k]--;
+    takeStock(k);
+    stall.earned += coins;
+    state.coins += coins;
+    stall.served++; stall.sold++;
+    stall.queue.shift();
+    addNFriend(c.N.owner, 1);
+    state.stats.sold = (state.stats.sold || 0) + 1;
+    weekStat('sold', 1); weekStat('marketCoins', coins);
+    sfx('coin');
+    $('stEarn').textContent = stall.earned;
+    renderStallRun();
+    updateHud();
+  }
+  function endStall() {
+    stall.phase = 'done';
+    if (stall.sold) { earn('market'); progress('market'); }
+    renderStall();
+    save();
+  }
+  $('stall').addEventListener('click', (e) => {
+    if (e.target.id === 'stall' || e.target.closest('[data-act="closeStall"]')) {
+      if (stall && stall.phase === 'run') { endStall(); return; }
+      stall = null; $('stall').classList.add('hidden'); return;
+    }
+    const g = e.target.closest('[data-good]');
+    if (g && stall.phase === 'setup') { const k = g.dataset.good; if (stall.pick.has(k)) stall.pick.delete(k); else if (stall.pick.size < D.MARKET.slots) stall.pick.add(k); renderStall(); return; }
+    const pr = e.target.closest('[data-price]');
+    if (pr && stall.phase === 'setup') { stall.price = +pr.dataset.price; renderStall(); return; }
+    if (e.target.closest('#stallOpen')) { startStall(); return; }
+    const s2 = e.target.closest('[data-sell]');
+    if (s2) stallSell(s2.dataset.sell);
+  });
+
+  // =====================================================================
+  // The town museum. You lend finds (and paintings, and fish you caught) to themed halls.
+  // Every game day the halls draw visitors; fresh exhibitions draw more. Your share of the tickets builds up.
+  // =====================================================================
+  const SEASON_FINDS = (() => { const o = {}; for (const S2 of Object.values(D.SEASONS)) for (const [k, n, ic] of S2.finds) o[k] = { name: n, icon: ic }; return o; })();
+  const findInfo = (k) => D.FINDS[k] || SEASON_FINDS[k] || null;
+  const museum = () => { const M = state.museum = state.museum || {}; for (const [k, v] of Object.entries({ halls: {}, visitors: 0, pending: 0, gd: clockNow.gameDay, log: [], fame: 0 })) if (M[k] === undefined) M[k] = v; return M; };
+  const museumFame = () => { const v = museum().visitors; let f = 0; D.MUSEUM.fame.forEach((t, i) => { if (v >= t) f = i + 1; }); return f; };
+  const hallOf = (id) => { const M = museum(); return (M.halls[id] = Object.assign({ slots: Array(D.MUSEUM.slots).fill(null), changed: clockNow.gameDay }, M.halls[id] || {})); };
+  const hallOpen = (H) => museumFame() >= H.fame;
+  // what a slot holds: f:<find>, p:<painting id>, x:<fish>
+  function exhibitInfo(key) {
+    if (!key) return null;
+    const [t, id] = [key.slice(0, 1), key.slice(2)];
+    if (t === 'f') { const F = findInfo(id); return F ? { name: F.name, th: TH('pic', F.icon), secret: !!(D.FINDS[id] && D.FINDS[id].secret) } : null; }
+    if (t === 'p') { const P = (state.paintings || []).find((x) => x.id === id); return P ? { name: P.title || `Portrait of ${P.dog || 'a dog'}`, th: P.img ? `<img class="th" src="${P.img}" alt="">` : TH('pic', '🖼️'), secret: false } : null; }
+    if (t === 'x') { const F = D.FISH[id]; return F ? { name: `${F.name} (${((state.fishCaught || {})[id] || {}).best || '?'} cm)`, th: TH('pic', F.icon), secret: !!F.rare } : null; }
+    return null;
+  }
+  // everything you could put in a hall that isn't on show somewhere already
+  function hallChoices(H) {
+    const out = [];
+    const shown = new Set();
+    for (const h of D.MUSEUM_HALLS) for (const k of hallOf(h.id).slots) if (k) shown.add(k);
+    if (H.locs) for (const [k, F] of Object.entries(D.FINDS)) if (H.locs.includes(F.loc) && state.finds[k] > 0) out.push('f:' + k);
+    if (H.seasonal) for (const k of Object.keys(SEASON_FINDS)) if (state.finds[k] > 0) out.push('f:' + k);
+    if (H.paintings) for (const P of state.paintings || []) out.push('p:' + P.id);
+    if (H.fish) for (const [k, v] of Object.entries(state.fishCaught || {})) if (v && v.n && !D.FISH[k].junk) out.push('x:' + k);
+    return out.filter((k) => !shown.has(k) && exhibitInfo(k));
+  }
+  function hallVisitors(H) {
+    const h = hallOf(H.id), M = D.MUSEUM;
+    const items = h.slots.filter(Boolean).map(exhibitInfo).filter(Boolean);
+    if (!items.length) return 0;
+    let v = items.length * M.perItem + items.filter((x) => x.secret).length * M.secretBonus;
+    if (items.length >= M.slots) v *= M.fullBonus;
+    const age = clockNow.gameDay - h.changed;
+    const fresh = age <= M.freshDays ? 1 : Math.max(M.staleMin, 1 - (age - M.freshDays) * M.staleRate);
+    return Math.round(v * fresh * (1 + 0.1 * museumFame()));
+  }
+  const hallFresh = (H) => { const age = clockNow.gameDay - hallOf(H.id).changed, M = D.MUSEUM; return age <= M.freshDays ? 1 : Math.max(M.staleMin, 1 - (age - M.freshDays) * M.staleRate); };
+  // once a game day: count the visitors
+  function museumTick() {
+    if (visit || !unlockedFeat('museum')) return;
+    const M = museum(), today = clockNow.gameDay;
+    if (today <= M.gd) return;
+    const days = Math.min(7, today - M.gd);
+    M.gd = today;
+    const per = D.MUSEUM_HALLS.filter(hallOpen).reduce((a, H) => a + hallVisitors(H), 0);
+    if (!per) return;
+    const before = museumFame();
+    for (let k = 0; k < days; k++) { M.visitors += per; M.pending += per * D.MUSEUM.coinPer; M.log.push(per); weekStat('visitors', per); }
+    M.log = M.log.slice(-14);
+    state.stats.visitors = M.visitors;
+    const after = museumFame();
+    if (after > before) {
+      M.fame = after;
+      const R = D.MUSEUM_REWARDS[after];
+      if (R) giveReward(R);
+      const newHalls = D.MUSEUM_HALLS.filter((H) => H.fame === after - 1 && after - 1 > 0);
+      news({ title: `The museum is getting famous! ${'★'.repeat(after)}`, text: `${M.visitors} visitors so far.${newHalls.length ? ` New hall${newHalls.length > 1 ? 's' : ''}: ${newHalls.map((H) => H.name).join(', ')}.` : ''}${R ? ` A thank-you from the museum: ${rewardText(R)}.` : ''}`, th: TH('pic', '🏛️') });
+    }
+  }
+  function nearMuseum(pp) {
+    return place === 'park' && loc === 'oldtown' && S && S.q && S.q.museum && unlockedFeat('museum') && flatDist(pp, S.q.museum.front) < 2.2;
+  }
+  let museumPick = null;   // [hall id, slot]
+  function openMuseum() {
+    if (!needRank('museum')) return;
+    museumTick();
+    museumPick = null;
+    renderMuseum();
+    $('museum').classList.remove('hidden');
+    tip('museum', { title: 'The museum', text: 'Lend your finds to the halls (they stay in your book). Each hall draws visitors every day, more when it’s full and fresh, so swap things now and then. You get a share of the tickets.', icon: 'museum' });
+  }
+  function renderMuseum() {
+    const M = museum(), fame = museumFame();
+    const B = $('museumBody');
+    if (museumPick) {
+      const H = D.MUSEUM_HALLS.find((x) => x.id === museumPick[0]), h = hallOf(H.id), cur = h.slots[museumPick[1]];
+      const ch = hallChoices(H);
+      B.innerHTML = `<p class="sub">${esc(H.name)}: pick something for this spot.</p>` +
+        (cur ? `<button class="soft" data-mtake="1">Take back ${esc(exhibitInfo(cur).name)}</button>` : '') +
+        (ch.length ? `<div class="stallGoods">${ch.map((k) => { const I = exhibitInfo(k); return `<button class="toyCard" data-mput="${k}">${I.th}<b>${esc(I.name)}</b>${I.secret ? '<small>Rare</small>' : ''}</button>`; }).join('')}</div>` : `<div class="empty">Nothing that fits ${esc(H.name)} yet. ${H.paintings ? 'Paint your dogs at an easel.' : H.fish ? 'Find shells on the beach, or fish off the pier.' : 'Sniff out more finds on your walks.'}</div>`) +
+        `<button class="soft" data-mback="1">Back</button>`;
+      return;
+    }
+    const per = D.MUSEUM_HALLS.filter(hallOpen).reduce((a, H) => a + hallVisitors(H), 0);
+    const log = M.log.slice(-7), mx = Math.max(10, ...log);
+    let h = `<div class="musTop"><div><b>${'★'.repeat(fame)}${'☆'.repeat(5 - fame)}</b><small>${M.visitors} visitors in all</small></div><div><b>${per}</b><small>a day right now</small></div>` +
+      `<button class="primary small" data-mcollect="1"${M.pending >= 1 ? '' : ' disabled'}>${IC('coin')} ${Math.floor(M.pending)}</button></div>`;
+    if (log.length) h += `<div class="kChart">${log.map((v) => `<i style="height:${Math.round((v / mx) * 100)}%"><b>${v}</b></i>`).join('')}</div>`;
+    for (const H of D.MUSEUM_HALLS) {
+      if (!hallOpen(H)) { h += `<div class="row hall locked"><div class="ic">${TH('pic', H.icon)}</div><div class="txt"><b>${esc(H.name)}</b><small>Opens at ${'★'.repeat(H.fame)} museum fame</small></div></div>`; continue; }
+      const hh = hallOf(H.id), fr = hallFresh(H);
+      h += `<div class="hall"><div class="hallHead">${TH('pic', H.icon)}<div><b>${esc(H.name)}</b><small>${esc(H.blurb)}</small></div><span class="hallV">${hallVisitors(H)}/day</span></div>` +
+        `<div class="fresh"><i style="width:${Math.round(fr * 100)}%"></i><small>${fr >= 1 ? 'Fresh' : fr > 0.7 ? 'Getting old' : 'Stale: swap something'}</small></div>` +
+        `<div class="slots">${hh.slots.map((k, i) => { const I = exhibitInfo(k); return `<button class="slot${I ? ' on' : ''}" data-mslot="${H.id}:${i}">${I ? I.th : IC('plus')}</button>`; }).join('')}</div></div>`;
+    }
+    B.innerHTML = h;
+  }
+  $('museum').addEventListener('click', (e) => {
+    if (e.target.id === 'museum' || e.target.closest('[data-act="closeMuseum"]')) { $('museum').classList.add('hidden'); return; }
+    const M = museum();
+    if (e.target.closest('[data-mcollect]')) { const n = Math.floor(M.pending); if (n > 0) { M.pending -= n; addCoins(n, null); toast(`🏛️ Your share of the tickets: ${n} coins`); earn('museum'); } renderMuseum(); save(); return; }
+    const sl = e.target.closest('[data-mslot]');
+    if (sl) { const [hid, i] = sl.dataset.mslot.split(':'); museumPick = [hid, +i]; renderMuseum(); return; }
+    if (e.target.closest('[data-mback]')) { museumPick = null; renderMuseum(); return; }
+    if (e.target.closest('[data-mtake]') && museumPick) { const h = hallOf(museumPick[0]); h.slots[museumPick[1]] = null; h.changed = clockNow.gameDay; museumPick = null; renderMuseum(); save(); return; }
+    const put = e.target.closest('[data-mput]');
+    if (put && museumPick) {
+      const h = hallOf(museumPick[0]);
+      h.slots[museumPick[1]] = put.dataset.mput;
+      h.changed = clockNow.gameDay;
+      museumPick = null;
+      progress('museum');
+      sfx('tap');
+      renderMuseum();
+      save();
+    }
+  });
+
+  // =====================================================================
+  // Catching critters with a net on walks. Caught ones live in your critter jar, or in a garden where they roam about.
+  // =====================================================================
+  const catchables = [];
+  const caught = () => (state.caught = state.caught || {});
+  const catchBook = () => (state.catchBook = state.catchBook || {});
+  const exhibits = () => (state.exhibits = state.exhibits || {});
+  function catchOk(C) {
+    if (C.months && !C.months.includes(clockNow.month)) return false;
+    const W = localWeather(), night = isNight();
+    switch (C.when) {
+      case 'night': return night;
+      case 'day': return !night && !W.precip;
+      case 'sun': return !night && weatherId === 'sun';
+      case 'rain': return W.precip === 'rain';
+      default: return true;
+    }
+  }
+  function clearCatchables() { for (const c of catchables) c.g.parent && c.g.parent.remove(c.g); catchables.length = 0; }
+  function catchPoint() {
+    const B = S.bbox || { x0: -18, x1: 18, z0: -18, z1: 18 };
+    for (let k = 0; k < 40; k++) {
+      const x = rand(B.x0 + 2, B.x1 - 2), z = rand(B.z0 + 2, B.z1 - 2);
+      if (isSolid(x, z) || inPond(x, z, 0.5) || (S.solid && S.solid(x, z))) continue;
+      if (Math.hypot(x, z - 18) < 6) continue;
+      return new V3(x, groundAt(x, z), z);
+    }
+    return null;
+  }
+  function spawnCatchables() {
+    clearCatchables();
+    if (!unlockedFeat('catching') || !hasGadget('net')) return;
+    const here = Object.entries(D.CATCH).filter(([, C]) => C.where.includes(loc) && catchOk(C));
+    if (!here.length) return;
+    const [a, b] = D.CATCHING.perWalk;
+    const n = a + Math.floor(Math.random() * (b - a + 1)) + (here.some(([k]) => k === 'firefly') ? 3 : 0);
+    for (let k = 0; k < n; k++) {
+      const [id, C] = pick(here);
+      const p = catchPoint();
+      if (!p) continue;
+      const g = ART.buildCatchable(C);
+      g.position.copy(p);
+      parkRoot.add(g);
+      let halo = null;
+      if (C.glow) { halo = lightHalo(C.col, 0.6); halo.material.opacity = 0.8; g.add(halo); halo.position.y = C.fly ? 0 : 0.1; }
+      catchables.push({ id, C, g, halo, home: p.clone(), rest: rand(1, 4), move: 0, from: null, to: null, t: Math.random() * 9 });
+    }
+  }
+  function updateCatchables(dt) {
+    if (!catchables.length) return;
+    for (const c of catchables) {
+      c.t += dt;
+      const p = c.g.position, base = groundAt(p.x, p.z);
+      // dogs running about scare them off
+      if (!c.flee && dogs.some((d) => d.moving && d.curSpeed > 2.6 && flatDist(d.root.position, p) < D.CATCHING.scare)) { c.flee = true; c.move = 0; c.rest = 0; }
+      if (c.rest > 0) {
+        c.rest -= dt;
+        if (c.C.fly) p.y = base + 0.5 + Math.sin(c.t * 2) * 0.03;
+        if (c.rest <= 0) {
+          const far = c.flee ? 4 : c.C.fly ? 2.4 : 0.8;
+          let tx = p.x + rand(-far, far), tz = p.z + rand(-far, far);
+          if (Math.hypot(tx - c.home.x, tz - c.home.z) > 5 && !c.flee) { tx = c.home.x + rand(-1, 1); tz = c.home.z + rand(-1, 1); }
+          if (isSolid(tx, tz)) { tx = p.x; tz = p.z; }
+          c.from = p.clone(); c.to = new V3(tx, 0, tz); c.move = 0;
+        }
+      } else if (c.to) {
+        c.move += dt / (c.C.fly ? 1.4 : 2.2) * (c.flee ? 2 : 1);
+        const t = Math.min(1, c.move);
+        p.x = lerp(c.from.x, c.to.x, t); p.z = lerp(c.from.z, c.to.z, t);
+        p.y = groundAt(p.x, p.z) + (c.C.fly ? 0.5 + Math.sin(t * Math.PI) * 0.6 + Math.sin(c.t * 9) * 0.05 : 0);
+        c.g.rotation.y = Math.atan2(c.to.x - c.from.x, c.to.z - c.from.z);
+        if (t >= 1) { c.to = null; c.flee = false; c.rest = rand(1.5, 4.5); }
+      }
+      const W = c.g.userData.wings;
+      if (W) { const a = c.rest > 0 ? Math.sin(c.t * 3) * 0.3 : Math.sin(c.t * 30) * 0.8; W[0].rotation.z = a; W[1].rotation.z = -a; }
+      if (c.halo) c.halo.material.opacity = 0.5 + Math.sin(c.t * 2.3) * 0.35;
+    }
+  }
+  const nearCatchable = (pp) => (hasGadget('net') ? catchables.filter((c) => flatDist(c.g.position, pp) < D.CATCHING.reach).sort((a, b) => flatDist(a.g.position, pp) - flatDist(b.g.position, pp))[0] || null : null);
+  function swingNet() {
+    const pp = player.root.position, c = nearCatchable(pp);
+    if (!c) return;
+    player.face = Math.atan2(c.g.position.x - pp.x, c.g.position.z - pp.z);
+    player.throwT = 0.35;
+    sfx('whoosh');
+    const resting = c.rest > 0 && !c.flee;
+    if (Math.random() < (resting ? 0.88 : 0.25)) catchIt(c);
+    else { c.flee = true; c.rest = 0; c.to = null; toast(resting ? 'Missed! Try again' : `The ${c.C.name.toLowerCase()} is on the move. Wait till it sits still`); }
+  }
+  function catchIt(c) {
+    catchables.splice(catchables.indexOf(c), 1);
+    c.g.parent && c.g.parent.remove(c.g);
+    const first = !catchBook()[c.id];
+    catchBook()[c.id] = (catchBook()[c.id] || 0) + 1;
+    state.stats.critterKinds = Object.keys(catchBook()).length;
+    earn('catch'); progress('catch');
+    spawnEmoji(c.C.icon, player.headWorld ? player.headWorld(0.4) : player.root.position.clone().add(new V3(0, 2, 0)), { size: 0.5 });
+    if (c.id === 'firefly') {
+      state.fireflies = (state.fireflies || 0) + 1;
+      if (state.fireflies % D.CATCHING.jar === 0) { state.inventory.fireflyjar = (state.inventory.fireflyjar || 0) + 1; news({ title: 'A firefly jar!', text: `${D.CATCHING.jar} fireflies make a lovely light. Put the jar up at home (Decorate).`, th: thumbOf.item('fireflyjar') }); }
+      else toast(`✨ A firefly for your jar (${state.fireflies % D.CATCHING.jar} of ${D.CATCHING.jar})`);
+    } else {
+      caught()[c.id] = (caught()[c.id] || 0) + 1;
+      toast(`${first ? 'New! ' : ''}You caught a ${c.C.name.toLowerCase()}. It’s in your critter jar (Bag → Critters)`);
+    }
+    for (const d of dogs) if (flatDist(d.root.position, player.root.position) < 4) { d.happy = Math.min(100, d.happy + 2); journalAdd(d, 'catch:' + c.id, c.C.icon, `Watched you catch a ${c.C.name.toLowerCase()}`); }
+    save();
+  }
+  // ----- the critter garden: let your catches roam a garden at home -----
+  const exhibitCap = (k) => {
+    const [cx, cz] = k.split(',').map(Number);
+    const extra = home().furniture.filter((f) => (f.type === 'terrarium' || f.type === 'insecthotel') && Math.floor(f.i / CHUNK) === cx && Math.floor(f.j / CHUNK) === cz).length * 4;
+    return D.CATCHING.exhibit + extra;
+  };
+  const roamers = [];
+  const exhibitGroup = pivot(homeRoot);
+  function renderExhibits() {
+    exhibitGroup.clear();
+    roamers.length = 0;
+    const H = home(), E = (H === state ? exhibits() : H.exhibits) || {};
+    for (const [k, list] of Object.entries(E)) {
+      const [cx, cz] = k.split(',').map(Number);
+      if (!isGardenChunk(cx, cz)) continue;
+      for (const id of list) {
+        const C = D.CATCH[id];
+        if (!C) continue;
+        const g = ART.buildCatchable(C);
+        const x = cx * CHUNK + rand(0.6, CHUNK - 0.6), z = cz * CHUNK + rand(0.6, CHUNK - 0.6);
+        g.position.set(x, C.fly ? 0.6 : 0, z);
+        exhibitGroup.add(g);
+        let halo = null;
+        if (C.glow) { halo = lightHalo(C.col, 0.5); halo.material.opacity = 0.7; g.add(halo); }
+        roamers.push({ C, g, halo, cx, cz, rest: rand(0, 3), t: Math.random() * 9, to: null, from: null, move: 0 });
+      }
+    }
+  }
+  function updateRoamers(dt) {
+    for (const c of roamers) {
+      c.t += dt;
+      const p = c.g.position;
+      // the dogs chase them now and then; the critters flit off
+      const chaser = dogs.find((d) => d.moving && flatDist(d.root.position, p) < 1.2);
+      if (chaser && !c.to) c.rest = 0;
+      if (c.rest > 0) { c.rest -= dt; if (c.C.fly) p.y = 0.6 + Math.sin(c.t * 2) * 0.04; }
+      if (c.rest <= 0 && !c.to) {
+        const x0 = c.cx * CHUNK + 0.4, x1 = (c.cx + 1) * CHUNK - 0.4, z0 = c.cz * CHUNK + 0.4, z1 = (c.cz + 1) * CHUNK - 0.4;
+        const r = c.C.fly ? 2.2 : 0.7;
+        c.from = p.clone(); c.to = new V3(clamp(p.x + rand(-r, r), x0, x1), 0, clamp(p.z + rand(-r, r), z0, z1)); c.move = 0;
+      }
+      if (c.to) {
+        c.move += dt / (c.C.fly ? 1.5 : 2.6);
+        const t = Math.min(1, c.move);
+        p.x = lerp(c.from.x, c.to.x, t); p.z = lerp(c.from.z, c.to.z, t);
+        p.y = c.C.fly ? 0.6 + Math.sin(t * Math.PI) * 0.5 : 0;
+        c.g.rotation.y = Math.atan2(c.to.x - c.from.x, c.to.z - c.from.z);
+        if (t >= 1) { c.to = null; c.rest = rand(1.5, 5); }
+      }
+      const W = c.g.userData.wings;
+      if (W) { const a = c.to ? Math.sin(c.t * 30) * 0.8 : Math.sin(c.t * 3) * 0.3; W[0].rotation.z = a; W[1].rotation.z = -a; }
+      if (c.halo) c.halo.material.opacity = (0.4 + Math.sin(c.t * 2.3) * 0.3) * (nightLevel > 0.3 ? 1.2 : 0.5);
+    }
+  }
+  // a dog that loves to chase now and then goes after a critter in the garden
+  function critterChaseIdea(d) {
+    if (!roamers.length || !(d.flag('zooms') || d.flag('digs')) || Math.random() > 0.08) return false;
+    const c = pick(roamers);
+    d.goTo(() => c.g.position, 3.6, () => { d.faceTo(c.g.position); d.setState('happy', 1.2); spawnEmoji('❗', d.headWorld(0.3), { size: 0.35 }); }, 0.6);
+    return true;
+  }
+  let critTab = 'jar';
+  function openCritters() {
+    if (!needRank('catching')) return;
+    renderCritters();
+    $('critters').classList.remove('hidden');
+  }
+  function renderCritters() {
+    const B = $('critBody'), gardens = Object.keys(state.gardens || {}).filter((k) => state.chunks.some(([x, z]) => chunkKey(x, z) === k));
+    $('critTabs').querySelectorAll('.seg').forEach((b) => b.classList.toggle('sel', b.dataset.ct === critTab));
+    if (critTab === 'book') {
+      const all = Object.entries(D.CATCH);
+      B.innerHTML = `<p class="sub">${Object.keys(catchBook()).length} of ${all.length} kinds caught. ${state.fireflies ? `Fireflies caught: ${state.fireflies}.` : ''}</p><div class="stallGoods">` +
+        all.map(([k, C]) => catchBook()[k] ? `<div class="toyCard">${TH('pic', C.icon)}<b>${esc(C.name)}</b><small>${C.where.map((l) => D.LOCATIONS[l] ? D.LOCATIONS[l].name : l).join(', ')}${C.when ? ` · ${C.when}` : ''}</small></div>` : `<div class="toyCard dim">${TH('pic', '❔')}<b>???</b><small>${C.where.filter(locUnlocked).length ? D.LOCATIONS[C.where.find(locUnlocked)].name : 'Somewhere new'}</small></div>`).join('') + '</div>';
+      return;
+    }
+    const jar = Object.entries(caught()).filter(([, n]) => n > 0);
+    let h = '';
+    if (!gardens.length) h += '<p class="sub">Build a garden at home and your critters can roam in it.</p>';
+    h += jar.length ? `<div class="section">In your jar</div>` + jar.map(([k, n]) => {
+      const C = D.CATCH[k];
+      return `<div class="row"><div class="ic">${TH('pic', C.icon)}</div><div class="txt"><b>${esc(C.name)} ×${n}</b><small>Let go: 🪙 ${C.value}</small></div>` +
+        `<div class="btnCol">${gardens.length ? `<button class="small primary" data-cx="${k}">To the garden</button>` : ''}<button class="small soft" data-cfree="${k}">Let go</button></div></div>`;
+    }).join('') : '<p class="sub">Your jar is empty. Catch critters on your walks with the net.</p>';
+    for (const g of gardens) {
+      const list = exhibits()[g] || [];
+      h += `<div class="section">Garden ${gardens.indexOf(g) + 1}: ${list.length} of ${exhibitCap(g)}</div>`;
+      h += list.length ? `<div class="stallGoods">${list.map((id, i) => `<button class="toyCard" data-cback="${g}:${i}">${TH('pic', D.CATCH[id].icon)}<b>${esc(D.CATCH[id].name)}</b><small>Tap to take back</small></button>`).join('')}</div>` : '<p class="sub">No critters here yet.</p>';
+    }
+    B.innerHTML = h;
+  }
+  $('critters').addEventListener('click', (e) => {
+    if (e.target.id === 'critters' || e.target.closest('[data-act="closeCritters"]')) { $('critters').classList.add('hidden'); return; }
+    const tb = e.target.closest('[data-ct]');
+    if (tb) { critTab = tb.dataset.ct; renderCritters(); return; }
+    const gardens = Object.keys(state.gardens || {}).filter((k) => state.chunks.some(([x, z]) => chunkKey(x, z) === k));
+    const ex = e.target.closest('[data-cx]');
+    if (ex) {
+      const id = ex.dataset.cx;
+      const g = gardens.find((k) => (exhibits()[k] || []).length < exhibitCap(k));
+      if (!g) { toast('Your gardens are full of critters. A terrarium or a bug hotel makes room for more'); return; }
+      (exhibits()[g] = exhibits()[g] || []).push(id);
+      caught()[id]--;
+      renderExhibits();
+      toast(`${D.CATCH[id].name} is in the garden now`);
+      renderCritters(); save(); return;
+    }
+    const fr = e.target.closest('[data-cfree]');
+    if (fr) { const id = fr.dataset.cfree; caught()[id]--; addCoins(D.CATCH[id].value, null); toast(`Off it goes! (+🪙 ${D.CATCH[id].value} from the nature club)`); renderCritters(); save(); return; }
+    const bk = e.target.closest('[data-cback]');
+    if (bk) { const [g, i] = bk.dataset.cback.split(':'); const list = exhibits()[g] || []; const id = list.splice(+i, 1)[0]; if (id) caught()[id] = (caught()[id] || 0) + 1; renderExhibits(); renderCritters(); save(); }
+  });
+
+  // =====================================================================
+  // Fishing off the pier: cast, wait for the bobber to dip, strike, then reel without snapping the line
+  // =====================================================================
+  const nearPier = (pp) => place === 'park' && loc === 'beach' && S && S.q && S.q.pier && flatDist(pp, S.q.pier.end) < 1.6;
+  function fishPick() {
+    const night = isNight();
+    const pool = Object.entries(D.FISH).filter(([, F]) => (!F.months || F.months.includes(clockNow.month)) && (!F.when || (F.when === 'night') === night));
+    let r = Math.random() * pool.reduce((a, [, F]) => a + F.weight, 0);
+    for (const [k, F] of pool) { r -= F.weight; if (r <= 0) return k; }
+    return pool[0][0];
+  }
+  function startFishing() {
+    if (!needRank('fishing')) return;
+    if (!hasGadget('rod')) { toast('You need a fishing rod (Shop → Gadgets)'); return; }
+    if (fun) endFun('switch');
+    const pp = player.root.position;
+    player.face = Math.PI;   // out to sea
+    const bob = new THREE.Group();
+    box(bob, 0.14, 0.12, 0.14, '#e53935', 0, 0.06, 0); box(bob, 0.14, 0.08, 0.14, '#ffffff', 0, 0.16, 0);
+    bob.visible = false;
+    parkRoot.add(bob);
+    let line;
+    try { line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new V3(), new V3()]), new THREE.LineBasicMaterial({ color: 0xffffff })); } catch (_) { line = new THREE.Group(); }
+    line.visible = false;
+    parkRoot.add(line);
+    fun = { kind: 'fish', still: true, phase: 'cast', t: 0, p: 0, dir: 1, bob, line, onBtn: () => fishTap() };
+    fun.end = () => { bob.parent && bob.parent.remove(bob); line.parent && line.parent.remove(line); $('funMeter').classList.remove('needle'); };
+    funBar('Tap Cast when the marker is far right for a long cast', 'Cast', 0);
+    $('funMeter').classList.add('needle');
+    // the dogs settle down on the pier to watch
+    dogs.forEach((d, i) => { if (d.offLeash) return; d.free = true; const sp = new V3(pp.x + (i % 2 ? 0.55 : -0.55), 0, pp.z + 0.9 + Math.floor(i / 2) * 0.7); d.doAct('none', (dt) => { if (!fun || fun.kind !== 'fish') return false; if (d.stepTo(sp.x, sp.z, 2, dt) < 0.25) { d.act.pose = 'sit'; d.face = Math.PI; } return true; }, 'Watching the water 🎣'); });
+    tip('fishing', { title: 'Fishing', text: 'Cast, then wait. When the bobber dips, tap quickly! Then tap to reel, but keep the line in the green or it snaps.', icon: 'fish' });
+  }
+  function fishTap() {
+    const F = fun;
+    if (!F || F.kind !== 'fish') return;
+    if (F.phase === 'cast') {
+      const pp = player.root.position, dist = 2.5 + F.p * 5;
+      F.bobAt = new V3(pp.x + rand(-0.6, 0.6), 0.05, pp.z - dist);
+      F.bob.position.copy(F.bobAt); F.bob.visible = true; F.line.visible = true;
+      F.phase = 'wait'; F.t = 0; F.bite = rand(...D.FISHING.bite) * (F.p > 0.7 ? 0.8 : 1);
+      player.throwT = 0.4;
+      sfx('throw');
+      setTimeout(() => sfx('plip'), 400);
+      $('funMeter').classList.remove('needle');
+      funBar('Wait for a bite…', 'Strike!', null);
+      return;
+    }
+    if (F.phase === 'wait') { F.bite += 1.2; funBar('Too soon! It got spooked. Wait for it…', 'Strike!', null); return; }
+    if (F.phase === 'bite') {
+      F.phase = 'reel'; F.t = 0; F.ten = 0.5; F.prog = 0.15; F.fish = fishPick();
+      $('funMeter').classList.add('band');
+      funBar(`Reel it in! Keep the line in the green`, 'Reel', 0.5);
+      sfx('splash');
+      return;
+    }
+    if (F.phase === 'reel') {
+      const P = D.FISH[F.fish].pull;
+      F.ten += 0.16 * P;
+      const [lo, hi] = D.FISHING.keep;
+      F.prog += F.ten >= lo && F.ten <= hi ? 0.1 : 0.025;
+      sfx('tap');
+    }
+  }
+  function fishUpdate(dt) {
+    const F = fun, pp = player.root.position;
+    F.t += dt;
+    if (F.line.visible && F.line.geometry && F.line.geometry.setFromPoints) {
+      const tip = new V3(pp.x, 1.6 + groundAt(pp.x, pp.z), pp.z - 0.6), b = F.bob.position;
+      F.line.geometry.setFromPoints([tip, new V3(b.x, b.y + 0.1, b.z)]);
+    }
+    if (F.phase === 'cast') {
+      F.p += F.dir * dt * 0.9;
+      if (F.p > 1) { F.p = 1; F.dir = -1; } else if (F.p < 0) { F.p = 0; F.dir = 1; }
+      $('funFill').style.width = Math.round(F.p * 100) + '%';
+      return;
+    }
+    if (F.phase === 'wait') {
+      F.bob.position.y = 0.05 + Math.sin(F.t * 2.2) * 0.03;
+      // a dog that loves water can't resist now and then
+      if (!F.splashed && F.t > 2 && Math.random() < dt * 0.04) {
+        const d = dogs.find((x) => x.flag('water') && x.state === 'act');
+        if (d) { F.splashed = true; spawnEmoji('💦', d.headWorld(0.2), { size: 0.5 }); d.wetT = 60; addDirt(d, 'salt', 3); sfx('splash'); toast(`${d.name} jumped in after the bobber! 💦`); }
+      }
+      if (F.t >= F.bite) { F.phase = 'bite'; F.t = 0; funBar('A bite! Tap Strike!', 'Strike!', null); sfx('plop'); haptic('medium'); }
+      return;
+    }
+    if (F.phase === 'bite') {
+      F.bob.position.y = -0.08 + Math.sin(F.t * 18) * 0.05;
+      if (F.t > D.FISHING.window) { F.phase = 'wait'; F.t = 0; F.bite = rand(...D.FISHING.bite); funBar('Too slow, it got away. Wait for the next one…', 'Strike!', null); }
+      return;
+    }
+    if (F.phase === 'reel') {
+      const [lo, hi] = D.FISHING.keep, Fi = D.FISH[F.fish];
+      F.ten = Math.max(0, F.ten - dt * 0.32);
+      if (F.ten < lo) F.prog = Math.max(0, F.prog - dt * 0.05 * Fi.pull);
+      F.bob.position.z = lerp(F.bobAt.z, pp.z - 0.8, F.prog);
+      F.bob.position.x = F.bobAt.x + Math.sin(F.t * 5) * 0.25 * Fi.pull;
+      F.bob.position.y = -0.05 + Math.sin(F.t * 14) * 0.04;
+      $('funFill').style.width = Math.round(clamp(F.ten, 0, 1) * 100) + '%';
+      $('funTxt').textContent = F.ten > hi ? 'Careful! The line’s too tight' : F.ten < lo ? 'Reel! It’s getting away' : `Reeling it in… ${Math.round(F.prog * 100)}%`;
+      if (F.ten >= 1) { fishEnd(false, 'Snap! The line broke. Gentler next time'); return; }
+      if (F.prog <= 0 && F.t > 2) { fishEnd(false, 'It got away…'); return; }
+      if (F.t > D.FISHING.reel + Fi.pull * 3) { fishEnd(false, 'It got tired of waiting and swam off'); return; }
+      if (F.prog >= 1) fishEnd(true);
+    }
+  }
+  function fishEnd(ok, msg) {
+    const F = fun;
+    $('funMeter').classList.remove('band');
+    if (!ok) { toast(msg); F.phase = 'cast'; F.p = 0; F.bob.visible = false; F.line.visible = false; funBar('Cast again?', 'Cast', 0); $('funMeter').classList.add('needle'); return; }
+    const id = F.fish, Fi = D.FISH[id];
+    const size = Math.round(rand(Fi.size[0], Fi.size[1]));
+    const fc = (state.fishCaught = state.fishCaught || {});
+    const rec = fc[id] = Object.assign({ n: 0, best: 0 }, fc[id] || {});
+    const first = !rec.n, best = size > rec.best;
+    rec.n++; if (best) rec.best = size;
+    state.stats.fished = (state.stats.fished || 0) + 1;
+    if (!Fi.junk) state.pantry.fish = (state.pantry.fish || 0) + 1;
+    if (Fi.rare) addCoins(80, player.root.position);
+    if (state.stats.fished >= D.FISHING.trophyAt && !state.fishTrophy) { state.fishTrophy = true; state.inventory.fishtrophy = (state.inventory.fishtrophy || 0) + 1; news({ title: 'A fish trophy!', text: `${D.FISHING.trophyAt} fish off the pier. The trophy is in your inventory.`, th: thumbOf.item('fishtrophy') }); }
+    earn('fish'); progress('fish'); weekStat('fishBest', 0, size);
+    spawnEmoji(Fi.icon, player.root.position.clone().add(new V3(0, 2.2, -0.4)), { size: 0.7, life: 1.6 });
+    sfx(Fi.junk ? 'tap' : 'find');
+    toast(Fi.junk ? `An old boot… well, it’s clean now 👢` : `${first ? 'New! ' : ''}${Fi.name}, ${size} cm${best && !first ? ' (your biggest yet!)' : ''}${Fi.junk ? '' : '. One for the pantry'}`);
+    for (const d of dogs) if (d.state === 'act') { d.happy = Math.min(100, d.happy + 3); journalAdd(d, 'fish1', '🎣', `Watched you pull a ${Fi.name.toLowerCase()} out of the sea`); }
+    F.phase = 'cast'; F.p = 0; F.bob.visible = false; F.line.visible = false;
+    funBar('Cast again?', 'Cast', 0);
+    $('funMeter').classList.add('needle');
+    save();
+  }
+
+  // =====================================================================
+  // Winter: build snowmen and snow dogs (roll the balls by walking), catch snowflakes with your dog
+  // =====================================================================
+  const snowOnGround = () => {
+    if (place === 'park') return !!(LOC().snowy || (isWinter() && !LOC().indoor && loc !== 'beach' && loc !== 'moon') || (curWeather().precip === 'snow' && !LOC().indoor));
+    return place === 'home' && (isWinter() || curWeather().precip === 'snow');
+  };
+  const snowmen = () => (state.snowmen = state.snowmen || []);
+  const snowGroup = pivot(homeRoot);
+  let parkSnow = null;
+  function snowHere() { return snowmen().filter((s) => s.loc === (place === 'home' ? 'home' : loc)); }
+  // snow melts when winter is over (except in the Snowy Village)
+  function meltSnowmen() {
+    const before = snowmen().length;
+    const snowing = curWeather().precip === 'snow';
+    state.snowmen = snowmen().filter((s) => s.loc === 'snowy' || isWinter() || snowing);
+    return before - state.snowmen.length;
+  }
+  function buildSnowFigure(s) {
+    let g;
+    if (s.kind === 'dog') {
+      const P = ART.buildDog(s.breed || 'retriever', null);
+      g = P.root || P;
+      g.traverse((o) => { if (o.isMesh) { const c = o.material && o.material.color; const dark = c && (c.r + c.g + c.b) < 0.45; o.material = mat(dark ? '#3a3a40' : '#f4f8fc'); } });
+      g.scale.setScalar(1.6);
+      box(g, 0.5, 0.06, 0.12, s.scarf || '#e53935', 0, 0.62, 0.32);
+    } else g = ART.buildSnowman(s.scarf || '#e53935', s.sizes);
+    g.position.set(s.x, s.y || 0, s.z);
+    g.rotation.y = s.ry || 0;
+    return g;
+  }
+  function renderSnow() {
+    snowGroup.clear();
+    if (parkSnow && parkSnow.parent) parkSnow.parent.remove(parkSnow);
+    parkSnow = null;
+    const list = snowHere();
+    if (!list.length) return;
+    if (place === 'park') { parkSnow = pivot(parkRoot); for (const s of list) parkSnow.add(buildSnowFigure(s)); }
+    else for (const s of list) snowGroup.add(buildSnowFigure(s));
+  }
+  const nearSnowSpot = (pp) => unlockedFeat('winter') && snowOnGround() && (place === 'park' || isGardenTile(Math.floor(pp.x), Math.floor(pp.z))) && !snowHere().some((s) => flatDist(s, pp) < 3);
+  function startSnowman() {
+    if (!needRank('winter')) return;
+    const d0 = dogs[0];
+    confirmBox('Build what?', 'Roll the snowballs by walking around. The more you walk, the bigger they get.', '⛄ A snowman', true, () => snowStart('man'), null,
+      d0 ? { label: `🐕 A snow dog like ${d0.name}`, enabled: true, fn: () => snowStart('dog') } : null);
+  }
+  function snowStart(kind) {
+    if (fun) endFun('switch');
+    const balls = kind === 'dog' ? 1 : 3;
+    const ball = new THREE.Group();
+    box(ball, 1, 0.9, 1, '#f6f9fc'); box(ball, 0.8, 1.02, 0.8, '#ffffff');
+    ball.scale.setScalar(0.2);
+    (place === 'home' ? homeRoot : parkRoot).add(ball);
+    fun = { kind: 'snow', still: false, what: kind, balls, k: 0, size: 0.2, sizes: [], last: player.root.position.clone(), ball, at: player.root.position.clone(), onBtn: () => snowNext() };
+    fun.end = () => { ball.parent && ball.parent.remove(ball); };
+    funBar(kind === 'dog' ? 'Roll a big snowball for the snow dog: walk around!' : 'Roll the bottom snowball: walk around!', 'Done', 0);
+    tip('snowman', { title: 'Snowmen', text: 'Walk around to roll the snowball bigger, then tap Done. Your dogs love to help.', icon: 'snowman' });
+  }
+  function snowUpdate(dt) {
+    const F = fun, pp = player.root.position;
+    const walked = flatDist(pp, F.last);
+    F.last.copy(pp);
+    const max = D.SNOW.roll[F.k] || 1;
+    if (walked > 0 && walked < 1) F.size = Math.min(max, F.size + walked * D.SNOW.growth);
+    const r = player.root.rotation.y;
+    F.ball.position.set(pp.x + Math.sin(r) * (0.5 + F.size * 0.35), groundAt(pp.x, pp.z) + F.size * 0.35, pp.z + Math.cos(r) * (0.5 + F.size * 0.35));
+    F.ball.scale.setScalar(F.size * 0.6);
+    F.ball.rotation.x += walked * 2;
+    $('funFill').style.width = Math.round((F.size / max) * 100) + '%';
+    $('funBtn').disabled = F.size < max * 0.5;
+    // the dogs bound along through the snow
+    for (const d of dogs) if (d.state === 'idle' || d.state === 'sit') { if (Math.random() < dt * 0.4) d.goTo(F.ball.position.clone().add(new V3(rand(-1, 1), 0, rand(-1, 1))), 3, () => spawnEmoji('❄️', d.headWorld(0.2), { size: 0.3 }), 0.5); }
+  }
+  function snowNext() {
+    const F = fun;
+    if (F.size < (D.SNOW.roll[F.k] || 1) * 0.5) return;
+    F.sizes.push(F.size);
+    if (F.k === 0) F.at = F.ball.position.clone();
+    F.k++;
+    if (F.k < F.balls) {
+      F.size = 0.2;
+      funBar(F.k === 1 ? 'Now the middle one: keep walking!' : 'And the head: a small one', 'Done', 0);
+      sfx('tap');
+      return;
+    }
+    // done: stack it up where the first ball was
+    const d0 = dogs[0];
+    const s = { loc: place === 'home' ? 'home' : loc, x: F.at.x, z: F.at.z, y: place === 'park' ? groundAt(F.at.x, F.at.z) : 0, kind: F.what, sizes: F.what === 'man' ? F.sizes.map((x) => x * 1.1) : null, scarf: (state.look && state.look.fav) || '#e53935', breed: d0 ? d0.breed : 'retriever', name: d0 ? d0.name : '', ry: Math.atan2(camOffsetDir.x, camOffsetDir.z) };
+    snowmen().push(s);
+    if (snowmen().length > 30) snowmen().shift();
+    endFun('done');
+    renderSnow();
+    state.stats.snowmen = (state.stats.snowmen || 0) + 1;
+    earn('snowman'); progress('snowman');
+    confetti(new V3(s.x, 1.5, s.z), 6);
+    sfx('unlock');
+    toast(s.kind === 'dog' ? `A snow ${d0 ? d0.name : 'dog'}! The real one looks a little confused 🐕❄️` : '⛄ A proper snowman!');
+    for (const d of dogs) { d.happy = Math.min(100, d.happy + 6); journalAdd(d, 'snowman', '⛄', s.kind === 'dog' && d === d0 ? 'Got a snow dog built in their likeness' : 'Helped build a snowman'); }
+    if (state.stats.snowmen === 3 && !state.inventory.snowglobe) { state.inventory.snowglobe = 1; news({ title: 'A snow globe', text: 'Three snow figures! Here’s a little snow globe for your shelf (Decorate).', th: thumbOf.item('snowglobe') }); }
+    save();
+  }
+  // ----- catching snowflakes: tap a big flake as it drifts down, your dog leaps for it -----
+  const flakesNow = () => unlockedFeat('winter') && (curWeather().precip === 'snow' || (place === 'park' && LOC().snowy)) && !(place === 'park' && LOC().indoor);
+  let lastTap = null;
+  function startFlakes() {
+    const d = (selected && dogs.includes(selected) ? selected : dogs[0]);
+    if (!d) return;
+    if (fun) endFun('switch');
+    const pp = player.root.position, r = player.root.rotation.y;
+    const spot = new V3(pp.x + Math.sin(r) * 1.6, 0, pp.z + Math.cos(r) * 1.6);
+    fun = { kind: 'flakes', still: true, dog: d, flakes: [], t: 0, next: 0.5, got: 0, missed: 0, spot, onBtn: () => endFun('stop') };
+    fun.end = () => { for (const f of fun ? fun.flakes : []) f.s.parent && f.s.parent.remove(f.s); };
+    const F = fun;
+    fun.end = () => { for (const f of F.flakes) f.s.parent && f.s.parent.remove(f.s); };
+    d.free = true;
+    d.doAct('sit', (dt) => { if (!fun || fun.kind !== 'flakes') return false; if (d.act.leap > 0) { d.act.leap -= dt; d.act.y = Math.sin((1 - d.act.leap / 0.6) * Math.PI) * 0.9; d.act.pose = 'jump'; } else { d.act.y = 0; d.act.pose = 'sit'; if (d.stepTo(spot.x, spot.z, 2.6, dt) < 0.3) d.faceTo(pp); } return true; }, 'Catching snowflakes ❄️');
+    funBar(`Tap the big snowflakes before they land. ${d.name} jumps for them!`, 'Stop', null);
+    tip('flakes', { title: 'Snowflakes', text: 'Big snowflakes drift down around your dog. Tap one before it lands and your dog jumps up to catch it.', icon: 'snow' });
+  }
+  function flakesUpdate(dt) {
+    const F = fun, sp = F.spot, root = place === 'home' ? homeRoot : parkRoot;
+    F.t += dt;
+    F.next -= dt;
+    if (F.next <= 0 && F.t < D.SNOW.flakes - 3) {
+      F.next = rand(0.7, 1.4);
+      const s = emojiSprite('❄️', 0.55);
+      s.position.set(sp.x + rand(-1.8, 1.8), 3.6, sp.z + rand(-1.6, 1.6));
+      root.add(s);
+      F.flakes.push({ s, life: rand(...D.SNOW.flakeLife), wob: Math.random() * 6 });
+    }
+    for (const f of F.flakes.slice()) {
+      f.life -= dt;
+      f.s.position.y -= dt * 0.75;
+      f.s.position.x += Math.sin(F.t * 2 + f.wob) * dt * 0.4;
+      if (f.s.position.y < 0.25 || f.life <= 0) { F.missed++; f.s.parent && f.s.parent.remove(f.s); F.flakes.splice(F.flakes.indexOf(f), 1); }
+    }
+    $('funTxt').textContent = `❄️ ${F.got} caught · ${Math.max(0, Math.ceil(D.SNOW.flakes - F.t))}s`;
+    if (F.t >= D.SNOW.flakes && !F.flakes.length) {
+      const d = F.dog, n = F.got;
+      endFun('done');
+      if (n) {
+        d.happy = Math.min(100, d.happy + Math.min(20, n * 2)); d.addBond(Math.min(4, Math.ceil(n / 3)));
+        earn('flakes'); progress('flakes');
+        journalAdd(d, 'flakes', '❄️', `Caught ${n} snowflakes in one go`);
+        toast(`${d.name} caught ${n} snowflake${n > 1 ? 's' : ''}! ❄️`);
+      } else toast('The snowflakes won this time ❄️');
+      save();
+    }
+  }
+  function flakesTap() {
+    const F = fun;
+    if (!lastTap) return true;
+    let best = null, bd = 60;
+    for (const f of F.flakes) {
+      const v = f.s.position.clone();
+      if (place === 'home' && isUpX(v.x)) { v.x -= UPX; v.y += FH; }
+      v.project(camera);
+      const sx = (v.x * 0.5 + 0.5) * window.innerWidth, sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
+      const dd = Math.hypot(sx - lastTap.x, sy - lastTap.y);
+      if (dd < bd) { bd = dd; best = f; }
+    }
+    if (!best) return true;
+    F.flakes.splice(F.flakes.indexOf(best), 1);
+    best.s.parent && best.s.parent.remove(best.s);
+    F.got++;
+    const d = F.dog;
+    if (d.act) d.act.leap = 0.6;
+    sfx('yip');
+    spawnEmoji('✨', d.headWorld(0.6), { size: 0.4 });
+    return true;
+  }
+
+  // =====================================================================
+  // Disc dog at the beach: five throws; time the power, and tap Jump! as the disc comes down for a flip catch
+  // =====================================================================
+  const disc = () => { const X = state.disc = state.disc || {}; for (const [k, v] of Object.entries({ cls: 0, best: 0, wins: 0 })) if (X[k] === undefined) X[k] = v; return X; };
+  const nearDiscMat = (pp) => place === 'park' && loc === 'beach' && S && S.q && S.q.disc && flatDist(pp, S.q.disc.start) < 1.4;
+  const discCupToday = () => D.DISC.cup.includes(clockNow.day);
+  function startDisc() {
+    if (!needRank('disc')) return;
+    if (!state.toys.includes('frisbee')) { toast('You need a frisbee. The beach kiosk sells them'); return; }
+    const d = selected && dogs.includes(selected) ? selected : dogs[0];
+    if (!d) return;
+    if (d.energy < 15) { toast(`${d.name} is too tired for disc dog right now`); return; }
+    if (fun) endFun('switch');
+    const st = S.q.disc.start;
+    player.root.position.set(st.x, groundAt(st.x, st.z), st.z);
+    player.face = Math.PI / 2;
+    const cup = discCupToday() && disc().cupDay !== clockNow.gameDay;
+    if (cup) {
+      const fee = D.DISC.fee[disc().cls];
+      if (state.coins < fee) { toast(`The Disc Cup costs 🪙 ${fee} to enter`); return; }
+      state.coins -= fee; updateHud();
+      disc().cupDay = clockNow.gameDay;
+    }
+    const dg = new THREE.Group();
+    box(dg, 0.42, 0.05, 0.42, '#ff7043'); box(dg, 0.3, 0.06, 0.3, '#ffab91');
+    dg.visible = false;
+    parkRoot.add(dg);
+    fun = { kind: 'disc', still: true, dog: d, n: 0, score: 0, phase: 'aim', p: 0, dir: 1, dg, cup, flips: 0, catches: 0, onBtn: () => discTap() };
+    fun.end = () => { dg.parent && dg.parent.remove(dg); $('funMeter').classList.remove('needle'); camFocus = null; };
+    d.free = true;
+    d.doAct('none', (dt) => discDog(d, dt), 'Playing disc dog 🥏');
+    $('funMeter').classList.add('needle');
+    funBar(`${cup ? `Disc Cup, ${D.CLASSES[disc().cls]}! ` : ''}Throw 1 of ${D.DISC.throws}: tap Throw for the distance you want`, 'Throw', 0);
+    tip('disc', { title: 'Disc dog', text: 'The longer the throw, the more points, if your dog gets there in time. As the disc drops towards your dog, tap Jump! for a flip catch worth extra.', icon: 'disc' });
+  }
+  function discDog(d, dt) {
+    const F = fun;
+    if (!F || F.kind !== 'disc') return false;
+    const st = S.q.disc.start;
+    if (F.phase === 'aim' || F.phase === 'done') { if (d.stepTo(st.x + 0.6, st.z + 0.9, 3, dt) < 0.3) d.faceTo(new V3(st.x + 5, 0, st.z)); d.act.pose = 'sit'; d.act.y = 0; return true; }
+    if (F.phase === 'fly') {
+      d.act.pose = 'none';
+      const left = d.stepTo(F.land.x, F.land.z, F.speed, dt);
+      if (d.act.flip > 0) { d.act.flip -= dt; d.act.y = Math.sin((1 - d.act.flip / 0.55) * Math.PI) * 1.1; } else d.act.y = 0;
+      F.dogLeft = left;
+      return true;
+    }
+    if (F.phase === 'back') {
+      d.act.y = 0;
+      if (d.stepTo(st.x + 0.6, st.z + 0.9, 4, dt) < 0.4) { F.phase = 'aim'; F.p = 0; nextThrowBar(); }
+      F.dg.position.copy(d.headWorld(0.1));
+      return true;
+    }
+    return true;
+  }
+  function nextThrowBar() {
+    const F = fun;
+    F.dg.visible = false;
+    if (F.n >= D.DISC.throws) { discFinish(); return; }
+    $('funMeter').classList.add('needle');
+    funBar(`Throw ${F.n + 1} of ${D.DISC.throws} · ${F.score} points`, 'Throw', 0);
+  }
+  function discTap() {
+    const F = fun;
+    if (!F || F.kind !== 'disc') return;
+    if (F.phase === 'aim') {
+      const st = S.q.disc.start, dist = D.DISC.minDist + F.p * (D.DISC.maxDist - D.DISC.minDist);
+      F.dist = dist;
+      F.land = new V3(st.x + dist, 0, st.z + rand(-1.2, 1.2));
+      F.flight = dist / 7 + 0.45;
+      F.ft = 0;
+      F.from = new V3(st.x + 0.3, 1.3, st.z);
+      const d = F.dog;
+      F.speed = 5.2 * (d.flag('zooms') ? 1.15 : 1) * (d.flag('lounges') ? 0.85 : 1) * (d.energy < 30 ? 0.85 : 1) * (1 + 0.04 * d.specAs('athlete'));
+      F.phase = 'fly';
+      F.jumped = false;
+      F.dg.visible = true;
+      player.throwT = 0.4;
+      sfx('throw');
+      $('funMeter').classList.remove('needle');
+      funBar('Jump! as it comes down to your dog', 'Jump!', null);
+      camFocus = { dog: F.dog, t: 999 };
+      return;
+    }
+    if (F.phase === 'fly' && !F.jumped) {
+      F.jumped = true;
+      const y = F.dg.position.y, near = F.dogLeft !== undefined && F.dogLeft < 1.6;
+      F.dog.act.flip = 0.55;
+      F.flipOK = near && y > 0.5 && y < 1.9;
+      sfx('whoosh');
+    }
+  }
+  function discUpdate(dt) {
+    const F = fun;
+    if (F.phase === 'aim') {
+      F.p += F.dir * dt * 0.75;
+      if (F.p > 1) { F.p = 1; F.dir = -1; } else if (F.p < 0) { F.p = 0; F.dir = 1; }
+      $('funFill').style.width = Math.round(F.p * 100) + '%';
+      return;
+    }
+    if (F.phase !== 'fly') return;
+    F.ft += dt;
+    const t = Math.min(1, F.ft / F.flight);
+    F.dg.position.set(lerp(F.from.x, F.land.x, t), lerp(F.from.y, 0.1, t) + Math.sin(t * Math.PI) * 2.4, lerp(F.from.z, F.land.z, t));
+    F.dg.rotation.y += dt * 18;
+    const dp = F.dog.root.position;
+    const close = Math.hypot(dp.x - F.dg.position.x, dp.z - F.dg.position.z) < 0.9;
+    const caught = close && F.dg.position.y < 1.7 && t > 0.55;
+    if (caught || t >= 1) {
+      F.n++;
+      const L = D.DISC_LINES;
+      if (caught) {
+        const flip = F.flipOK && F.jumped;
+        const pts = Math.round(F.dist * (flip ? 1.5 : 1));
+        F.score += pts; F.catches++; if (flip) F.flips++;
+        spawnEmoji(flip ? '🤸' : '🥏', F.dog.headWorld(0.5), { size: 0.5 });
+        toast(`${pick(flip ? L.flip : L.catch)} +${pts}`);
+        sfx(flip ? 'unlock' : 'yip');
+        F.dog.happy = Math.min(100, F.dog.happy + 3);
+        F.dog.energy = Math.max(0, F.dog.energy - 2);
+      } else { toast(pick(L.miss)); sfx('fail'); F.dg.position.y = 0.05; }
+      F.phase = 'back';
+      F.dog.act.flip = 0;
+    }
+  }
+  function discFinish() {
+    const F = fun, D2 = disc(), d = F.dog;
+    F.phase = 'done';
+    const best = F.score > D2.best;
+    if (best) D2.best = F.score;
+    state.stats.discBest = D2.best;
+    earn('disc'); progress('disc'); weekStat('discBest', 0, F.score);
+    d.addBond(2);
+    journalAdd(d, 'disc', '🥏', `Played disc dog at the beach: ${F.score} points`);
+    if (F.cup) { discCupResult(F.score); return; }
+    funBar(`${F.score} points${best ? ' · a new best!' : ''} (${F.catches} catches, ${F.flips} flips)`, 'Again', null);
+    fun.onBtn = () => { endFun('again'); startDisc(); };
+    save();
+  }
+  function discCupResult(score) {
+    const D2 = disc(), cls = D2.cls;
+    const rr = weekRand('disc' + clockNow.gameDay + cls);
+    const base = [32, 48, 64][cls];
+    const rivals = D.NEIGHBORS.slice().sort(() => rr() - 0.5).slice(0, D.DISC.rivals).map((N) => [N.owner + ' & ' + N.dog.name, Math.round(base * (0.6 + rr() * 0.7))]);
+    const all = rivals.concat([[`${youName() || 'You'} & ${fun.dog.name}`, score, true]]).sort((a, b) => b[1] - a[1]);
+    const placeN = all.findIndex((x) => x[2]) + 1;
+    const prize = D.DISC.prize[cls][placeN - 1] || 0;
+    if (prize) addCoins(prize, player.root.position);
+    earn('discup');
+    if (placeN === 1) {
+      D2.wins++;
+      state.stats.discWins = D2.wins;
+      if (D2.cls < D.CLASSES.length - 1) D2.cls++;
+      if (!state.inventory.discrack && D2.wins === 1) state.inventory.discrack = 1;
+    }
+    endFun('done');
+    $('tourneyTitle').textContent = `Disc Cup, ${D.CLASSES[cls]}: place ${placeN}`;
+    $('tourneyList').innerHTML = all.map((x, i) => `<div class="row${x[2] ? ' me' : ''}"><div class="ic"><b>${['🥇', '🥈', '🥉'][i] || i + 1}</b></div><div class="txt"><b>${esc(x[0])}</b></div><b>${x[1]} pts</b></div>`).join('') +
+      `<p class="sub">${placeN === 1 ? `You won! 🏆${prize ? ` 🪙 ${prize}.` : ''}${D2.cls > cls ? ` Next time: ${esc(D.CLASSES[D2.cls])}.` : ''}${D2.wins === 1 ? ' A disc rack for your home is in your inventory.' : ''}` : prize ? `You won 🪙 ${prize}.` : 'No prize this time. Next Disc Cup on the 14th!'}</p>`;
+    $('tourney').classList.remove('hidden');
+    save();
+  }
+
+  // =====================================================================
+  // Neighbor favors: a neighbor lost something (or their dog ran off). Your dog sniffs them for the scent,
+  // follows the trail and brings it back.
+  // =====================================================================
+  let favorW = null;    // the walker who needs help on this walk
+  function rollFavor() {
+    favorW = null;
+    if (!unlockedFeat('favors') || !dogs.length || state.favorDay === clockNow.gameDay || Math.random() > D.FAVOR.chance) return;
+    const w = walkers.find((x) => !x.visit) || null;
+    if (!w) return;
+    const kinds = Object.keys(D.FAVOR_KINDS);
+    const kind = pick(kinds);
+    const K = D.FAVOR_KINDS[kind];
+    w.favor = { kind, thing: K.things.length ? pick(K.things) : null };
+    w.bang = emojiSprite('❗', 0.5);
+    w.bang.position.y = 2.5;
+    w.parts.root.add(w.bang);
+    favorW = w;
+  }
+  function favorAsk(w) {
+    const F = w.favor, N = w.info;
+    return fill(pick(D.FAVOR_KINDS[F.kind].ask), { ndog: N.dog.name, dog: (selected && dogs.includes(selected) ? selected : dogs[0]).name, thing: F.thing || '' });
+  }
+  // a hidden spot for the lost thing: well away, somewhere you can walk to
+  function favorSpot(from) {
+    for (let k = 0; k < 60; k++) {
+      const a = Math.random() * TAU, r = rand(D.FAVOR.trail, D.FAVOR.trail + 8);
+      const x = from.x + Math.cos(a) * r, z = from.z + Math.sin(a) * r;
+      if (!inBounds(x, z, 1) || isSolid(x, z) || inPond(x, z, 0.6) || (S.solid && S.solid(x, z))) continue;
+      if (Math.abs(groundAt(x, z) - groundAt(from.x, from.z)) > 1.5) continue;
+      const path = findPath(from, { x, z });
+      if (!path.length) continue;
+      return new V3(x, groundAt(x, z), z);
+    }
+    return null;
+  }
+  function startFavor(w) {
+    const d = selected && dogs.includes(selected) ? selected : dogs[0];
+    if (!d || !w || !w.favor) return;
+    if (talk) endTalk(false);
+    if (fun) endFun('switch');
+    const target = favorSpot(w.parts.root.position);
+    if (!target) { toast('Hmm, the trail goes cold here. Maybe another time'); return; }
+    w.waiting = true;
+    if (w.bang) { w.parts.root.remove(w.bang); w.bang = null; }
+    const F = { kind: 'favor', still: false, w, dog: d, target, phase: 'sniff', t: 0, trailT: 0, item: null, lost: null, onBtn: () => endFun('stop') };
+    fun = F;
+    fun.end = (why) => {
+      w.waiting = false;
+      if (F.item && F.item.parent) F.item.parent.remove(F.item);
+      if (F.lost) { F.lost.root.parent && F.lost.root.parent.remove(F.lost.root); }
+      if (why !== 'done') { w.favor = null; toast(`${w.info.owner}: Oh well, thanks for trying!`); }
+    };
+    d.free = true;
+    if (d.offLeash !== undefined) d.offLeashFavor = d.offLeash;
+    d.doAct('none', (dt) => favorStep(d, dt), 'Following a scent 👃');
+    funBar(`${d.name} sniffs ${w.info.owner}${F.w.favor.kind === 'dog' ? ` and ${w.info.dog.name}’s leash` : ''} to pick up the scent…`, 'Give up', null);
+    tip('favors', { title: 'Favors', text: 'Your dog picked up a scent. Follow the trail: your dog leads the way and waits if you fall behind.', icon: 'search' });
+  }
+  function favorStep(d, dt) {
+    const F = fun;
+    if (!F || F.kind !== 'favor') return false;
+    const wp = F.w.parts.root.position, pp = player.root.position;
+    F.t += dt;
+    if (F.phase === 'sniff') {
+      const s = new V3(wp.x + 0.6, 0, wp.z + 0.6);
+      if (d.stepTo(s.x, s.z, 2.6, dt) < 0.35) { d.act.pose = 'sniff'; d.faceTo(wp); if (!F.sniffT) F.sniffT = F.t; }
+      if (F.sniffT && F.t - F.sniffT > 2) {
+        F.phase = 'trail'; F.t = 0;
+        spawnEmoji('👃', d.headWorld(0.3), { size: 0.45 });
+        sfx('rustle');
+        $('funTxt').textContent = `${d.name} has the scent! Follow the trail`;
+      }
+      return true;
+    }
+    if (F.phase === 'trail') {
+      d.act.pose = 'none';
+      // waits when you fall behind
+      if (flatDist(d.root.position, pp) > 6.5) { d.act.pose = 'sit'; d.faceTo(pp); if (Math.random() < dt * 0.6) spawnEmoji('❓', d.headWorld(0.3), { size: 0.3 }); return true; }
+      const left = d.stepTo(F.target.x, F.target.z, 2.4, dt);
+      F.trailT -= dt;
+      if (F.trailT <= 0) { F.trailT = 0.35; spawnEmoji('🐾', d.root.position.clone().add(new V3(0, 0.08, 0)), { size: 0.22, life: 2.4, vy: 0 }); }
+      if (left < 0.5) {
+        F.phase = 'dig'; F.t = 0;
+        if (F.w.favor.kind === 'dog') {
+          // the runaway, hiding here
+          const N = F.w.info;
+          const lost = new NPCDog(Object.assign({ id: 'n:' + N.dog.name + ':lost' }, N.dog), F.w);
+          lost.root.position.set(F.target.x + 0.7, F.target.y, F.target.z + 0.4);
+          lost.updateState = function (dt2) { if (F.phase === 'back') { const q = d.root.position; if (flatDist(this.root.position, q) > 1) this.moveTowards(q.x, q.z, 2.6, dt2); } else this.setState('sit'); };
+          lost.applyLeash = () => {};
+          parkRoot.add(lost.root);
+          F.lost = lost;
+        }
+      }
+      return true;
+    }
+    if (F.phase === 'dig') {
+      d.act.pose = F.w.favor.kind === 'dog' ? 'tilt' : 'dig';
+      if (F.t > 1.6) {
+        F.phase = 'back'; F.t = 0;
+        if (F.w.favor.kind !== 'dog') {
+          F.item = emojiSprite(D.FAVOR_KINDS[F.w.favor.kind].icon, 0.4);
+          parkRoot.add(F.item);
+        }
+        sfx('find');
+        $('funTxt').textContent = F.w.favor.kind === 'dog' ? `${d.name} found ${F.w.info.dog.name}! Back to ${F.w.info.owner}` : `${d.name} found the ${F.w.favor.thing}! Back to ${F.w.info.owner}`;
+      }
+      return true;
+    }
+    if (F.phase === 'back') {
+      d.act.pose = 'none';
+      if (F.item) F.item.position.copy(d.headWorld(0.25));
+      if (F.lost) F.lost.update(dt);
+      if (d.stepTo(wp.x + 0.7, wp.z + 0.5, 3.2, dt) < 0.6) favorDone();
+      return true;
+    }
+    return true;
+  }
+  function favorDone() {
+    const F = fun, w = F.w, N = w.info, d = F.dog;
+    const first = !(state.favorsFrom || {})[N.owner];
+    state.favorsFrom = Object.assign(state.favorsFrom || {}, { [N.owner]: ((state.favorsFrom || {})[N.owner] || 0) + 1 });
+    const coins = Math.round(rand(...D.FAVOR.coins));
+    addCoins(coins, w.parts.root.position);
+    addNFriend(N.owner, D.FAVOR.friend);
+    state.stats.favors = (state.stats.favors || 0) + 1;
+    state.favorDay = clockNow.gameDay;
+    d.addBond(4); d.happy = Math.min(100, d.happy + 10);
+    journalAdd(d, 'favor:' + N.owner, '🤝', `Sniffed out ${F.w.favor.kind === 'dog' ? N.dog.name : `${N.owner}’s ${F.w.favor.thing}`} for ${N.owner}`);
+    earn('favor'); progress('favor');
+    w.favor = null;
+    endFun('done');
+    let extra = '';
+    const G = first && D.FAVOR_GIFTS[N.owner];
+    if (G) { giveReward(G); extra = ` As a thank-you, ${N.owner} gives you ${rewardText(G)} for your home.`; }
+    sfx('unlock');
+    news({ title: `${N.owner} is so grateful`, text: `${fill(pick(D.FAVOR_THANKS), { dog: d.name })} (+🪙 ${coins})${extra}`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
+    save();
+  }
+
+  // =====================================================================
+  // The PixelPups Gazette: a weekly paper with your week in numbers, a town ranking, gossip and what's coming
+  // =====================================================================
+  const weekNo = () => Math.floor(clockNow.gameDay / 7);
+  function weekStat(k, n, best) {
+    if (visit) return;
+    const W = state.week = state.week && state.week.k === weekNo() ? state.week : rollWeek();
+    if (best !== undefined) W.s[k] = Math.max(W.s[k] || 0, best);
+    else W.s[k] = (W.s[k] || 0) + (n || 0);
+  }
+  // a new week: last week's numbers go into the paper
+  function rollWeek() {
+    const old = state.week;
+    const W = { k: weekNo(), s: {} };
+    if (old && old.k < W.k && unlockedFeat('gazette') && Object.keys(old.s).length) {
+      state.week = W;
+      deliverGazette(old);
+    }
+    state.week = W;
+    return W;
+  }
+  function weekHot() {
+    const pool = Object.keys(D.MARKET_GOODS).filter((k) => D.MARKET_GOODS[k].kind === 'pantry').concat(Object.keys(D.BAKES).map((k) => 't:' + k), ['bouquet']);
+    const r = ART.mulberry32(hashStr('hot' + weekNo() + (state.uid || '')))();
+    return pool[Math.floor(r * pool.length)];
+  }
+  const GZ_STATS = [['walk', 'Walks', '🦮'], ['find', 'Finds', '🔎'], ['trick', 'Tricks', '🎓'], ['fish', 'Fish caught', '🎣'], ['catch', 'Critters caught', '🥅'], ['baked', 'Treats baked', '🥧'],
+    ['sold', 'Sold at market', '🧺'], ['visitors', 'Museum visitors', '🏛️'], ['favor', 'Favors done', '🤝'], ['agility', 'Agility runs', '🏁'], ['letter', 'Letters sent', '💌'], ['snowman', 'Snow figures', '⛄']];
+  function deliverGazette(W) {
+    const s = W.s, no = (state.gazetteNo || 0) + 1;
+    state.gazetteNo = no;
+    const score = Math.round((s.walk || 0) * 10 + (s.find || 0) * 6 + (s.trick || 0) + (s.fish || 0) * 4 + (s.catch || 0) * 4 + (s.baked || 0) * 2 + (s.sold || 0) * 3 + (s.visitors || 0) * 0.2 + (s.favor || 0) * 15 + (s.agility || 0) * 5 + (s.tourney || 0) * 20 + (s.discup || 0) * 20);
+    const rr = ART.mulberry32(hashStr('gz' + W.k + (state.uid || '')));
+    const rivals = D.NEIGHBORS.slice().sort(() => rr() - 0.5).slice(0, 5).map((N) => ({ name: N.owner, dog: N.dog.name, score: Math.round(Math.max(20, score) * (0.45 + rr() * 0.9)) }));
+    const table = rivals.concat([{ name: youName() || 'You', dog: dogs[0] ? dogs[0].name : '', score, me: true }]).sort((a, b) => b.score - a.score);
+    // the headline: the biggest thing you did this week
+    const heads = [];
+    if (s.tourney) heads.push(['Agility star!', `${youName() || 'A local dog owner'} won at the Tournament Grounds`]);
+    if (s.discup) heads.push(['Disc Cup champion', 'A spectacular flip catch had the beach on its feet']);
+    if ((s.visitors || 0) > 150) heads.push(['Museum crowds', `${s.visitors} visitors came to see the exhibitions`]);
+    if ((s.sold || 0) >= 10) heads.push(['Market hit', `${s.sold} things sold at the weekend market`]);
+    if ((s.favor || 0) >= 2) heads.push(['Super sniffer', `${dogs[0] ? dogs[0].name : 'A clever dog'} tracked down lost things for the neighbors`]);
+    if ((s.fish || 0) >= 5) heads.push(['Tall tales from the pier', `${s.fish} fish, and the biggest was ${s.fishBest || '?'} cm`]);
+    if (!heads.length) heads.push(['Quiet week in town', `${dogs.length ? dogs.map((d) => d.name).join(' and ') : 'The dogs'} enjoyed the little things`]);
+    const N = pick(D.NEIGHBORS);
+    const issue = {
+      no, week: W.k, stats: GZ_STATS.filter(([k]) => s[k]).map(([k, n, ic]) => [ic, n, Math.round(s[k])]), head: heads[0], table,
+      gossip: fill(pick(D.GAZETTE.gossip), { owner: N.owner, ndog: N.dog.name }),
+      hot: weekHot(), ad: fill(pick(D.GAZETTE.ads), { cat: pick(['dog beds', 'lamps', 'rugs', 'plants']), fish: pick(Object.values(D.FISH).filter((F) => !F.junk)).name.toLowerCase() + 's' }),
+      museum: (state.museum && state.museum.log || []).slice(-7),
+      coming: upcomingLines(),
+      name: D.GAZETTE.names[no % D.GAZETTE.names.length],
+    };
+    receive({ from: 'The PixelPups Gazette', gazette: issue, text: `Issue ${no}\n${issue.head[0]}` });
+  }
+  function upcomingLines() {
+    const out = [];
+    const d = clockNow.day;
+    const next = (days) => days.map((x) => x - d).filter((x) => x > 0).sort((a, b) => a - b)[0];
+    if (unlockedFeat('agility')) { const n = next(D.TOURNEY.days); if (n) out.push(`🏁 Agility tournament in ${n} day${n > 1 ? 's' : ''}`); }
+    if (unlockedFeat('disc')) { const n = next(D.DISC.cup); if (n) out.push(`🥏 Disc Cup in ${n} day${n > 1 ? 's' : ''}`); }
+    if (unlockedFeat('market')) out.push('🧺 Market every Saturday and Sunday');
+    for (const dd of dogs) { const b = bornCal(dd); if (b.month === clockNow.month && b.day > d) out.push(`🎂 ${dd.name}’s birthday on the ${b.day}th`); }
+    return out.slice(0, 4);
+  }
+  function openGazette(issue) {
+    const I = issue;
+    const goodName = (k) => (k.startsWith('t:') ? D.BAKES[k.slice(2)].name : D.INGREDIENTS[k] ? D.INGREDIENTS[k].name : (D.MARKET_GOODS[k] || {}).name || k);
+    const mx = Math.max(1, ...I.table.map((x) => x.score));
+    const mm = Math.max(10, ...(I.museum || []));
+    $('gazetteBody').innerHTML = `<div class="gzMast"><b>${esc(I.name)}</b><small>Issue ${I.no} · ${esc(D.MONTHS[clockNow.month] || '')} edition · 1 coin</small></div>` +
+      `<div class="gzHead"><h3>${esc(I.head[0])}</h3><p>${esc(I.head[1])}</p></div>` +
+      (I.stats.length ? `<div class="gzBox"><div class="gzT">Your week in numbers</div><div class="gzStats">${I.stats.map(([ic, n, v]) => `<div><b>${v}</b><small>${ic} ${esc(n)}</small></div>`).join('')}</div></div>` : '') +
+      `<div class="gzBox"><div class="gzT">Dog owner of the week</div>${I.table.map((x, i) => `<div class="gzRow${x.me ? ' me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${esc(x.name)}${x.dog ? ` & ${esc(x.dog)}` : ''}</span><span class="bar"><i style="width:${Math.round((x.score / mx) * 100)}%"></i></span><b>${x.score}</b></div>`).join('')}</div>` +
+      (I.museum && I.museum.length ? `<div class="gzBox"><div class="gzT">Museum visitors</div><div class="kChart small">${I.museum.map((v) => `<i style="height:${Math.round((v / mm) * 100)}%"><b>${v}</b></i>`).join('')}</div></div>` : '') +
+      `<div class="gzCols"><div class="gzBox"><div class="gzT">Market tip</div><p>Everyone wants <b>${esc(goodName(I.hot))}</b> this week. It sells for more!</p></div><div class="gzBox"><div class="gzT">Gossip</div><p>${esc(I.gossip)}</p></div></div>` +
+      (I.coming.length ? `<div class="gzBox"><div class="gzT">Coming up</div>${I.coming.map((x) => `<p>${esc(x)}</p>`).join('')}</div>` : '') +
+      `<div class="gzAd">${esc(I.ad)}</div>`;
+    $('gazette').classList.remove('hidden');
+    sfx('open');
+  }
+  $('gazette').addEventListener('click', (e) => { if (e.target.id === 'gazette' || e.target.closest('[data-act="closeGazette"]')) $('gazette').classList.add('hidden'); });
+
+  // =====================================================================
+  // Friends and rivals among your own dogs
+  // =====================================================================
+  const rivalry = (a, b) => (state.rivals || {})[pairKey(a, b)] || 0;
+  function addRivalry(a, b, n) {
+    if (a.npc || b.npc || !dogs.includes(a) || !dogs.includes(b)) return;
+    state.rivals = state.rivals || {};
+    const k = pairKey(a.id, b.id), before = state.rivals[k] || 0;
+    const v = clamp(before + n, 0, 100);
+    state.rivals[k] = v;
+    const L = D.RIVAL.level;
+    if (before < L && v >= L) {
+      toast(`💢 ${a.name} and ${b.name} don’t get along right now`);
+      journalAdd(a, 'rival:' + b.id + ':' + clockNow.gameDay, '💢', `Had a falling-out with ${b.name}`);
+      journalAdd(b, 'rival:' + a.id + ':' + clockNow.gameDay, '💢', `Had a falling-out with ${a.name}`);
+    } else if (before >= L && v < L / 2) {
+      state.rivals[k] = 0;
+      toast(`🤝 ${a.name} and ${b.name} made up!`);
+      journalAdd(a, 'makeup:' + b.id + ':' + clockNow.gameDay, '🤝', `Made up with ${b.name}`);
+      journalAdd(b, 'makeup:' + a.id + ':' + clockNow.gameDay, '🤝', `Made up with ${a.name}`);
+    }
+  }
+  const isRival = (a, b) => rivalry(a.id, b.id) >= D.RIVAL.level;
+  function rivalOf(d) {
+    let best = null, bv = D.RIVAL.level - 1;
+    for (const o of dogs) if (o !== d && rivalry(d.id, o.id) > bv) { bv = rivalry(d.id, o.id); best = o; }
+    return best;
+  }
+  // a dog pulled a toy out: its rival wants it too (tug of war), or it takes it to a friend to share
+  function toyPals(d, toyName) {
+    if (place !== 'home') return;
+    const others = dogs.filter((o) => o !== d && FREE_FOR_MEETING.includes(o.state) && flatDist(o.root.position, d.root.position) < 5);
+    const rv = others.find((o) => isRival(d, o));
+    const fr = others.filter((o) => friendship(d.id, o.id) >= D.FRIEND_LEVEL).sort((a, b) => friendship(d.id, b.id) - friendship(d.id, a.id))[0];
+    if (rv && Math.random() < 0.6) {
+      toast(fill(pick(D.RIVAL_LINES.tug), { a: rv.name, b: d.name, toy: toyName }));
+      startEncounter(d, rv);
+      for (const x of [d, rv]) if (x.state === 'play' || x.state === 'greet' || x.state === 'scuffle') x.setState('play', 3);
+      addRivalry(d, rv, -2);
+      return;
+    }
+    if (fr && Math.random() < 0.5) {
+      d.goTo(() => fr.root.position, 2.2, () => {
+        toast(fill(pick(D.RIVAL_LINES.share), { a: d.name, b: fr.name, toy: toyName }));
+        startEncounter(d, fr);
+        addFriendship(d, fr, 3);
+      }, 0.9);
+    }
+  }
+
+  // =====================================================================
+  // Glue for this round: context buttons, the per-frame and slow updates, walks
+  // =====================================================================
+  function round3Ctx(pp) {
+    if (fun || mode !== 'normal' || visit || title) return null;
+    if (place === 'park') {
+      if (nearCatchable(pp)) return 'catch';
+      if (nearMuseum(pp)) return 'museum';
+      if (nearMarket(pp) && marketDay()) return 'market';
+      if (unlockedFeat('fishing') && nearPier(pp)) return 'fish';
+      if (unlockedFeat('disc') && nearDiscMat(pp)) return 'disc';
+      if (favorW && favorW.favor && flatDist(favorW.parts.root.position, pp) < 2.4) return 'favor';
+    }
+    if (unlockedFeat('winter') && dogs.length && nearSnowSpot(pp)) return 'snowman';
+    return null;
+  }
+  function round3Action(k) {
+    switch (k) {
+      case 'catch': swingNet(); return true;
+      case 'museum': openMuseum(); return true;
+      case 'market': openStall(); return true;
+      case 'fish': startFishing(); return true;
+      case 'disc': startDisc(); return true;
+      case 'favor': if (favorW) { const w = favorW; confirmBox(`${w.info.owner} needs help`, favorAsk(w), 'Help', true, () => startFavor(w), () => { toast('Maybe next time'); }); } return true;
+      case 'snowman': startSnowman(); return true;
+      case 'flakes': startFlakes(); return true;
+      default: return false;
+    }
+  }
+  function round3Update(dt) {
+    bakeTick(dt);
+    stallTick(dt);
+    if (place === 'park') {
+      updateCatchables(dt);
+      if (S && S.q && S.q.market) S.q.market.setOpen(marketDay() && unlockedFeat('market'));
+    } else updateRoamers(dt);
+    if (fun) {
+      switch (fun.kind) {
+        case 'fish': fishUpdate(dt); break;
+        case 'snow': snowUpdate(dt); break;
+        case 'flakes': flakesUpdate(dt); break;
+        case 'disc': discUpdate(dt); break;
+        default: break;
+      }
+    }
+  }
+  let r3T = 0;
+  function round3Slow(dt) {
+    r3T -= dt;
+    if (r3T > 0) return;
+    r3T = 2;
+    if (visit || title) return;
+    museumTick();
+    if (!state.week || state.week.k !== weekNo()) rollWeek();
+    if (meltSnowmen()) renderSnow();
+  }
+  // walks: critters to catch, a neighbor who might need a favor, snow figures from before
+  function round3Walk() {
+    spawnCatchables();
+    rollFavor();
+    renderSnow();
+  }
+  function round3Home() {
+    clearCatchables();
+    favorW = null;
+    renderSnow();
+    renderExhibits();
+  }
+
   // Add ?debug to the game link to poke at the game from the browser console
   if (/[?&]debug\b/.test(location.search)) {
     window.VP = {
@@ -13636,6 +16131,14 @@
       get fun() { return fun; }, endFun, sitDown, homeSeat, nearestSeat, seatFrame, startSeek, startHide, hideFound, hideGiveUp, seekFound, startBrush, brushStroke, shakeOff, get playerWet() { return playerWet; },
       startRake, pileJump, spawnPatches, get patches() { return patches; }, pileKind, startSkip, skipThrow, waterNear, startGaze, gazeTap, canGaze, clearSky, startMusic, playKey, musicStyle, learnSing,
       startLead, leadStop, openPlay, funCtx, coverAt, hideSpot, get gazeK() { return gazeK; }, renderClutter, computeComfort, dogShape, setCtx, BASIC_TRICKS,
+      // round: upstairs and rooms
+      UPC, UPX, FH, viewFloor, get editFloor() { return editFloor; }, stairCells, startClimb, homeConnected, wallBlocks, wallSolidAt, enterBuildMode, exitBuildMode, setBuildTool, toggleBuildFloor, buildTap,
+      get buildCands() { return buildCands; }, get stairDraft() { return stairDraft; }, placeStairs, setStairs, moveRoom, removeRoom, canRemove, canMoveFrom, cycleWall, checkBuild, syncChunkSet, buildRoom, checkUpstairsOpen,
+      expandPrice, movePrice, upCap, upOpen, handleTap, drawWorld, withShift, buildInnerWalls, get innerWallGroup() { return innerWallGroup; }, get stairGroup() { return stairGroup; }, updatePlayer,
+      openBake, startBake, bakeCut, bakeToIce, iceAt, bakeOven, get bake() { return bake; }, giveTreat, openStall, startStall, stallSell, get stall() { return stall; }, marketDay, marketStock, weekHot,
+      openMuseum, museumTick, hallVisitors, hallChoices, museum, museumFame, renderMuseum, spawnCatchables, get catchables() { return catchables; }, swingNet, catchIt, openCritters, renderExhibits, get roamers() { return roamers; },
+      startFishing, fishTap, fishPick, startSnowman, snowStart, snowNext, renderSnow, meltSnowmen, snowOnGround, startFlakes, flakesTap, set lastTap(v) { lastTap = v; }, startDisc, discTap, disc, discCupToday,
+      rollFavor, startFavor, get favorW() { return favorW; }, weekStat, rollWeek, deliverGazette, openGazette, addRivalry, rivalry, rivalOf, toyPals, round3Ctx, round3Action, nearPier, nearDiscMat, nearMuseum, nearMarket,
     };
   }
   init();
