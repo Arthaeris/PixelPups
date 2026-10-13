@@ -12,6 +12,17 @@ window.VP_DATA = (function () {
     AUTO_REFILL_MINUTES: 20,           // luxury feeder / fountain refill this long after being emptied
     OFFLEASH_COME_LEVEL: 2,            // Come must reach this level before a dog can go off-leash
     TIME_ZONE: 'Europe/Berlin',        // all clocks, weather and daily resets use German time
+    // Playing with friends online (Firebase). The apiKey is not a secret: the database rules protect the data.
+    ONLINE: {
+      apiKey: 'AIzaSyCYPvQbhJhWeJF__CxhWgnZKABF2tyHLI4',
+      authDomain: 'pixelpups-9a3a8.firebaseapp.com',
+      databaseURL: 'https://pixelpups-9a3a8-default-rtdb.europe-west1.firebasedatabase.app',
+      projectId: 'pixelpups-9a3a8',
+      storageBucket: 'pixelpups-9a3a8.firebasestorage.app',
+      messagingSenderId: '361684562869',
+      appId: '1:361684562869:web:89f87f69355ba47f529ffc',
+      sdk: '10.12.2',
+    },
 
     CHUNK: 6,                          // one home section is CHUNK x CHUNK tiles
     BUILD_MINUTES: 10,                 // construction time for a new section
