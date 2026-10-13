@@ -41,6 +41,7 @@
     <div id="hint" class="glass">Drag anywhere to walk · Tap your dog to pet</div>
 
     <nav id="actions" class="dock glass">
+      <button data-act="ctx" id="ctxHome" class="ctx hidden"></button>
       <button data-act="bowls" aria-label="Fill food and water bowls"><i data-i="bowl" class="dIc"></i><small>Bowls</small></button>
       <button data-act="ball"><span class="dIc toyIcon"></span><small>Throw</small></button>
       <button data-act="walk"><i data-i="walk" class="dIc"></i><small>Walk</small></button>
@@ -106,6 +107,16 @@
       <p id="talkLine"></p>
       <div class="talkBtns"><button id="talkMore" class="soft">Chat more</button><button id="talkBye" class="primary small">Bye</button></div>
     </div>
+  </div>
+  <div id="funBar" class="glass hidden" aria-live="polite">
+    <span id="funTxt"></span>
+    <div id="funMeter" class="hidden"><i id="funFill"></i></div>
+    <button id="funBtn" class="soft small"></button>
+  </div>
+  <div id="peek" class="hidden"><div class="peekHands">🙈</div><b id="peekTxt"></b><small>No peeking!</small></div>
+  <div id="keys" class="glass hidden">
+    <div class="keysHead"><b id="keysTitle">🎹 Piano</b><button id="keysDone" class="soft small">Done</button></div>
+    <div id="keyRow"></div>
   </div>
   <div id="toast"></div>
   <div id="tips" aria-live="polite"></div>
@@ -333,6 +344,13 @@
       <p class="sub" id="awaySub"></p>
       <div id="awayList"></div>
       <button class="primary" data-act="closeAway">Hello again!</button>
+    </div>
+  </div>
+
+  <div id="playSheet" class="modal hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2 id="playTitle">Things to do</h2><button class="x" id="playClose" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="playList"></div>
     </div>
   </div>
 
