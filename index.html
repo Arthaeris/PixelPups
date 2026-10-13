@@ -65,6 +65,7 @@
       <div class="barHelp" id="decoHelp">Tap a floor tile to place · Tap an item to pick it up</div>
       <div id="invList"></div>
       <div class="decoBtns">
+        <button data-act="decoFloor" id="decoFloorBtn" class="hidden"><i data-i="stairs"></i><small id="decoFloorLbl">Upstairs</small></button>
         <button data-act="rotate" id="rotBtn"><i data-i="rotate"></i><small id="rotLabel">Rotate</small></button>
         <button data-act="shop"><i data-i="shop"></i><small>Shop</small></button>
         <button data-act="done" class="ok"><i data-i="check"></i><small>Done</small></button>
@@ -72,10 +73,14 @@
     </div>
 
     <div id="buildBar" class="panel glass hidden">
-      <div class="barTitle">Where should the new room go?</div>
-      <div class="barHelp">Tap a green area next to your home</div>
+      <div class="tabs" id="buildTabs"></div>
+      <div class="barTitle" id="buildTitle">Where should the new room go?</div>
+      <div class="barHelp" id="buildHelp">Tap a green area next to your home</div>
       <div class="decoBtns">
-        <button data-act="cancelBuild"><i data-i="x"></i><small>Cancel</small></button>
+        <button data-act="buildFloor" id="buildFloorBtn" class="hidden"><i data-i="stairs"></i><small id="buildFloorLbl">Upstairs</small></button>
+        <button data-act="stairTurn" id="stairTurnBtn" class="hidden"><i data-i="rotate"></i><small>Turn</small></button>
+        <button data-act="stairPlace" id="stairPlaceBtn" class="ok hidden"><i data-i="check"></i><small>Place</small></button>
+        <button data-act="cancelBuild"><i data-i="x"></i><small>Done</small></button>
       </div>
     </div>
   </div>
@@ -393,6 +398,50 @@
     <div class="sheet mapSheet">
       <div class="sheetHead"><h2 id="tmapPlace">Treasure map</h2><button class="x" id="tmapClose" aria-label="Close"><i data-i="x"></i></button></div>
       <div class="sheetBody center"><canvas id="tmapCanvas" width="300" height="300"></canvas><p class="letterTxt" id="tmapNote"></p></div>
+    </div>
+  </div>
+
+  <div id="bake" class="modal hidden">
+    <div class="sheet tall">
+      <div class="sheetHead"><h2>Baking</h2><button class="x" data-act="closeBake" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody">
+        <div id="bakeList"></div>
+        <p class="pantryLine" id="bakePantry"></p>
+        <div id="bakeGame" class="hidden center">
+          <canvas id="bakeCanvas" width="320" height="320"></canvas>
+          <p class="sub" id="bakeHint"></p>
+          <button class="primary" id="bakeNext" disabled>Ice one</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="stall" class="modal hidden">
+    <div class="sheet tall">
+      <div class="sheetHead"><h2>Market stall</h2><button class="x" data-act="closeStall" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="stallBody"></div>
+    </div>
+  </div>
+
+  <div id="museum" class="modal hidden">
+    <div class="sheet tall">
+      <div class="sheetHead"><h2>Town museum</h2><button class="x" data-act="closeMuseum" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="museumBody"></div>
+    </div>
+  </div>
+
+  <div id="critters" class="modal hidden">
+    <div class="sheet tall">
+      <div class="sheetHead"><h2>Critters</h2><button class="x" data-act="closeCritters" aria-label="Close"><i data-i="x"></i></button>
+        <div id="critTabs" class="headRow segs"><button class="seg sel" data-ct="jar">Jar &amp; garden</button><button class="seg" data-ct="book">Caught so far</button></div></div>
+      <div class="sheetBody" id="critBody"></div>
+    </div>
+  </div>
+
+  <div id="gazette" class="modal hidden">
+    <div class="sheet tall gazetteSheet">
+      <div class="sheetHead"><h2>The Gazette</h2><button class="x" data-act="closeGazette" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="gazetteBody"></div>
     </div>
   </div>
 
