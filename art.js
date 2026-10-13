@@ -619,7 +619,121 @@ window.VP_ART = (function () {
       box(g, 0.38, 0.24, 0.01, M.screen, -0.1, 0.92, -0.25);
       box(g, 0.08, 0.1, 0.08, '#ef6f8e', 0.3, 0.8, -0.05);
     },
+    // a guitar on its stand, with a little stool to play it from
+    guitar(g) {
+      box(g, 0.06, 0.5, 0.06, '#5d4037', 0, 0.25, -0.28);
+      box(g, 0.4, 0.04, 0.2, '#5d4037', 0, 0.02, -0.26);
+      const gt = pivot(g, 0, 0.12, -0.18);
+      gt.rotation.x = -0.18;
+      gt.userData.gtr = 1;
+      box(gt, 0.36, 0.3, 0.1, '#d08a3c', 0, 0.16, 0);
+      box(gt, 0.28, 0.22, 0.1, '#d08a3c', 0, 0.4, 0);
+      box(gt, 0.1, 0.1, 0.02, '#3e2723', 0, 0.3, 0.055);
+      box(gt, 0.07, 0.5, 0.06, '#6d4c41', 0, 0.74, 0);
+      box(gt, 0.1, 0.12, 0.06, '#3e2723', 0, 1.02, 0);
+      for (const x of [-0.015, 0.015]) box(gt, 0.006, 0.66, 0.006, '#eeeeee', x, 0.6, 0.06);
+      box(g, 0.34, 0.06, 0.34, '#a1673f', 0, 0.36, 0.2);
+      for (const [x, z] of [[-0.13, 0.07], [0.13, 0.07], [-0.13, 0.33], [0.13, 0.33]]) box(g, 0.05, 0.33, 0.05, '#7a4b2a', x, 0.165, z);
+    },
+    gardenbench(g) {
+      box(g, 0.92, 0.07, 0.42, '#a0703f', 0, 0.42, 0.02);
+      box(g, 0.92, 0.32, 0.07, '#a0703f', 0, 0.68, -0.2);
+      for (const x of [-0.4, 0.4]) { box(g, 0.08, 0.42, 0.38, '#4e5b52', x, 0.21, 0); box(g, 0.08, 0.06, 0.4, '#4e5b52', x, 0.55, 0.02); }
+    },
   };
+  // ----- pastimes: benches and logs to sit on, paw prints, leaf and snow piles, and a few hand-held things -----
+  // a bench faces +z (you sit at z = 0, looking along +z); style picks the look for each place
+  const BENCH_STYLES = {
+    wood: ['#a0703f', '#555555'], dark: ['#8d6e4c', '#5d4037'], snow: ['#8d6e63', '#37474f'], metal: ['#b0bec5', '#607d8b'],
+    red: ['#e53935', '#5d4037'], stone: ['#9e9e9e', '#757575'], log: ['#7b5a3c', '#cfae7e'], mush: ['#e57373', '#fff3e0'],
+  };
+  function buildBench(style = 'wood') {
+    const g = new THREE.Group();
+    const [a, b] = BENCH_STYLES[style] || BENCH_STYLES.wood;
+    if (style === 'log') {
+      const l = pivot(g, 0, 0, 0);
+      box(l, 1.4, 0.36, 0.38, a, 0, 0.18, 0);
+      box(l, 1.3, 0.04, 0.3, shade(a, 1.15), 0, 0.37, 0);
+      for (const x of [-0.71, 0.71]) box(l, 0.03, 0.3, 0.3, b, x, 0.18, 0);
+      box(l, 0.2, 0.06, 0.18, '#7cb342', -0.35, 0.39, -0.06);
+    } else if (style === 'stone') {
+      box(g, 1.4, 0.38, 0.5, a, 0, 0.19, 0);
+      box(g, 1.3, 0.05, 0.42, b, 0, 0.405, 0);
+      box(g, 0.4, 0.2, 0.3, shade(a, 0.9), 0.75, 0.1, 0.15);
+    } else if (style === 'mush') {
+      for (const x of [-0.42, 0.42]) { box(g, 0.16, 0.36, 0.16, b, x, 0.18, 0); box(g, 0.5, 0.1, 0.5, a, x, 0.4, 0); box(g, 0.08, 0.02, 0.08, '#ffffff', x + 0.12, 0.46, 0.1); }
+    } else {
+      box(g, 1.6, 0.08, 0.45, a, 0, 0.42, 0);
+      box(g, 1.6, 0.35, 0.08, a, 0, 0.68, -0.2);
+      for (const x of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, b, x, 0.2, 0);
+    }
+    return g;
+  }
+  // muddy paw prints on the floor, in a little trail
+  function buildPrints(seed = 1) {
+    const g = new THREE.Group();
+    const r = mulberry32(seed);
+    const mud = new THREE.MeshLambertMaterial({ color: '#6b4a2b', transparent: true, opacity: 0.8, depthWrite: false });
+    const n = 3 + Math.floor(r() * 2);
+    for (let k = 0; k < n; k++) {
+      const p = pivot(g, (k % 2 ? 0.12 : -0.12) + (r() - 0.5) * 0.05, 0.012, -0.3 + k * 0.2);
+      p.rotation.y = (r() - 0.5) * 0.3;
+      box(p, 0.08, 0.01, 0.07, mud, 0, 0, 0);
+      for (const [x, z] of [[-0.05, -0.06], [-0.017, -0.075], [0.017, -0.075], [0.05, -0.06]]) box(p, 0.03, 0.01, 0.03, mud, x, 0, z);
+    }
+    return g;
+  }
+  // a patch of fallen leaves or a drift of snow, and the pile they are swept into
+  const LEAF_COLS = ['#e65100', '#f9a825', '#c62828', '#ef6c00', '#8d6e63', '#fbc02d'];
+  function buildPatch(kind, seed = 1) {
+    const g = new THREE.Group();
+    const r = mulberry32(seed);
+    if (kind === 'snow') {
+      for (let k = 0; k < 5; k++) box(g, 0.3 + r() * 0.3, 0.08 + r() * 0.08, 0.3 + r() * 0.3, ['#ffffff', '#dcebf8', '#c9def2'][k % 3], (r() - 0.5) * 0.6, 0.05, (r() - 0.5) * 0.6);
+    } else {
+      for (let k = 0; k < 13; k++) {
+        const p = pivot(g, (r() - 0.5) * 1.0, 0.02 + k * 0.002, (r() - 0.5) * 1.0);
+        p.rotation.y = r() * 3;
+        box(p, 0.2, 0.02, 0.13, LEAF_COLS[Math.floor(r() * LEAF_COLS.length)], 0, 0, 0);
+      }
+    }
+    return g;
+  }
+  // the pile grows: n = how many patches went in
+  function buildPile(kind, n) {
+    const g = new THREE.Group();
+    const r = mulberry32(7 + n);
+    const s = 0.5 + Math.min(n, 14) * 0.09;
+    const cols = kind === 'snow' ? ['#ffffff', '#dcebf8', '#c9def2', '#b9d3ec'] : LEAF_COLS;
+    const layers = 2 + Math.min(4, Math.floor(n / 3));
+    for (let l = 0; l < layers; l++) {
+      const w = s * (1 - l / (layers + 1));
+      const y = l * s * 0.22;
+      for (let k = 0; k < 7; k++) {
+        const a = r() * 6.28, d = r() * w * 0.4;
+        box(g, w * (0.45 + r() * 0.3), s * 0.22, w * (0.45 + r() * 0.3), cols[Math.floor(r() * cols.length)], Math.sin(a) * d, y + s * 0.11, Math.cos(a) * d);
+      }
+    }
+    g.userData.top = layers * s * 0.22;
+    return g;
+  }
+  // a rake for leaves, a shovel for snow, a guitar to hold, and a flat stone to skip
+  function buildTool(kind) {
+    const g = new THREE.Group();
+    if (kind === 'guitar') {
+      const gt = pivot(g, 0, 0, 0);
+      box(gt, 0.32, 0.26, 0.09, '#d08a3c', 0, 0, 0);
+      box(gt, 0.24, 0.18, 0.09, '#d08a3c', 0, 0.2, 0);
+      box(gt, 0.08, 0.08, 0.02, '#3e2723', 0, 0.1, 0.05);
+      box(gt, 0.06, 0.42, 0.05, '#6d4c41', 0, 0.5, 0);
+      return g;
+    }
+    if (kind === 'stone') { box(g, 0.12, 0.04, 0.1, '#90a4ae', 0, 0, 0); return g; }
+    box(g, 0.05, 1.2, 0.05, '#8d6e63', 0, -0.2, 0);
+    if (kind === 'shovel') { box(g, 0.32, 0.04, 0.26, '#78909c', 0, -0.82, 0.08); box(g, 0.32, 0.12, 0.03, '#78909c', 0, -0.78, -0.04); }
+    else { box(g, 0.44, 0.05, 0.06, '#607d8b', 0, -0.8, 0); for (let k = -3; k <= 3; k++) box(g, 0.025, 0.03, 0.14, '#607d8b', k * 0.065, -0.82, 0.07); }
+    return g;
+  }
   function buildItem(type) {
     const g = new THREE.Group();
     (BUILDERS[type] || BUILDERS.plant)(g);
@@ -1808,7 +1922,7 @@ window.VP_ART = (function () {
     for (const [x, z, w] of [[42.6, -16.6, 0.7], [42.9, -12.8, 0.5], [43.4, -17.4, 0.45]]) { box(parkRoot, w, w * 0.7, w, '#9e958a', x, w * 0.35, z); colliders.push({ x, z, r: w * 0.6 }); }
     // the lookout: a bench, a lamp and a coin telescope on top of the hill
     const top = (x, z) => T.height(x, z);
-    { const g = pivot(parkRoot, 35.6, top(35.6, -16.3), -16.3); box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2); box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0); box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0); colliders.push({ x: 35.6, z: -16.3, r: 0.8 }); }
+    { const g = pivot(parkRoot, 35.6, top(35.6, -16.3), -16.3); g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2); box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0); box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0); colliders.push({ x: 35.6, z: -16.3, r: 0.8 }); }
     { const g = pivot(parkRoot, 37.8, top(37.8, -12.6), -12.6); box(g, 0.12, 0.9, 0.12, '#455a64', 0, 0.45, 0); box(g, 0.5, 0.22, 0.22, '#455a64', 0.1, 0.95, 0); box(g, 0.1, 0.16, 0.16, '#90caf9', 0.38, 0.97, 0); colliders.push({ x: 37.8, z: -12.6, r: 0.35 }); }
     box(parkRoot, 0.14, 2.2, 0.14, '#3d3a40', 33.6, top(33.6, -16.8) + 1.1, -16.8);
     box(parkRoot, 0.36, 0.3, 0.36, M.lamp, 33.6, top(33.6, -16.8) + 2.3, -16.8);
@@ -1846,6 +1960,7 @@ window.VP_ART = (function () {
     for (const [x, z, ry] of [[-4, -12.6, 0], [3.5, 12.6, Math.PI], [12.6, -3, -Math.PI / 2]]) {
       const g = pivot(parkRoot, x, 0, z);
       g.rotation.y = ry;
+      g.userData.seat = 1;
       box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0);
       box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2);
       box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0);
@@ -2367,7 +2482,7 @@ window.VP_ART = (function () {
     box(root, 8.2, 0.03, 0.03, '#eeeeee', 9.7, 1.9, -20.35);
     [['#ef9a9a', 6.6], ['#90caf9', 7.6], ['#fff59d', 9.2], ['#a5d6a7', 11.3], ['#ce93d8', 12.6]].forEach(([c, x]) => box(root, 0.55, 0.6, 0.04, c, x, 1.55, -20.35));
     for (const [x, z, c] of [[5.4, -22.4, '#e53950'], [6.6, -24.8, '#ffb74d'], [13.4, -23.8, '#f48fb1']]) { box(root, 0.5, 0.4, 0.5, '#b0623c', x, 0.2, z); box(root, 0.3, 0.2, 0.3, c, x, 0.5, z); colliders.push({ x, z, r: 0.35 }); }
-    { const g = pivot(root, 12.4, 0, -25.2); g.rotation.y = -0.6; box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2); for (const x of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#37474f', x, 0.2, 0); colliders.push({ x: 12.4, z: -25.2, r: 0.8 }); }
+    { const g = pivot(root, 12.4, 0, -25.2); g.rotation.y = -0.6; g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2); for (const x of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#37474f', x, 0.2, 0); colliders.push({ x: 12.4, z: -25.2, r: 0.8 }); }
     { const c2 = buildCritter('cat', '#e0a060'); c2.position.set(12.3, 0.48, -25.25); c2.rotation.y = 0.9; root.add(c2); }
     box(root, 0.2, 0.25, 0.2, M.lamp, 8.8, 1.9, -19.75);
     const yard = addSpot(root, spots, colliders, 6.8, -23.3, 'hidden:courtyard', spotLooks.planter, 0.4);
@@ -2411,6 +2526,7 @@ window.VP_ART = (function () {
     for (const [x, z, ry] of [[-3.3, 3, Math.PI / 2], [3.3, 3, -Math.PI / 2], [0, 6.6, Math.PI]]) {
       const g = pivot(root, P.x + x, 0, z);
       g.rotation.y = ry;
+      g.userData.seat = 1;
       box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0);
       box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2);
       box(g, 0.1, 0.4, 0.4, '#37474f', -0.65, 0.2, 0);
@@ -2667,7 +2783,7 @@ window.VP_ART = (function () {
     box(root, 0.2, 0.2, 0.2, M.firefly, 25.6, 0.9, -23);
     { const g = pivot(root, 24.4, 0, -23.4); box(g, 0.8, 0.5, 0.6, '#7d7468', 0, 0.25, 0); colliders.push({ x: 24.4, z: -23.4, r: 0.35 }); }
     const fallSpot = addSpot(root, spots, colliders, 25.3, -23.6, 'hidden:waterfall', spotLooks.log, 0);
-    { const y = T.height(24, -19); const g = pivot(root, 24, y, -19); box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const x of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', x, 0.2, 0); colliders.push({ x: 24, z: -19, r: 0.8 }); }
+    { const y = T.height(24, -19); const g = pivot(root, 24, y, -19); g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const x of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', x, 0.2, 0); colliders.push({ x: 24, z: -19, r: 0.8 }); }
     void fallSpot;
     const secrets = [
       { id: 'hollowtree', name: 'The hollow tree', rects: [HOLLOW], hint: 'Past the west glade the ground dips into a mossy hollow. There’s an old tree there, wider than a house, they say.' },
@@ -2796,7 +2912,7 @@ window.VP_ART = (function () {
       box(g, 1.0, 0.2, 1.0, '#e53935', 0, 5.0, 0);
       box(g, 0.5, 0.9, 0.06, '#5d4037', 0, 0.45, 0.76);
       colliders.push({ x: 31, z: -10, r: 1.0 }); }
-    { const g = pivot(root, 27.5, 2.4, -9); g.rotation.y = Math.PI; box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2); box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0); box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0); colliders.push({ x: 27.5, z: -9, r: 0.8 }); }
+    { const g = pivot(root, 27.5, 2.4, -9); g.rotation.y = Math.PI; g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2); box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0); box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0); colliders.push({ x: 27.5, z: -9, r: 0.8 }); }
     const top = addSpot(root, spots, colliders, 33, 0.5, undefined, spotLooks.bush);
     onGround(T, top.group, 33, 0.5);
     // the cove: driftwood, an old fire ring and shells in the sand
@@ -2931,7 +3047,7 @@ window.VP_ART = (function () {
     q.snow.visible = false;
     // the mountain: a cairn and a little flag on the summit, a bench with a view
     { const x = 0.5, z = -25.5, y = T.height(x, z); for (let k = 0; k < 4; k++) box(root, 0.9 - k * 0.2, 0.25, 0.9 - k * 0.2, k % 2 ? '#b0b0b0' : '#9e9e9e', x, y + 0.12 + k * 0.25, z); box(root, 0.06, 1.2, 0.06, '#795548', x, y + 1.5, z); box(root, 0.5, 0.3, 0.03, '#e53935', x + 0.27, y + 1.95, z); colliders.push({ x, z, r: 0.5 }); }
-    { const x = -3.5, z = -24.2, y = T.height(x, z); const g = pivot(root, x, y, z); box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', bx, 0.2, 0); colliders.push({ x, z, r: 0.8 }); }
+    { const x = -3.5, z = -24.2, y = T.height(x, z); const g = pivot(root, x, y, z); g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', bx, 0.2, 0); colliders.push({ x, z, r: 0.8 }); }
     // the ice cave
     const iceMat = new THREE.MeshLambertMaterial({ color: '#b3e5fc', emissive: '#4fc3f7', emissiveIntensity: 0.25 });
     for (const [x, z, h] of [[9, -26, 0.9], [9.2, -24.6, 0.6], [10.4, -26.2, 0.5], [11, -24.4, 0.35]]) box(root, 0.3, h, 0.3, iceMat, x, h / 2, z);
@@ -2942,7 +3058,7 @@ window.VP_ART = (function () {
     { const fl = new THREE.InstancedMesh(geo(0.12, 0.12, 0.12), new THREE.MeshLambertMaterial({ color: '#ffffff' }), 160); const cols = ['#ffffff', '#fff59d', '#ffffff', '#ce93d8'].map((c) => new THREE.Color(c)); let i = 0;
       for (let k = 0; k < 3000 && i < 160; k++) { const x = -31 + r() * 12, z = 1 + r() * 14; if (!inPoly(WEST, x, z) || x > -21.5) continue; placeInst(fl, i, x, 0.08, z); fl.setColorAt(i, cols[i % 4]); i++; }
       fl.count = i; root.add(fl); }
-    { const g = pivot(root, -27.4, 0, 11.6); g.rotation.y = 2.4; box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', bx, 0.2, 0); colliders.push({ x: -27.4, z: 11.6, r: 0.8 }); }
+    { const g = pivot(root, -27.4, 0, 11.6); g.rotation.y = 2.4; g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#8d6e4c', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e4c', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#5d4037', bx, 0.2, 0); colliders.push({ x: -27.4, z: 11.6, r: 0.8 }); }
     { const b = buildCritter('bunny'); b.position.set(-25.5, 0, 5.2); b.rotation.y = 1; root.add(b); colliders.push({ x: -25.5, z: 5.2, r: 0.3 }); }
     const meadowSpot = addSpot(root, spots, colliders, -26.6, 7.8, 'hidden:meadow', spotLooks.flowers, 0);
     void iceSpot; void meadowSpot;
@@ -3246,7 +3362,7 @@ window.VP_ART = (function () {
     igSpot.group.position.y = -0.8;
     for (const [x, z] of [[-25.6, -8.6], [-27.6, 0.6]]) { const y = T.height(x, z); box(root, 0.7, 0.6, 0.7, '#ffffff', x, y + 0.3, z); box(root, 0.5, 0.45, 0.5, '#ffffff', x, y + 0.82, z); box(root, 0.07, 0.07, 0.22, '#ff9800', x, y + 0.85, z + 0.27); colliders.push({ x, z, r: 0.45 }); }
     // the ridge: a bench and a lamp up top, and the snow cave under its north face
-    { const x = 25.5, z = -0.6, y = T.height(x, z); const g = pivot(root, x, y, z); box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#37474f', bx, 0.2, 0); colliders.push({ x, z, r: 0.8 }); }
+    { const x = 25.5, z = -0.6, y = T.height(x, z); const g = pivot(root, x, y, z); g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2); for (const bx of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#37474f', bx, 0.2, 0); colliders.push({ x, z, r: 0.8 }); }
     { const x = 23.6, z = -1.6, y = T.height(x, z); box(root, 0.14, 2.2, 0.14, '#37474f', x, y + 1.1, z); box(root, 0.3, 0.3, 0.3, M.lamp, x, y + 2.3, z); colliders.push({ x, z, r: 0.15 }); }
     const icy = new THREE.MeshLambertMaterial({ color: '#b3e5fc', emissive: '#4fc3f7', emissiveIntensity: 0.25 });
     for (const [x, z, h] of [[25.9, -4.9, 0.8], [28, -5, 0.5], [26.4, -6.9, 0.4]]) box(root, 0.28, h, 0.28, icy, x, h / 2, z);
@@ -3876,6 +3992,11 @@ window.VP_ART = (function () {
     camera: '<path d="M4 8.5h3.2l1.6-2.5h6.4l1.6 2.5H20a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.2" r="3.4"/>',
     note: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
     expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-6.5 6.5M4 20l6.5-6.5"/>',
+    seat: '<path d="M4 12.5h16"/><path d="M5 12.5V7.5h14v5"/><path d="M6 12.5V19M18 12.5V19"/><path d="M5 16h14"/>',
+    stone: '<ellipse cx="8" cy="15" rx="4" ry="1.8"/><path d="M13 13c2-1.5 4-1.5 5 0M15.5 9.5c1.5-1 3-1 3.8 0"/><path d="M3 19.5h18"/>',
+    rake: '<path d="M16 3.5 8.5 14"/><path d="M4.5 12.5l5.5 4"/><path d="M5 12.8 3.5 15M7 14.2l-1.5 2.3M9 15.6l-1.5 2.3"/>',
+    hide: '<path d="M3.5 12s3-5.5 8.5-5.5S20.5 12 20.5 12s-3 5.5-8.5 5.5S3.5 12 3.5 12z"/><path d="M4.5 4.5l15 15"/>',
+    lead: '<circle cx="6" cy="18" r="2.2"/><path d="M8 16.5c3-3 4-7 9.5-9.5"/><path d="M14 5.5h4.5V10"/>',
     dog: '<path d="M6 8.5 4 4.5l4.2 1.6A7 7 0 0 1 12 5a7 7 0 0 1 3.8 1.1L20 4.5l-2 4a7 7 0 1 1-12 0z"/><path d="M9.5 11.5h.01M14.5 11.5h.01"/><path d="M11 15h2l-1 1.2z"/>',
   };
   function icon(name, cls) {
@@ -4210,7 +4331,7 @@ window.VP_ART = (function () {
 
   return {
     mulberry32, geo, mat, box, pivot, blob, emojiTexture, emojiSprite, textSprite, setSpriteText, M,
-    buildItem, buildToy, buildDog, coatOf, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
+    buildItem, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, coatOf, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
     icon, thumbURL, hasThumb, scentFX, setScentGold,
