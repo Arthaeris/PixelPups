@@ -635,6 +635,60 @@ window.VP_ART = (function () {
       box(g, 0.34, 0.06, 0.34, '#a1673f', 0, 0.36, 0.2);
       for (const [x, z] of [[-0.13, 0.07], [0.13, 0.07], [-0.13, 0.33], [0.13, 0.33]]) box(g, 0.05, 0.33, 0.05, '#7a4b2a', x, 0.165, z);
     },
+    // agility obstacles: the dog runs through along +z
+    tunnel(g) {
+      const c = ['#1e88e5', '#fdd835'];
+      for (let k = 0; k < 6; k++) {
+        const z = -0.42 + k * 0.17, col = c[k % 2];
+        box(g, 0.08, 0.5, 0.17, col, -0.3, 0.28, z); box(g, 0.08, 0.5, 0.17, col, 0.3, 0.28, z); box(g, 0.68, 0.08, 0.17, col, 0, 0.55, z);
+      }
+      box(g, 0.7, 0.03, 1.0, '#455a64', 0, 0.015, 0);
+    },
+    weave(g) {
+      box(g, 0.08, 0.03, 0.96, '#eceff1', 0, 0.015, 0);
+      for (let k = 0; k < 6; k++) box(g, 0.05, 0.75, 0.05, k % 2 ? '#e53935' : '#ffffff', 0, 0.38, -0.42 + k * 0.17);
+    },
+    tirejump(g) {
+      for (const x of [-0.42, 0.42]) { box(g, 0.08, 1.1, 0.08, '#eceff1', x, 0.55, 0); box(g, 0.1, 0.04, 0.4, '#3d3a40', x, 0.02, 0); }
+      box(g, 0.9, 0.06, 0.06, '#eceff1', 0, 1.08, 0);
+      const t = pivot(g, 0, 0.62, 0);
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; const b = box(t, 0.16, 0.14, 0.1, k % 2 ? '#212121' : '#ff7043', Math.cos(a) * 0.24, Math.sin(a) * 0.24, 0); b.rotation.z = a; }
+      for (const x of [-0.17, 0.17]) box(g, 0.02, 0.36, 0.02, '#9e9e9e', x * 1.5, 0.95, 0);
+    },
+    aframe(g) {
+      for (const s2 of [-1, 1]) { const p = pivot(g, 0, 0.32, s2 * 0.22); p.rotation.x = s2 * 0.95; box(p, 0.6, 0.04, 0.55, '#ffca28', 0, 0, 0); box(p, 0.6, 0.045, 0.16, '#e53935', 0, 0.001, s2 * 0.2); }
+      box(g, 0.6, 0.06, 0.06, '#8d6e63', 0, 0.62, 0);
+    },
+    pausetable(g) {
+      box(g, 0.8, 0.08, 0.8, '#26a69a', 0, 0.36, 0);
+      for (const [x, z] of [[-0.34, -0.34], [0.34, -0.34], [-0.34, 0.34], [0.34, 0.34]]) box(g, 0.06, 0.34, 0.06, '#eceff1', x, 0.17, z);
+    },
+    easel(g) {
+      for (const x of [-0.25, 0.25]) { const l = pivot(g, x, 0, -0.1); l.rotation.z = x > 0 ? -0.12 : 0.12; box(l, 0.05, 1.3, 0.05, '#a1673f', 0, 0.65, 0); }
+      const back = pivot(g, 0, 0, -0.32); back.rotation.x = -0.3; box(back, 0.05, 1.2, 0.05, '#a1673f', 0, 0.6, 0);
+      box(g, 0.62, 0.05, 0.12, '#8d5a34', 0, 0.55, -0.06);
+      box(g, 0.56, 0.5, 0.03, '#fffdf5', 0, 0.86, -0.1);
+      box(g, 0.2, 0.2, 0.02, '#64b5f6', -0.1, 0.9, -0.08); box(g, 0.14, 0.14, 0.02, '#ffb74d', 0.12, 0.8, -0.08);
+      box(g, 0.34, 0.04, 0.24, '#d7ccc8', 0.3, 0.02, 0.2);
+      for (const [c, x] of [['#e53935', 0.2], ['#fdd835', 0.3], ['#1e88e5', 0.4]]) box(g, 0.06, 0.03, 0.06, c, x, 0.05, 0.2);
+    },
+    mailbox(g) {
+      box(g, 0.1, 0.8, 0.1, '#6d4c41', 0, 0.4, 0);
+      box(g, 0.32, 0.26, 0.46, '#1e88e5', 0, 0.9, 0);
+      box(g, 0.34, 0.08, 0.48, '#1565c0', 0, 1.05, 0);
+      box(g, 0.24, 0.06, 0.02, '#0d47a1', 0, 0.92, 0.235);
+      const flag = pivot(g, 0.18, 0.86, -0.1);
+      box(flag, 0.03, 0.04, 0.22, '#e53935', 0, 0, 0.1); box(flag, 0.03, 0.12, 0.08, '#e53935', 0, 0.06, 0.18);
+      flag.rotation.x = 1.4;
+      g.userData.flag = flag;
+    },
+    // a framed painting on a little stand; game.js puts the picture on the canvas
+    painting(g) {
+      for (const x of [-0.18, 0.18]) box(g, 0.05, 0.5, 0.05, '#8d6e63', x, 0.25, -0.05);
+      box(g, 0.64, 0.64, 0.06, '#c8a165', 0, 0.82, -0.08);
+      const c = box(g, 0.52, 0.52, 0.02, '#ffffff', 0, 0.82, -0.04);
+      g.userData.canvas = c;
+    },
     gardenbench(g) {
       box(g, 0.92, 0.07, 0.42, '#a0703f', 0, 0.42, 0.02);
       box(g, 0.92, 0.32, 0.07, '#a0703f', 0, 0.68, -0.2);
@@ -718,6 +772,66 @@ window.VP_ART = (function () {
     return g;
   }
   // a rake for leaves, a shovel for snow, a guitar to hold, and a flat stone to skip
+  // a duck (faces +z), a bottle with a note, a garden bed and the plants that grow in it
+  function buildDuck(young) {
+    const g = new THREE.Group();
+    const s = young ? 0.55 : 1;
+    const body = young ? '#d4a843' : '#8d6e4c', head = young ? '#e0b84a' : '#2e7d32';
+    box(g, 0.26 * s, 0.16 * s, 0.38 * s, body, 0, 0.08 * s, 0);
+    box(g, 0.2 * s, 0.1 * s, 0.14 * s, young ? body : '#6d4c41', 0, 0.16 * s, -0.16 * s);
+    box(g, 0.16 * s, 0.16 * s, 0.16 * s, head, 0, 0.26 * s, 0.15 * s);
+    if (!young) box(g, 0.17 * s, 0.03 * s, 0.17 * s, '#ffffff', 0, 0.18 * s, 0.15 * s);
+    box(g, 0.08 * s, 0.04 * s, 0.1 * s, '#ffa000', 0, 0.24 * s, 0.27 * s);
+    for (const x of [-0.05, 0.05]) box(g, 0.025 * s, 0.025 * s, 0.01, '#111111', x * s, 0.29 * s, 0.235 * s);
+    return g;
+  }
+  function buildBottle() {
+    const g = new THREE.Group();
+    const glass = new THREE.MeshLambertMaterial({ color: '#80cbc4', transparent: true, opacity: 0.75 });
+    const b = pivot(g, 0, 0.09, 0);
+    b.rotation.z = Math.PI / 2;
+    box(b, 0.16, 0.36, 0.16, glass, 0, 0, 0);
+    box(b, 0.08, 0.14, 0.08, glass, 0, 0.24, 0);
+    box(b, 0.07, 0.05, 0.07, '#8d6e4c', 0, 0.32, 0);
+    box(b, 0.1, 0.22, 0.1, '#fff3e0', 0, -0.02, 0);
+    g.userData.bob = true;
+    return g;
+  }
+  function buildBed(wet) {
+    const g = new THREE.Group();
+    const soil = wet ? '#4e342e' : '#6d4c41', ridge = wet ? '#3e2723' : '#5d4037';
+    box(g, 0.94, 0.08, 0.94, soil, 0, 0.04, 0);
+    for (const z of [-0.28, 0, 0.28]) box(g, 0.86, 0.04, 0.1, ridge, 0, 0.1, z);
+    for (const [x, z] of [[-0.47, 0], [0.47, 0]]) box(g, 0.05, 0.14, 0.98, '#8d6e4c', x, 0.07, z);
+    for (const z of [-0.47, 0.47]) box(g, 0.98, 0.14, 0.05, '#8d6e4c', 0, 0.07, z);
+    return g;
+  }
+  // stage 0 seeds .. 4 ripe; wilted = sad brown leaves
+  function buildPlant(seed, stage, wilted) {
+    const S = D.SEEDS[seed] || D.SEEDS.carrot;
+    const g = new THREE.Group();
+    const leaf = wilted ? '#8d6e4c' : '#66bb6a', leaf2 = wilted ? '#795548' : '#43a047';
+    const spots = [[-0.22, -0.22], [0.22, -0.22], [-0.22, 0.22], [0.22, 0.22]];
+    if (stage === 0) { for (const [x, z] of spots) box(g, 0.06, 0.03, 0.06, '#3e2723', x, 0.12, z); return g; }
+    for (const [x, z] of spots) {
+      if (stage === 1) { box(g, 0.04, 0.12, 0.04, leaf, x, 0.17, z); box(g, 0.1, 0.03, 0.04, leaf, x, 0.23, z); continue; }
+      const h = stage === 2 ? 0.22 : 0.32;
+      box(g, 0.05, h, 0.05, leaf2, x, 0.11 + h / 2, z);
+      box(g, 0.16, 0.05, 0.08, leaf, x - 0.04, 0.11 + h * 0.6, z);
+      box(g, 0.08, 0.05, 0.16, leaf, x + 0.03, 0.11 + h * 0.85, z);
+      if (stage >= 3 && !wilted) {
+        if (S.flower) {
+          const big = stage === 4 ? 1.5 : 1;
+          box(g, 0.12 * big, 0.08, 0.12 * big, S.col, x, 0.11 + h + 0.05, z);
+          box(g, 0.05, 0.05, 0.05, '#fff59d', x, 0.11 + h + 0.1, z);
+        } else if (stage === 3) box(g, 0.07, 0.05, 0.07, '#ffffff', x, 0.11 + h + 0.04, z);
+        else if (S.crop === 'carrot') { box(g, 0.1, 0.06, 0.1, S.col, x, 0.13, z); box(g, 0.1, 0.14, 0.04, leaf, x, 0.11 + h + 0.06, z); }
+        else if (S.crop === 'pumpkin') box(g, 0.26, 0.18, 0.26, S.col, x * 0.6, 0.2, z * 0.6);
+        else { for (const [dx, dz] of [[0.05, 0.05], [-0.05, 0.02], [0.02, -0.06]]) box(g, 0.07, 0.07, 0.07, S.col, x + dx, 0.11 + h * 0.7, z + dz); }
+      }
+    }
+    return g;
+  }
   function buildTool(kind) {
     const g = new THREE.Group();
     if (kind === 'guitar') {
@@ -3771,6 +3885,104 @@ window.VP_ART = (function () {
     return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q, env: { sky: '#04040c', hemi: 0.55, sun: 1.0, noWeather: true, fogColor: '#04040c' } }, shapeOut(T, roofs, { secrets, lookout: { x0: -30, x1: -23, z0: -6.5, z1: 2 } }));
   }
 
+  // ----- Tournament Grounds: three fenced agility rings, stands, a judges' tent and a duck pond -----
+  function buildGrounds(root) {
+    const colliders = [], spots = [], ponds = [];
+    const L = { x: 5.5, z0: -3, z1: 12 };
+    const r = mulberry32(64);
+    const q = { rings: [] };
+    const JUDGES = { x0: -25.5, x1: -21.5, z0: -14, z1: -10 };
+    const STANDS = { x0: 19.5, x1: 25.5, z0: -9, z1: -4 };
+    const onPath = (x, z) => loopOnPath(L, 1.3)(x, z) || (Math.abs(x) < 1.3 && z > 11);
+    const { T, roofs } = shapedPlace(root, {
+      colliders,
+      walk: [coreSquare({ nw: 2, ne: 2 }), [[-19.5, -16], [-27, -16], [-27, -8], [-19.5, -8]], [[19.5, -11], [27, -11], [27, -2], [19.5, -2]]],
+      areas: [
+        { kind: 'flat', rect: { x0: 19.5, x1: 27, z0: -11, z1: -2 }, h: 1.6 },
+        { kind: 'ramp', rect: { x0: 17, x1: 19.5, z0: -11, z1: -9 }, axis: 'x', h0: 0, h1: 1.6 },
+        { kind: 'flat', rect: STANDS, h: 0, under: true },
+      ],
+      roofs: [{ id: 'stands', zone: [{ x0: 19.5, x1: 27.5, z0: -11, z1: -2 }], under: [STANDS], ceil: 1.3 }],
+      style: { topA: '#7cc35f', topB: '#77bd5a', topC: '#82c965', pathA: '#d9c79a', pathB: '#d3c093', side: '#8d6e4c', rock: '#8a8278', outer: { h: 0, b: '#6fb053' }, path: onPath,
+        tone: (x, z, h) => (h > 1 ? (hash2(x, z) < 0.5 ? '#90a4ae' : '#9eb0b9') : null) },
+      wall: { h: 0.7, a: '#eceff1', b: '#cfd8dc' },
+      gate: { gate: '#e53935', sign: '🏠 Home' },
+    });
+    // the rings: a low white fence with a gap at the start, and the obstacles
+    for (const [id, C] of Object.entries(D.COURSES)) {
+      const R = C.r + 2.1;
+      const fence = new THREE.InstancedMesh(geo(0.08, 0.5, 0.08), mat('#ffffff'), 64);
+      let n = 0;
+      const a0 = Math.PI / 2 - 0.5;
+      for (let k = 0; k < 40; k++) {
+        const a = (k / 40) * Math.PI * 2;
+        const da = Math.atan2(Math.sin(a - a0), Math.cos(a - a0));
+        if (Math.abs(da) < 0.22) continue;
+        placeInst(fence, n++, C.x + Math.cos(a) * R, 0.25, C.z + Math.sin(a) * R);
+      }
+      fence.count = n;
+      root.add(fence);
+      box(root, (C.r + 2.1) * 2 - 0.4, 0.02, (C.r + 2.1) * 2 - 0.4, '#8fd170', C.x, 0.005, C.z);
+      const sign = textSprite(`${['🥉', '🥈', '🥇'][C.cls]} ${C.name}`, 0.55);
+      const sx = C.x + Math.cos(a0) * (R + 0.9), sz = C.z + Math.sin(a0) * (R + 0.9);
+      sign.position.set(sx, 1.9, sz);
+      root.add(sign);
+      box(root, 0.1, 1.5, 0.1, '#eceff1', sx, 0.75, sz);
+      const obs = [];
+      for (const [kind, x, z, rot] of C.list) {
+        const type = kind === 'tire' ? 'tirejump' : kind === 'table' ? 'pausetable' : kind;
+        const g = buildItem(type);
+        g.position.set(x, 0, z);
+        g.rotation.y = rot;
+        root.add(g);
+        obs.push(g);
+        colliders.push({ x, z, r: kind === 'weave' || kind === 'tunnel' ? 0.45 : 0.38, obstacle: true });
+      }
+      // a start mat
+      const sx2 = C.start[0], sz2 = C.start[1];
+      box(root, 0.9, 0.03, 0.9, '#e53935', sx2, 0.02, sz2);
+      q.rings.push({ id, obs });
+    }
+    // flags and bunting on poles around the field
+    for (const [x, z] of [[-9, 16], [9, 16], [-19, -6], [19, 12], [-7, -18], [7, -18]]) {
+      box(root, 0.1, 3, 0.1, '#eceff1', x, 1.5, z);
+      box(root, 0.7, 0.45, 0.04, ['#e53935', '#1e88e5', '#fdd835', '#43a047'][Math.floor(r() * 4)], x + 0.38, 2.7, z);
+      colliders.push({ x, z, r: 0.2 });
+    }
+    // the stands in the east: benches up top, a hollow you can crawl into underneath
+    for (let k = 0; k < 3; k++) box(root, 6.6, 0.3, 0.6, '#90a4ae', 23.3, 1.6 + 0.15 + k * 0.3, -9.8 + k * 0.7);
+    for (let k = 0; k < 3; k++) { const g = pivot(root, 23.3, 1.6 + 0.3 * k, -9.8 + k * 0.7); void g; }
+    box(root, 0.2, 2.4, 0.2, '#607d8b', 19.8, 1.2, -2.2); box(root, 0.2, 2.4, 0.2, '#607d8b', 26.8, 1.2, -2.2);
+    const lostBall = addSpot(root, spots, colliders, 23.5, -6.5, 'hidden:stands', (g) => { box(g, 0.24, 0.24, 0.24, '#c6e04a', 0, 0.12, 0); box(g, 0.5, 0.08, 0.5, '#8d6e4c', 0.2, 0.04, 0.2); }, 0.3);
+    // the judges' tent in the north-west corner
+    { const g = pivot(root, -23.5, 0, -12);
+      box(g, 3.4, 0.08, 3.4, '#eeeeee', 0, 0.04, 0);
+      for (const [x, z] of [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]]) box(g, 0.1, 2.2, 0.1, '#eceff1', x, 1.1, z);
+      for (let k = 0; k < 6; k++) box(g, 0.6, 0.12, 3.6, k % 2 ? '#ffffff' : '#1e88e5', -1.5 + k * 0.6, 2.3, 0);
+      box(g, 1.8, 0.75, 0.6, '#795548', 0, 0.4, -0.9);
+      for (const x of [-0.5, 0.5]) { const j = buildPlayer({ shirt: '#37474f', hair: x < 0 ? '#9e9e9e' : '#5d4037' }); j.root.position.set(x, 0, -1.4); g.add(j.root); }
+      box(g, 0.5, 0.5, 0.06, '#ffffff', 0, 1.0, -0.58);
+      colliders.push({ x0: -24.5, x1: -22.5, z0: -13.6, z1: -12.7 }); }
+    const pen = addSpot(root, spots, colliders, -23.5, -11, 'hidden:judges', spotLooks.signpost, 0.3);
+    void pen; void lostBall;
+    // a little duck pond by the gate
+    const pond = { x0: -15, x1: -10, z0: 10.5, z1: 14.5 };
+    box(root, 5.6, 0.06, 4.6, '#cdb88d', -12.5, 0.01, 12.5);
+    box(root, 5, 0.07, 4, M.water, -12.5, 0.04, 12.5);
+    colliders.push(Object.assign({}, pond));
+    ponds.push(pond);
+    // the registration booth
+    const vendors = [stall(root, colliders, 'agility', 9.5, 14.2, -Math.PI / 2, { counter: '#eceff1', wall: '#e53935', awning: '#1e88e5', top: '#ffffff', shirt: '#1e88e5', hair: '#3e2723', goods: ['🏁', '🚧', '🏆'] })];
+    const water = drinkSpot(root, colliders, -2.4, 13.6, 'trough');
+    [[-6, 15], [6, 9], [-8, -2], [8, -4], [-19, 13], [18, 15], [-18, -12], [12, -17]].forEach(([x, z], i) => addSpot(root, spots, colliders, x, z, 'sniff', i % 2 ? spotLooks.bush : spotLooks.signpost, 0.42));
+    for (const [x, z] of [[-17, 17], [16, 17.5], [-10, -17], [17, -15], [-25, -15]]) { voxelTree(root, x, 0, z, r, 1.2); colliders.push({ x, z, r: 0.5 }); }
+    const secrets = [
+      { id: 'judges', name: 'The judges’ tent', rects: [JUDGES], hint: 'The judges sit in their tent in the far corner, past the club ring. Nobody else is supposed to go in.' },
+      { id: 'stands', name: 'Under the stands', rects: [STANDS], hint: 'Balls roll under the stands all the time. There must be a way to crawl under there.' },
+    ];
+    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q }, shapeOut(T, roofs, { secrets, lookout: { x0: 19.5, x1: 27, z0: -11, z1: -2 } }));
+  }
+
   // a tiled ground texture for big areas
   function floorTex(def, repeat) {
     const c = document.createElement('canvas');
@@ -3844,6 +4056,7 @@ window.VP_ART = (function () {
       case 'carnival': return buildCarnival(root);
       case 'fairy': return buildFairy(root);
       case 'moon': return buildMoon(root);
+      case 'grounds': return buildGrounds(root);
       default: return buildPark(root);
     }
   }
@@ -4244,6 +4457,12 @@ window.VP_ART = (function () {
       box(g, 0.24, 0.24, 0.24, M.orb, 0.8, 0.9, 0.5);
       for (const [x, z, c] of [[0.6, 0.9, '#fff176'], [1.0, 0.2, '#ce93d8'], [-0.9, 0.8, '#81d4fa']]) { box(g, 0.03, 0.14, 0.03, '#66bb6a', x, 0.07, z); box(g, 0.12, 0.08, 0.12, c, x, 0.17, z); }
     },
+    grounds(g) {
+      island(g, '#7cc35f', '#8d6e4f');
+      for (const [x, z] of [[-0.7, 0.3], [0.7, -0.4]]) { box(g, 0.08, 0.5, 0.08, '#ffffff', x - 0.3, 0.25, z); box(g, 0.08, 0.5, 0.08, '#ffffff', x + 0.3, 0.25, z); box(g, 0.66, 0.06, 0.06, '#e53935', x, 0.4, z); }
+      box(g, 0.5, 0.6, 0.5, '#fdd835', 0.2, 0.3, 0.8); box(g, 0.3, 0.2, 0.3, '#ffca28', 0.2, 0.7, 0.8);
+      for (let k = 0; k < 5; k++) box(g, 0.06, 0.5, 0.06, k % 2 ? '#e53935' : '#ffffff', -0.9 + k * 0.2, 0.25, -0.9);
+    },
     moon(g) {
       island(g, '#cfcfd6', '#8e8e98');
       for (const [x, z, w] of [[0.6, 0.6, 0.6], [-0.8, 0.9, 0.4], [0.9, -0.5, 0.35]]) box(g, w, 0.02, w, '#a7a7b0', x, 0.01, z);
@@ -4332,7 +4551,7 @@ window.VP_ART = (function () {
 
   return {
     mulberry32, geo, mat, box, pivot, blob, emojiTexture, emojiSprite, textSprite, setSpriteText, M,
-    buildItem, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, coatOf, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
+    buildItem, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, buildDuck, buildBottle, buildBed, buildPlant, coatOf, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
     icon, thumbURL, hasThumb, scentFX, setScentGold,
