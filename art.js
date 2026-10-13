@@ -1985,7 +1985,7 @@ window.VP_ART = (function () {
     ];
     void rose; void tun;
     return { colliders, spots, water, ponds: [POND], onPath, loop: { x: 11, z0: -11, z1: 11 }, vendors: [], q: {},
-      height: T.height, inside: T.inside, bbox: T.bbox, roofs, secrets, exit: { x: 0, z: 20.2 }, lookout: { x0: 32, x1: 40.5, z0: -18.5, z1: -11 } };
+      height: T.height, upper: T.upper, inside: T.inside, bbox: T.bbox, roofs, secrets, exit: { x: 0, z: 20.2 }, lookout: { x0: 32, x1: 40.5, z0: -18.5, z1: -11 } };
   }
 
 
@@ -2246,7 +2246,7 @@ window.VP_ART = (function () {
     return mats;
   }
   // a hidden-place extra for the return value of a place
-  const shapeOut = (T, roofs, extra) => Object.assign({ height: T.height, inside: T.inside, bbox: T.bbox, roofs, exit: { x: 0, z: 20.2 } }, extra);
+  const shapeOut = (T, roofs, extra) => Object.assign({ height: T.height, upper: T.upper, inside: T.inside, bbox: T.bbox, roofs, exit: { x: 0, z: 20.2 } }, extra);
 
   // ----- little animals and cars (they face +z; cars face +x) -----
   function buildCritter(kind, color) {
@@ -2944,7 +2944,7 @@ window.VP_ART = (function () {
     ];
     void cove; void cave; void top;
     return { colliders, spots, water, ponds, onPath, loop: L, vendors, q, solid,
-      height: T.height, inside: T.inside, bbox: T.bbox, roofs, secrets, exit: { x: 0, z: 20.2 }, lookout: { x0: 21, x1: 35, z0: -19.5, z1: 3 } };
+      height: T.height, upper: T.upper, inside: T.inside, bbox: T.bbox, roofs, secrets, exit: { x: 0, z: 20.2 }, lookout: { x0: 21, x1: 35, z0: -19.5, z1: 3 } };
   }
 
   // ----- Alpine Meadow -----
@@ -3522,8 +3522,9 @@ window.VP_ART = (function () {
     box(wg, 0.8, 0.8, 0.06, M.window, 0.6, 1.4, 0.92);
     box(wg, 0.3, 0.3, 0.3, M.orb, 0.6, 1.4, 0.7);
     box(wg, 0.6, 1.3, 0.06, '#4527a0', -0.8, 1.0, 0.92);
-    colliders.push({ x: -23, z: -18.4, r: 1.7 });
-    { const g = pivot(root, -20.2, 0, -21.2); for (let k = 0; k < 3; k++) box(g, 0.7, 0.6, 0.7, '#8d6e4c', (k - 1) * 0.75, 0.3, 0); box(g, 0.7, 0.6, 0.7, '#a1785a', 0.35, 0.9, 0); colliders.push({ x: -20.2, z: -21.2, r: 1.0 }); }
+    // the wagon is long and narrow: two circles along its length instead of one big one
+    for (const k of [-0.85, 0.85]) colliders.push({ x: -23 + Math.cos(0.5) * k, z: -18.4 - Math.sin(0.5) * k, r: 1.0 });
+    { const g = pivot(root, -20.2, 0, -21.2); for (let k = 0; k < 3; k++) box(g, 0.7, 0.6, 0.7, '#8d6e4c', (k - 1) * 0.75, 0.3, 0); box(g, 0.7, 0.6, 0.7, '#a1785a', 0.35, 0.9, 0); colliders.push({ x0: -21.35, x1: -19.05, z0: -21.6, z1: -20.8 }); }
     const wagSpot = addSpot(root, spots, colliders, -21.2, -16, 'hidden:wagon', hay, 0.42);
     void wagSpot;
     const secrets = [
