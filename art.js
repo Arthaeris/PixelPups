@@ -672,6 +672,63 @@ window.VP_ART = (function () {
       box(g, 0.34, 0.04, 0.24, '#d7ccc8', 0.3, 0.02, 0.2);
       for (const [c, x] of [['#e53935', 0.2], ['#fdd835', 0.3], ['#1e88e5', 0.4]]) box(g, 0.06, 0.03, 0.06, c, x, 0.05, 0.2);
     },
+    oven(g) {
+      box(g, 0.94, 1.0, 0.62, '#c96a3f', 0, 0.5, -0.17);
+      box(g, 0.98, 0.08, 0.66, '#8a4527', 0, 1.04, -0.17);
+      box(g, 0.66, 0.46, 0.02, '#2d2a2f', 0, 0.46, 0.15);
+      const glow = new THREE.MeshLambertMaterial({ color: '#ffb36b', emissive: '#ff8a3d', emissiveIntensity: 0.6 });
+      box(g, 0.5, 0.3, 0.02, glow, 0, 0.46, 0.16);
+      box(g, 0.56, 0.05, 0.05, '#d9d9d9', 0, 0.76, 0.17);
+      for (const x of [-0.3, 0, 0.3]) box(g, 0.08, 0.08, 0.03, '#3b3b3b', x, 0.9, 0.15);
+      box(g, 0.3, 0.3, 0.3, '#9e5a3a', 0.25, 1.23, -0.3);
+      box(g, 0.16, 0.12, 0.16, '#7a4a33', 0.25, 1.44, -0.3);
+      box(g, 0.34, 0.03, 0.22, '#e8c48c', -0.2, 1.1, -0.1);
+      for (let k = 0; k < 3; k++) box(g, 0.07, 0.03, 0.07, '#b8864f', -0.3 + k * 0.1, 1.13, -0.1);
+      g.userData.anim = (t) => { glow.emissiveIntensity = 0.5 + Math.sin(t * 3) * 0.1; };
+    },
+    fireflyjar(g) {
+      const glass = new THREE.MeshLambertMaterial({ color: '#eaffc2', transparent: true, opacity: 0.55 });
+      box(g, 0.3, 0.04, 0.3, '#8d6e4c', 0, 0.02, 0);
+      box(g, 0.28, 0.42, 0.28, glass, 0, 0.25, 0);
+      box(g, 0.3, 0.06, 0.3, '#b0855c', 0, 0.48, 0);
+      const bugs = [];
+      for (let k = 0; k < 5; k++) { const b = box(g, 0.04, 0.04, 0.04, new THREE.MeshBasicMaterial({ color: '#d8ff7a' }), 0, 0.2, 0); bugs.push(b); }
+      g.userData.anim = (t) => bugs.forEach((b, k) => { b.position.set(Math.sin(t * (0.7 + k * 0.2) + k) * 0.08, 0.2 + Math.sin(t * (1.1 + k * 0.13) + k * 2) * 0.12, Math.cos(t * (0.9 + k * 0.17) + k) * 0.08); b.visible = Math.sin(t * 2 + k * 1.7) > -0.6; });
+    },
+    snowglobe(g) {
+      box(g, 0.4, 0.14, 0.4, '#6d4c41', 0, 0.07, 0);
+      box(g, 0.36, 0.36, 0.36, new THREE.MeshLambertMaterial({ color: '#d6eefa', transparent: true, opacity: 0.6 }), 0, 0.32, 0);
+      box(g, 0.12, 0.12, 0.12, '#ffffff', 0, 0.21, 0); box(g, 0.09, 0.09, 0.09, '#ffffff', 0, 0.31, 0); box(g, 0.03, 0.03, 0.05, '#ff8a3d', 0, 0.31, 0.06);
+    },
+    fishtrophy(g) {
+      box(g, 0.5, 0.12, 0.3, '#6d4c41', 0, 0.06, 0);
+      box(g, 0.08, 0.5, 0.08, '#c9a227', 0, 0.37, 0);
+      box(g, 0.46, 0.18, 0.08, '#4f8fbf', 0, 0.68, 0); box(g, 0.12, 0.2, 0.06, '#4f8fbf', 0.27, 0.7, 0); box(g, 0.04, 0.04, 0.09, '#ffffff', -0.15, 0.71, 0);
+    },
+    discrack(g) {
+      box(g, 0.7, 0.06, 0.3, '#8d6e4c', 0, 0.03, 0);
+      for (const x of [-0.3, 0.3]) box(g, 0.06, 0.8, 0.06, '#8d6e4c', x, 0.4, -0.1);
+      ['#ef5350', '#ffca28', '#42a5f5', '#66bb6a'].forEach((c, k) => box(g, 0.5, 0.04, 0.5, c, 0, 0.2 + k * 0.17, 0.02));
+    },
+    museumcase(g) {
+      box(g, 0.8, 0.5, 0.6, '#6d4c41', 0, 0.25, 0);
+      box(g, 0.74, 0.5, 0.54, new THREE.MeshLambertMaterial({ color: '#e3f2fd', transparent: true, opacity: 0.45 }), 0, 0.76, 0);
+      box(g, 0.2, 0.16, 0.14, '#c9a227', -0.15, 0.58, 0); box(g, 0.12, 0.2, 0.12, '#90caf9', 0.17, 0.6, 0.05);
+      box(g, 0.82, 0.04, 0.62, '#4e342e', 0, 1.02, 0);
+    },
+    terrarium(g) {
+      box(g, 0.86, 0.12, 0.6, '#795548', 0, 0.06, 0);
+      box(g, 0.84, 0.5, 0.58, new THREE.MeshLambertMaterial({ color: '#dff3e4', transparent: true, opacity: 0.4 }), 0, 0.37, 0);
+      box(g, 0.78, 0.06, 0.52, '#7cb342', 0, 0.15, 0);
+      for (const [x, z, h] of [[-0.25, -0.1, 0.25], [0.2, 0.12, 0.18], [0.05, -0.15, 0.3]]) box(g, 0.08, h, 0.08, '#388e3c', x, 0.18 + h / 2, z);
+      box(g, 0.12, 0.06, 0.1, '#a1887f', 0.25, 0.21, -0.12);
+    },
+    insecthotel(g) {
+      box(g, 0.6, 0.7, 0.3, '#a1785a', 0, 0.35, 0);
+      box(g, 0.7, 0.08, 0.38, '#6d4c41', 0, 0.74, 0); box(g, 0.5, 0.08, 0.34, '#6d4c41', 0, 0.82, 0);
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) box(g, 0.14, 0.14, 0.04, ['#5d4037', '#d7ccc8', '#8d6e63'][(r + c) % 3], -0.17 + c * 0.17, 0.17 + r * 0.19, 0.14);
+      box(g, 0.06, 0.3, 0.06, '#6d4c41', 0, -0.0, 0);
+    },
     mailbox(g) {
       box(g, 0.1, 0.8, 0.1, '#6d4c41', 0, 0.4, 0);
       box(g, 0.32, 0.26, 0.46, '#1e88e5', 0, 0.9, 0);
@@ -783,6 +840,42 @@ window.VP_ART = (function () {
     if (!young) box(g, 0.17 * s, 0.03 * s, 0.17 * s, '#ffffff', 0, 0.18 * s, 0.15 * s);
     box(g, 0.08 * s, 0.04 * s, 0.1 * s, '#ffa000', 0, 0.24 * s, 0.27 * s);
     for (const x of [-0.05, 0.05]) box(g, 0.025 * s, 0.025 * s, 0.01, '#111111', x * s, 0.29 * s, 0.235 * s);
+    return g;
+  }
+  // a snowman of three snowballs (or two for a snow dog's helper), coal eyes, a carrot and a scarf
+  function buildSnowman(scarf = '#e53935', sizes = [1.6, 1.25, 0.9]) {
+    const g = new THREE.Group();
+    let y = 0;
+    const snow = (r, yy) => { box(g, r, r * 0.86, r, '#f6f9fc', 0, yy, 0); box(g, r * 0.8, r * 0.98, r * 0.8, '#ffffff', 0, yy, 0); box(g, r * 1.04, r * 0.6, r * 0.7, '#eef3f8', 0, yy, 0); };
+    const s0 = sizes[0] * 0.55, s1 = sizes[1] * 0.55, s2 = sizes[2] * 0.55;
+    snow(s0, s0 * 0.45); y = s0 * 0.9;
+    snow(s1, y + s1 * 0.42); y += s1 * 0.84;
+    snow(s2, y + s2 * 0.42);
+    const hy = y + s2 * 0.42;
+    for (const x of [-0.1, 0.1]) box(g, 0.07, 0.07, 0.04, '#2b2b2b', x, hy + 0.08, s2 * 0.5);
+    box(g, 0.07, 0.07, 0.3, '#ff8a3d', 0, hy, s2 * 0.5 + 0.12);
+    for (let k = -2; k <= 2; k++) box(g, 0.05, 0.05, 0.03, '#2b2b2b', k * 0.06, hy - 0.14 + Math.abs(k) * 0.025, s2 * 0.5);
+    box(g, s1 * 0.95, 0.12, s1 * 0.95, scarf, 0, y + 0.02, 0);
+    box(g, 0.14, 0.4, 0.06, scarf, s1 * 0.25, y - 0.18, s1 * 0.5);
+    for (const sd of [-1, 1]) { const arm = box(g, 0.05, 0.05, 0.7, '#6d4c33', sd * (s1 * 0.5 + 0.25), y - s1 * 0.45, 0); arm.rotation.y = Math.PI / 2; arm.rotation.z = sd * 0.5; }
+    for (let k = 0; k < 3; k++) box(g, 0.06, 0.06, 0.03, '#2b2b2b', 0, s0 * 0.9 + s1 * 0.2 + k * 0.15, s1 * 0.5);
+    return g;
+  }
+  // little critters for catching: flutterers have wings, crawlers sit low; some glow
+  function buildCatchable(C) {
+    const g = new THREE.Group(), body = pivot(g);
+    if (C.fly) {
+      box(body, 0.05, 0.05, 0.14, '#3a2a1e', 0, 0, 0);
+      const wl = pivot(body), wr = pivot(body);
+      box(wl, 0.16, 0.012, 0.12, C.col, -0.08, 0, 0); box(wr, 0.16, 0.012, 0.12, C.col, 0.08, 0, 0);
+      g.userData.wings = [wl, wr];
+    } else {
+      box(body, 0.12, 0.07, 0.16, C.col, 0, 0.035, 0);
+      box(body, 0.07, 0.05, 0.06, shade(C.col, 0.7), 0, 0.05, 0.1);
+      for (const sx of [-0.07, 0.07]) box(body, 0.02, 0.02, 0.12, '#3a2a1e', sx, 0.02, 0);
+    }
+    if (C.glow) box(body, 0.06, 0.06, 0.06, new THREE.MeshBasicMaterial({ color: C.col }), 0, C.fly ? -0.03 : 0.08, -0.06);
+    g.userData.body = body;
     return g;
   }
   function buildBottle() {
@@ -2578,7 +2671,46 @@ window.VP_ART = (function () {
       }
       return g;
     }
-    for (let k = 0; k < 9; k++) if (k !== 6) house(-17.6 + k * 4.4, -17.05, 4.3, 5, 0, k);
+    for (let k = 0; k < 9; k++) if (k !== 6 && k !== 4) house(-17.6 + k * 4.4, -17.05, 4.3, 5, 0, k);
+    // the town museum: columns, steps and a banner with this week's exhibitions
+    { const g = pivot(root, 0, 0, -17.05);
+      box(g, 4.3, 3.6, 5, '#efe7d6', 0, 1.8, 0);
+      box(g, 4.7, 0.35, 5.3, '#d8ccb4', 0, 3.75, 0);
+      for (let k = 0; k < 3; k++) box(g, 4.7 - k * 1.3, 0.35, 0.7, '#e6dcc6', 0, 4.1 + k * 0.35, 2.3 - k * 0.15);
+      for (let k = 0; k < 3; k++) box(g, 4.5 - k * 0.3, 0.12, 0.45, '#d6cbb5', 0, 0.06 + k * 0.12, 2.75 + (2 - k) * 0.25);
+      for (const x of [-1.7, -0.6, 0.6, 1.7]) { box(g, 0.34, 2.9, 0.34, '#fbf7ee', x, 1.75, 2.62); box(g, 0.46, 0.14, 0.46, '#e6dcc6', x, 3.27, 2.62); box(g, 0.46, 0.14, 0.46, '#e6dcc6', x, 0.31, 2.62); }
+      box(g, 4.5, 0.25, 0.6, '#e6dcc6', 0, 3.38, 2.62);
+      box(g, 1.1, 1.8, 0.08, '#6d4c41', 0, 0.9 + 0.36, 2.52);
+      box(g, 0.08, 0.08, 0.05, '#ffd54f', 0.35, 1.3, 2.57);
+      for (const x of [-1.15, 1.15]) { box(g, 0.7, 1.1, 0.06, '#c0392b', x, 2.05, 2.82); box(g, 0.5, 0.06, 0.07, '#f1c40f', x, 2.45, 2.86); }
+      const sign = textSprite('🏛️ Museum', 0.55); sign.position.set(0, 4.9, 2.4); g.add(sign);
+      q.museum = { g, front: new V3(0, 0, -13.6) };
+    }
+    // the weekend market: your stall in the middle, two neighbors' either side
+    { const M = pivot(root), stalls = [];
+      const mk = (x, cols, own) => {
+        const g = pivot(M, x, 0, 14.4);
+        g.rotation.y = Math.PI;
+        box(g, 1.8, 0.85, 0.7, cols[0], 0, 0.42, 0.1);
+        box(g, 1.9, 0.08, 0.8, '#f3ead9', 0, 0.89, 0.12);
+        for (const sx of [-0.85, 0.85]) box(g, 0.1, 2.0, 0.1, '#6d4c41', sx, 1.0, 0.4);
+        for (const sx of [-0.85, 0.85]) box(g, 0.1, 2.0, 0.1, '#6d4c41', sx, 1.0, -0.3);
+        const open = pivot(g), shut = pivot(g);
+        for (let k = 0; k < 6; k++) box(open, 0.33, 0.08, 1.2, k % 2 ? cols[1] : '#ffffff', -0.83 + k * 0.33, 2.05, 0.05);
+        box(shut, 1.9, 0.9, 0.85, '#8d7b68', 0, 1.35, 0.1);
+        const goods = pivot(open);
+        for (const [gx, gc] of [[-0.55, cols[2]], [0, cols[3]], [0.55, cols[2]]]) { box(goods, 0.4, 0.12, 0.35, '#a1785a', gx, 0.99, 0.15); for (let k = 0; k < 3; k++) box(goods, 0.1, 0.1, 0.1, gc, gx - 0.1 + k * 0.1, 1.1, 0.15 + (k % 2) * 0.08); }
+        if (!own) { const keeper = buildPlayer({ shirt: cols[1], hair: '#4e342e' }); keeper.root.position.set(0, 0, -0.35); open.add(keeper.root); }
+        const sign = textSprite(own ? '🧺 Your stall' : cols[4], 0.42); sign.position.set(0, 2.55, 0); open.add(sign);
+        colliders.push({ x0: x - 1.0, x1: x + 1.0, z0: 14.1, z1: 14.95 });
+        stalls.push({ open, shut });
+      };
+      mk(-4.6, ['#b5835a', '#66bb6a', '#e53935', '#ffb300', '🍎 Fruit'], false);
+      mk(0, ['#c49a6c', '#ffb74d', '#f8bbd0', '#81d4fa'], true);
+      mk(4.6, ['#a1785a', '#7e57c2', '#fff59d', '#ffffff', '🧀 Cheese'], false);
+      q.market = { g: M, front: new V3(0, 0, 13.1), stalls, setOpen: (o) => stalls.forEach((st) => { st.open.visible = o; st.shut.visible = !o; }) };
+      q.market.setOpen(false);
+    }
     colliders.push({ x0: -22, x1: 6.6, z0: -19.6, z1: -14.5 }, { x0: 11, x1: 22, z0: -19.6, z1: -14.5 });
     // where house 7 used to be: a narrow house built over an alley, which leads to a courtyard behind
     const arch = pivot(root);
@@ -2924,6 +3056,7 @@ window.VP_ART = (function () {
       { kind: 'flat', rect: BEACH_CAVE[0], h: 0.15, under: true },
       { kind: 'flat', rect: BEACH_CAVE[1], h: 0.1, under: true },
       { kind: 'stairs', rect: { x0: 24, x1: 27, z0: 3, z1: 9 }, axis: 'z', h0: 2.4, h1: 0, n: 6 },
+      { kind: 'flat', rect: { x0: -23.4, x1: -21.6, z0: -18.2, z1: -5 }, h: 0.3 },
     ],
     roofs: [
       { id: 'cove', zone: [{ x0: 20, x1: 36, z0: -7.5, z1: 4 }], under: BEACH_COVE, ceil: 1.4 },
@@ -2967,7 +3100,25 @@ window.VP_ART = (function () {
     q.strip = false;
     q.stripMesh = strip;
     q.stripRect = STRIP;
-    const dry = (x, z) => x >= 21 || inAny(BEACH_CAVE, x, z) || inAny(BEACH_COVE, x, z) || (q.strip && inRect(STRIP, x, z));
+    const PIER = { x0: -23.4, x1: -21.6, z0: -18.2, z1: -5 };
+    const dry = (x, z) => x >= 21 || inAny(BEACH_CAVE, x, z) || inAny(BEACH_COVE, x, z) || (q.strip && inRect(STRIP, x, z)) || inRect(PIER, x, z);
+    // the pier: planks on posts, out over the water
+    { const g = pivot(root);
+      for (let z = -17.9; z < -5; z += 0.42) box(g, 1.8, 0.07, 0.38, (Math.round(z * 10) % 2) ? '#a47a52' : '#b0855c', -22.5, 0.34, z);
+      for (let z = -17.8; z <= -6; z += 2.4) for (const x of [-23.35, -21.65]) box(g, 0.18, 1.6, 0.18, '#6d4c33', x, -0.45, z);
+      for (const x of [-23.35, -21.65]) { box(g, 0.08, 0.08, 12.6, '#6d4c33', x, 1.05, -11.6); for (let z = -17.8; z <= -5.6; z += 1.2) box(g, 0.07, 0.7, 0.07, '#6d4c33', x, 0.7, z); }
+      box(g, 0.5, 0.5, 0.5, '#8d6e4c', -23.0, 0.6, -17.6);
+      const sign = textSprite('🎣 Pier', 0.5); sign.position.set(-22.5, 2.2, -5.4); g.add(sign);
+      q.pier = { end: new V3(-22.5, 0, -17.2), rect: PIER };
+    }
+    // the disc dog field: a mat to throw from, and flags down the lane
+    { const g = pivot(root);
+      box(g, 1.6, 0.04, 1.6, '#4fc3f7', -6, 0.02, 3.2);
+      box(g, 1.2, 0.045, 1.2, '#ffffff', -6, 0.025, 3.2);
+      for (const d of [5, 10, 15, 20]) { box(g, 0.05, 0.9, 0.05, '#ffffff', -6 + d, 0.45, 0.9); box(g, 0.32, 0.22, 0.03, d % 10 ? '#ffca28' : '#ef5350', -6 + d + 0.17, 0.78, 0.9); }
+      const sign = textSprite('🥏 Disc dog', 0.45); sign.position.set(-6, 1.8, 1.9); g.add(sign);
+      q.disc = { start: new V3(-6, 0, 3.2) };
+    }
     const solid = (x, z) => z < seaRect.z1 && !dry(x, z) && !q.wading;
     // tide pools only show at low tide
     [[-7, -12.6], [2.5, -13.2], [9, -12]].forEach(([x, z]) => {
@@ -4129,6 +4280,17 @@ window.VP_ART = (function () {
   // ===================================================================
   // Line icons on a 24 grid. They use currentColor, so CSS decides the color.
   const ICON_PATHS = {
+    stairs: '<path d="M4 20h4v-4h4v-4h4V8h4V4"/><path d="M4 20V16"/>',
+    wall: '<rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 12h18M9 5v7M15 12v7"/>',
+    fish: '<path d="M3 12c3-5 9-6 13-2l5-3v10l-5-3c-4 4-10 3-13-2z"/><circle cx="8" cy="11" r=".8" fill="currentColor"/>',
+    net: '<circle cx="9" cy="9" r="6"/><path d="M5 6l8 6M6 13l7-7M13.5 13.5L21 21"/>',
+    disc: '<ellipse cx="12" cy="12" rx="9" ry="4"/><path d="M5 11c2 1 12 1 14 0"/>',
+    oven: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="6" y="10" width="12" height="7" rx="1"/><path d="M7 7h1M11 7h1M15 7h2"/>',
+    museum: '<path d="M3 9l9-5 9 5M5 9v9M9.5 9v9M14.5 9v9M19 9v9M3 20h18"/>',
+    stall: '<path d="M3 9l2-5h14l2 5M3 9h18v2a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0zM5 13v7h14v-7"/>',
+    paper: '<rect x="4" y="3" width="14" height="18" rx="1"/><path d="M18 7h2v12a2 2 0 0 1-2 2M7 7h8M7 11h8M7 15h5"/>',
+    snowman: '<circle cx="12" cy="7" r="3"/><circle cx="12" cy="16" r="5"/><path d="M9 3h6"/>',
+    bug: '<ellipse cx="12" cy="14" rx="5" ry="6"/><path d="M12 8V20M7 11l-3-2M17 11l3-2M7 16H4M17 16h3M10 7l-1-3M14 7l1-3"/>',
     bowl: '<path d="M3.5 11h17a8.5 7 0 0 1-17 0z"/><path d="M7.5 20h9"/><path d="M8 8.2c1.6-1.6 3.1-1.6 4-.2.9-1.4 2.4-1.4 4 .2"/>',
     ball: '<circle cx="12" cy="12" r="8.5"/><path d="M4.6 8.3c3.4 1.7 4.6 5 3.9 11.4M19.4 15.7c-3.4-1.7-4.6-5-3.9-11.4"/>',
     walk: '<path d="M5 20c1.5-4 4-5 6-5s3.5-1.5 4-4"/><circle cx="17" cy="6.5" r="2.5"/><path d="M8 20h.01M12 20h.01M16 20h.01"/>',
@@ -4551,7 +4713,7 @@ window.VP_ART = (function () {
 
   return {
     mulberry32, geo, mat, box, pivot, blob, emojiTexture, emojiSprite, textSprite, setSpriteText, M,
-    buildItem, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, buildDuck, buildBottle, buildBed, buildPlant, coatOf, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
+    buildItem, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, buildDuck, buildBottle, buildBed, buildPlant, coatOf, buildSnowman, buildCatchable, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
     icon, thumbURL, hasThumb, scentFX, setScentGold,
