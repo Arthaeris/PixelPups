@@ -1518,3 +1518,59 @@ body.bigui .x { width: 46px; height: 46px; }
 body.bigui .row .txt b { font-size: 16.5px; }
 body.bigui .row .txt small { font-size: 13.5px; }
 body.bigui .seg { padding: 10px 14px; font-size: 15px; }
+
+/* ----- pastimes: the little status bar, the counting overlay, the music keys, the play sheet ----- */
+#funBar {
+  position: fixed; left: 0; right: 0; margin: 0 auto; z-index: 31;
+  bottom: calc(var(--pad-b) + 84px);
+  width: min(92vw, 420px); padding: 8px 8px 8px 16px; border-radius: 999px;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; font-weight: 700; color: var(--ink);
+  animation: popIn 0.22s ease-out;
+}
+#funTxt { flex: 1; min-width: 0; line-height: 1.3; }
+#funBtn { flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 800; }
+#funMeter { flex: 0 0 34%; height: 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.35); box-shadow: inset 0 1px 2px rgba(20, 12, 40, 0.18); overflow: hidden; position: relative; }
+#funFill { display: block; height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.15s; }
+/* skipping stones: a marker swings over a green middle */
+#funMeter.needle { background: linear-gradient(90deg, rgba(229, 72, 77, 0.35), rgba(233, 164, 0, 0.35) 30%, rgba(18, 153, 106, 0.6) 44%, rgba(18, 153, 106, 0.6) 56%, rgba(233, 164, 0, 0.35) 70%, rgba(229, 72, 77, 0.35)); overflow: visible; }
+#funMeter.needle #funFill { background: none; transition: none; position: relative; }
+#funMeter.needle #funFill::after { content: ''; position: absolute; right: -3px; top: -4px; width: 6px; height: 20px; border-radius: 3px; background: var(--ink); box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9); }
+body.funOn #toast { bottom: calc(var(--pad-b) + 140px); }
+body.funOn #talk { bottom: calc(var(--pad-b) + 140px); }
+body.sheetOpen #funBar, body.photo #funBar { display: none; }
+
+#peek {
+  position: fixed; inset: 0; z-index: 29; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  background: rgba(16, 12, 34, 0.93); color: #fff;
+  animation: fadeIn 0.3s ease-out;
+}
+#peek.hidden { display: none; }
+.peekHands { font-size: 64px; line-height: 1; }
+#peekTxt { font-size: 56px; font-weight: 900; min-height: 64px; }
+#peek small { font-size: 15px; font-weight: 700; opacity: 0.85; }
+
+#keys {
+  position: fixed; left: 0; right: 0; margin: 0 auto; z-index: 31;
+  bottom: var(--pad-b); width: min(96vw, 460px); padding: 10px 10px 12px; border-radius: 28px;
+  animation: popIn 0.22s ease-out;
+}
+.keysHead { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 8px; font-size: 15px; }
+#keysDone { padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 800; }
+#keyRow { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.key { height: 86px; border: none; border-radius: 14px; padding: 0; background: rgba(255, 255, 255, 0.85); box-shadow: inset 0 -6px 0 var(--kc), 0 4px 10px rgba(20, 12, 40, 0.18); touch-action: manipulation; }
+.key span { display: block; width: 12px; height: 12px; margin: 50px auto 0; border-radius: 50%; background: var(--kc); }
+.key.hit { animation: keyHit 0.25s ease-out; }
+@keyframes keyHit { 0% { transform: translateY(4px) scale(0.96); background: var(--kc); } 100% { transform: none; } }
+body.keysOn #actions, body.keysOn #parkActions { display: none; }
+body.keysOn #toast { bottom: calc(var(--pad-b) + 150px); }
+
+.playRow { width: 100%; text-align: left; border: none; font: inherit; color: inherit; }
+.playRow .ic { color: var(--accent-ink); }
+.playRow.info { opacity: 0.92; }
+.playRow.info .ic { color: var(--ink-2); }
+.playRow.locked { opacity: 0.55; }
+#ctxHome.hidden { display: none; }
+body.funOn #tips { bottom: calc(var(--pad-b) + 140px); }
+body.keysOn #tips { bottom: calc(var(--pad-b) + 160px); }
