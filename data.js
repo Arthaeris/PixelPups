@@ -51,9 +51,10 @@ window.VP_DATA = (function () {
 
   // Need changes per second. Home is gentle, walks are hungrier, thirstier and dirtier.
   const NEEDS = {
-    home: { hunger: 0.1, thirst: 0.13, energy: 0.05, sleepRegen: 4, loungeRegen: 1.2, clean: 0.0015, happyDecay: 0.07, needyDecay: 0.25 },
-    park: { hunger: 0.18, thirst: 0.32, energy: 0.22, clean: 0.07, happyGain: 0.15 },
-    rainDirt: 2.5,                     // walks in rain get this much dirtier (and muddy)
+    home: { hunger: 0.1, thirst: 0.13, energy: 0.05, sleepRegen: 4, loungeRegen: 1.2, clean: 0.0015, happyDecay: 0.045, needyDecay: 0.25 },
+    park: { hunger: 0.18, thirst: 0.32, energy: 0.22, clean: 0.04, happyGain: 0.15 },
+    rainDirt: 4.4,                     // (clean x rainDirt = as muddy as before in rain; dry walks stay clean longer)
+                        // walks in rain get this much dirtier (and muddy)
     offlinePerHour: { hunger: 15, thirst: 18, energy: -25, happy: 8, clean: 2 },
   };
 
