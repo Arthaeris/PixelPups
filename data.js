@@ -209,6 +209,27 @@ window.VP_DATA = (function () {
     gardentree:{ name: 'Apple tree',     icon: '🍎', price: 45, cat: 'garden', solid: true, garden: true, comfort: 3 },
     gardenpond:{ name: 'Garden pond',    icon: '🪷', price: 70, cat: 'garden', solid: true, garden: true, comfort: 4 },
     gardenbench:{ name: 'Garden bench',  icon: '🪑', price: 30, cat: 'garden', solid: true, garden: true, comfort: 1 },
+    // ----- from the player places (made by you, won, or found at the flea market) -----
+    mybowl:    { name: 'Handmade bowl',  icon: '🥣', price: null, cat: 'rare', solid: false, role: 'food', custom: 'bowl' },
+    paintedkennel:{ name: 'Painted dog house', icon: '🏠', price: null, cat: 'rare', solid: true, lounge: true, custom: 'kennel', comfort: 2 },
+    photostrip:{ name: 'Photo strip',    icon: '📸', price: null, cat: 'rare', solid: true, strip: true, comfort: 1 },
+    lavalamp:  { name: 'Lava lamp',      icon: '🫧', price: null, cat: 'rare', solid: true, comfort: 2, mall: 70 },
+    discoball: { name: 'Disco ball',     icon: '🪩', price: null, cat: 'rare', solid: true, comfort: 3, mall: 150 },
+    neonpaw:   { name: 'Neon paw sign',  icon: '🐾', price: null, cat: 'rare', solid: true, comfort: 2, mall: 120 },
+    popcorn:   { name: 'Popcorn cart',   icon: '🍿', price: null, cat: 'rare', solid: true, comfort: 2, mall: 110 },
+    gumball:   { name: 'Gumball machine',icon: '🍬', price: null, cat: 'rare', solid: true, comfort: 1, mall: 60 },
+    arcadecab: { name: 'Arcade cabinet', icon: '🕹️', price: null, cat: 'rare', solid: true, comfort: 3 },
+    bigplush:  { name: 'Giant plush dog',icon: '🧸', price: null, cat: 'rare', solid: true, lounge: true, comfort: 2 },
+    golftrophy:{ name: 'Mini golf trophy',icon: '⛳', price: null, cat: 'rare', solid: true, comfort: 2 },
+    swimtrophy:{ name: 'Swim trophy',    icon: '🏊', price: null, cat: 'rare', solid: true, comfort: 2 },
+    gramophone:{ name: 'Gramophone',     icon: '📯', price: null, cat: 'rare', solid: true, comfort: 3, vintage: 160 },
+    grandclock:{ name: 'Grandfather clock', icon: '🕰️', price: null, cat: 'rare', solid: true, comfort: 3, vintage: 220 },
+    vtrunk:    { name: 'Steamer trunk',  icon: '🧳', price: null, cat: 'rare', solid: true, comfort: 2, vintage: 110 },
+    rocker:    { name: 'Rocking chair',  icon: '🪑', price: null, cat: 'rare', solid: true, lounge: true, comfort: 2, vintage: 140 },
+    brasslamp: { name: 'Brass lamp',     icon: '🪔', price: null, cat: 'rare', solid: true, comfort: 2, vintage: 90 },
+    vradio:    { name: 'Old radio',      icon: '📻', price: null, cat: 'rare', solid: true, comfort: 2, vintage: 120 },
+    globe:     { name: 'Antique globe',  icon: '🌐', price: null, cat: 'rare', solid: true, comfort: 2, vintage: 130 },
+    velvetchair:{ name: 'Velvet armchair', icon: '💺', price: null, cat: 'rare', solid: true, lounge: true, comfort: 3, vintage: 180 },
     gardenlamp:{ name: 'Garden lantern', icon: '🏮', price: 40, cat: 'garden', solid: true, garden: true },
     digpit:    { name: 'Sand pit',       icon: '🏖️', price: 45, cat: 'garden', solid: false, garden: true, digSpot: true },
     // Luxury: expensive, only in the shop, never found
@@ -471,6 +492,10 @@ window.VP_DATA = (function () {
     wand:    { name: 'Fairy wand',   icon: '🪄', price: 55,   dist: 1.1,  arc: 1.8, bounce: 0.1,  spin: 'tumble', restY: 0.05, weight: 3, happy: 22, vendor: 'fairyshop' },
     crystalball:{ name: 'Crystal ball', icon: '🔮', price: null, dist: 1,  arc: 1.6, bounce: 0.5,  spin: 'roll',   restY: 0.11, weight: 2, happy: 25, coins: 1, loc: ['caves'], secret: true },
     oldstick:{ name: 'Ancient stick',icon: '🥢', price: null, dist: 1.15, arc: 1.6, bounce: 0.05, spin: 'tumble', restY: 0.04, weight: 2, happy: 25, loc: ['forest'], secret: true },
+    plushfox:{ name: 'Plush fox',    icon: '🦊', price: 50,   dist: 0.85, arc: 1.4, bounce: 0.05, spin: 'tumble', restY: 0.06, weight: 3, happy: 22, squeak: true, vendor: 'mall' },
+    carrot:  { name: 'Squeaky carrot',icon: '🥕', price: 35,  dist: 0.9,  arc: 1.4, bounce: 0.1,  spin: 'tumble', restY: 0.05, weight: 3, happy: 18, squeak: true, vendor: 'mall' },
+    tugring: { name: 'Tug ring',     icon: '⭕', price: 40,   dist: 1.05, arc: 1.3, bounce: 0.2,  spin: 'flat',   restY: 0.04, weight: 3, happy: 18, vendor: 'mall' },
+    burger:  { name: 'Squeaky burger',icon: '🍔', price: null, tickets: 45, dist: 0.85, arc: 1.4, bounce: 0.1, spin: 'tumble', restY: 0.07, weight: 2, happy: 22, squeak: true, vendor: 'arcade' },
   };
 
   // ===================================================================
@@ -759,6 +784,9 @@ window.VP_DATA = (function () {
                 stock: [['outfit', 'winterjacket'], ['outfit', 'snowpants'], ['outfit', 'santa'], ['acc', 'wintercoat'], ['acc', 'santahat'], ['acc', 'beanie'], ['shampoo', 'frostmelt'], ['meal', 'broth']] },
     prizes:   { name: 'Prize booth',    icon: '🎪', loc: 'carnival', greet: 'Step right up! Prizes for tickets 🎟️', currency: 'tickets',
                 stock: [['outfit', 'jester'], ['outfit', 'bunnyears'], ['outfit', 'heartglasses'], ['outfit', 'balloon'], ['find', 'plushbear', 12], ['find', 'plushbunny', 12], ['find', 'plushdino', 20], ['find', 'plushunicorn', 30], ['acc', 'jesterhat'], ['toy', 'plushball'], ['meal', 'cottoncandy'], ['shampoo', 'sugar']] },
+    // the player places in town: their goods are sold inside, not at a stand on a walk
+    mall:     { name: 'Old Town Mall',  icon: '🛍️', loc: 'oldtown', venue: 'mall', greet: '', stock: [] },
+    arcade:   { name: 'Pixel Arcade',   icon: '🕹️', loc: 'oldtown', venue: 'arcade', greet: '', currency: 'tickets', stock: [] },
     fairyshop:{ name: 'Fairy vendor',   icon: '🍄', loc: 'fairy',   greet: 'Sparkles and wonders, dear dog-friend!',
                 stock: [['outfit', 'leggings'], ['outfit', 'flowercrown'], ['outfit', 'fairywings'], ['acc', 'fairywings'], ['toy', 'wand'], ['shampoo', 'pixie'], ['meal', 'stardrop'], ['ingredient', 'berries', 5]] },
     agility:  { name: 'Agility club',   icon: '🏁', loc: 'grounds', greet: 'Train hard, have fun! Obstacles for your garden, too.',
@@ -1062,6 +1090,18 @@ window.VP_DATA = (function () {
     spacehelmet:{ name: 'Astronaut helmet',  slot: 'hat', model: 'helmet', color: '#f2f2f2', vendor: 'station', price: 250 },
     crown:      { name: 'Golden crown',      slot: 'hat', model: 'crown', color: '#f5c542', unlock: 'comfort5' },
     wizardhat:  { name: 'Wizard hat',        slot: 'hat', model: 'wizard', color: '#3b3fb6', unlock: 'alltricks' },
+    // the mall's clothes shop
+    varsity:    { name: 'Varsity jacket',    slot: 'top', model: 'jacket', color: '#2f4a8a', color2: '#f5c542', vendor: 'mall', price: 150 },
+    pastelhood: { name: 'Pastel hoodie',     slot: 'top', model: 'hoodie', color: '#f6b3d0', vendor: 'mall', price: 95 },
+    sailor:     { name: 'Sailor shirt',      slot: 'top', model: 'stripes', color: '#1f3a8a', color2: '#ffffff', vendor: 'mall', price: 70 },
+    mintknit:   { name: 'Mint knit sweater', slot: 'top', model: 'sweater', color: '#7fd1b0', color2: '#ffffff', vendor: 'mall', price: 115 },
+    lemonrain:  { name: 'Lemon raincoat',    slot: 'top', model: 'raincoat', color: '#fff176', vendor: 'mall', price: 120 },
+    plaidpants: { name: 'Plaid trousers',    slot: 'bottom', model: 'checkpants', color: '#7b4a2a', color2: '#e8c07a', vendor: 'mall', price: 100 },
+    denimshorts:{ name: 'Denim shorts',      slot: 'bottom', model: 'shorts', color: '#4f78b8', vendor: 'mall', price: 55 },
+    roseskirt:  { name: 'Rose skirt',        slot: 'bottom', model: 'skirt', color: '#e5738f', vendor: 'mall', price: 75 },
+    redbeanie:  { name: 'Cherry beanie',     slot: 'hat', model: 'beanie', color: '#e5484d', vendor: 'mall', price: 45 },
+    retroshades:{ name: 'Retro shades',      slot: 'face', model: 'shades', color: '#8a5cf6', vendor: 'mall', price: 80 },
+    neoncap:    { name: 'Neon arcade cap',   slot: 'hat', model: 'cap', color: '#2bf0c0', vendor: 'arcade', tickets: 60 },
     // face
     glasses:    { name: 'Round glasses',     slot: 'face', model: 'glasses', color: '#3a2a20', price: 50 },
     shades:     { name: 'Sunglasses',        slot: 'face', model: 'shades', color: '#1f1a17', price: 70 },
@@ -1144,6 +1184,15 @@ window.VP_DATA = (function () {
     market:   { rank: 7, name: 'Market stall', text: 'Sell your goods at the Old Town market on weekends' },
     museum:   { rank: 8, name: 'Town museum', text: 'Lend your finds to the museum and curate exhibitions' },
     disc:     { rank: 8, name: 'Disc dog', text: 'Throw a frisbee at the beach, and a Disc Cup on the 14th' },
+    // places for you (with or without your dogs), found on the world map
+    v_cafe:     { rank: 4, name: 'Café Pfote upstairs', say: 'the café upstairs', text: 'Latte art and neighbors’ stories, upstairs at Café Pfote' },
+    v_mall:     { rank: 5, name: 'Old Town Mall', say: 'the mall', text: 'Clothes, toys, a furniture showroom, a photo booth and a food court' },
+    v_library:  { rank: 6, name: 'Town library', say: 'the library', text: 'A dog quiz, a breed encyclopedia and books to borrow' },
+    v_arcade:   { rank: 7, name: 'Pixel Arcade', say: 'the arcade', text: 'Claw machine, Whack-a-Mole and a rhythm game. Win tickets for prizes' },
+    v_minigolf: { rank: 8, name: 'Mini golf', say: 'mini golf', text: 'Nine dog-themed holes by the beach' },
+    v_flea:     { rank: 8, name: 'Sunday flea market', say: 'the flea market', text: 'Haggle for one-of-a-kind vintage furniture, on Sundays' },
+    v_workshop: { rank: 9, name: 'Workshop hall', say: 'the workshop', text: 'Make your own food bowl, bandana and painted dog house' },
+    v_pool:     { rank: 10, name: 'Indoor pool', say: 'the pool', text: 'Swim races and the diving board' },
   };
   // XP and place-mastery points for things you do. cap = how often it counts per game day.
   const XP = {
@@ -1159,6 +1208,10 @@ window.VP_DATA = (function () {
     paint: { xp: 12, cap: 4 }, letter: { xp: 5, cap: 6 }, treasuremap: { xp: 50, m: 25, cap: 4 }, sitting: { xp: 60, cap: 3 },
     bake: { xp: 14, cap: 6 }, market: { xp: 25, m: 10, cap: 4 }, museum: { xp: 6, cap: 10 }, fish: { xp: 5, m: 3, cap: 20 }, catch: { xp: 5, m: 3, cap: 20 },
     snowman: { xp: 15, m: 5, cap: 4 }, flakes: { xp: 6, m: 2, cap: 6 }, disc: { xp: 8, m: 4, cap: 10 }, discup: { xp: 40, m: 20, cap: 2 }, favor: { xp: 30, m: 10, cap: 5 },
+    // player places
+    venue: { xp: 5, cap: 8 }, shopmall: { xp: 6, cap: 4 }, foodcourt: { xp: 6, cap: 4 }, photobooth: { xp: 10, cap: 3 }, arcadegame: { xp: 5, cap: 12 },
+    craft: { xp: 20, cap: 4 }, latte: { xp: 8, cap: 6 }, story: { xp: 8, cap: 4 }, quiz: { xp: 12, cap: 6 }, borrow: { xp: 5, cap: 2 },
+    golf: { xp: 25, cap: 4 }, haggle: { xp: 12, cap: 6 }, swim: { xp: 10, cap: 8 },
   };
   const XP_MISC = { secret: 60, chat: 3, newFind: 25, dupFind: 3, challenge: 40, allChallenges: 60, firstVisit: 40, adopt: 50, room: 60, trickLevel: 10, event: 30 };
   const MASTERY_STARS = [0, 30, 100, 220, 400, 650];   // points for 0..5 stars
@@ -1908,7 +1961,15 @@ window.VP_DATA = (function () {
   // Dog sitting: neighbors' dogs come to stay for a day
   // ===================================================================
   const SIT = { minutes: 60, grace: 10, coins: [40, 80] };   // grace: minutes the owner waits at the door before letting themselves in
-  const SIT_ASK = ['I have to go away for a day. Could you look after {ndog}? {ndog} adores your {dog}!', 'Could {ndog} stay with you for a day? I’ll pay you back, promise.', 'Emergency! Work trip. Would you take {ndog} for a day?'];
+  // away: the owner is out of town and won't be seen on walks; otherwise they're just busy and might wander about without their dog
+  const SIT_ASK = [
+    { away: true, t: 'I have to go away for a day. Could you look after {ndog}? {ndog} adores your {dog}!' },
+    { away: false, t: 'My day is packed with errands. Could {ndog} stay with you for a day? I’ll pay you back, promise.' },
+    { away: true, t: 'Emergency! Work trip. Would you take {ndog} for a day?' },
+    { away: false, t: 'I’m painting my whole flat today and {ndog} keeps getting paint on their paws. Could {ndog} stay with you for a day?' },
+    { away: true, t: 'I’m visiting my sister out of town for a day. Could {ndog} stay with you and your {dog}?' },
+  ];
+  const SIT_GREET = ['There’s my {ndog}! Having fun with {you}? Good dog!', 'Oh, hi {ndog}! I miss you already. Be good for {you}!', '{ndog}! Look at you, all happy. Thanks again, {you}!', 'Hello, sweetheart! Just running errands. {you} is taking great care of you, I can tell.'];
   const SIT_QUIRKS = {
     foodie: 'eats every crumb it finds', social: 'wants to play with everyone', zoomies: 'never stops running', brainiac: 'opens the toy box by itself',
     digger: 'digs at everything', shy: 'stays close to you', water: 'loves the water bowl a bit too much', couch: 'claims the comfiest spot', pampered: 'wants to be brushed',
@@ -2104,7 +2165,7 @@ window.VP_DATA = (function () {
     SEATS, SIT_REACT, STEAL_LINES, BENCH_LINES, SEEK, HIDE_GIGGLE, HIDE_FOUND, BRUSH_REACT, BRUSH_MIN, PILE, PILE_LINES, SKIP, SKIP_LINES,
     STAR_LINES, STAR_AGAIN, MUSIC_REACT, MUSIC_STYLE, HOWL_BREEDS, SING_SONGS, LEAD, LEAD_SAY,
     SEEDS, STAGE_NAMES, GARDEN, OBSTACLES, COURSES, CLASSES, TOURNEY, AGILITY_LINES, DUCK_PLACES, DUCK_REACT, DUCK_HANDFULS,
-    LETTER_KINDS, LETTER_REPLIES, BOTTLE, MAP_NOTES, SIT, SIT_ASK, SIT_QUIRKS, SIT_THANKS, PAINT_COLS,
+    LETTER_KINDS, LETTER_REPLIES, BOTTLE, MAP_NOTES, SIT, SIT_ASK, SIT_GREET, SIT_QUIRKS, SIT_THANKS, PAINT_COLS,
     HOME_BUILD, BAKES, BAKE, MARKET, MARKET_GOODS, MARKET_LINES, MUSEUM, MUSEUM_HALLS, MUSEUM_REWARDS, FISH, FISHING, CATCH, CATCHING, SNOW, DISC, DISC_LINES,
     FAVOR_KINDS, FAVOR_THANKS, FAVOR, FAVOR_GIFTS, GAZETTE, RIVAL, RIVAL_LINES,
   };
