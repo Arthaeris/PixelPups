@@ -4384,11 +4384,401 @@ window.VP_ART = (function () {
     return g;
   }
 
+
+  // ===================================================================
+  // Player places as real places: a hall you walk around in, with stations for the little games.
+  // Each returns what a walk place returns, plus stations ({ act, x, z, label }) and a spawn point.
+  // ===================================================================
+  const neon = (c, k = 0.9) => new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: k });
+  function hall(root, o) {
+    const X = o.w / 2, Z0 = -o.d / 2, Z1 = o.d / 2;
+    const walk = [[[-X, Z0], [X, Z0], [X, Z1], [1.6, Z1], [1.6, Z1 + 3.5], [-1.6, Z1 + 3.5], [-1.6, Z1], [-X, Z1]]].concat(o.extra || []);
+    const T = terrain({ walk, blocks: o.blocks || [], areas: o.areas || [], roofs: [] });
+    drawTerrain(root, T, { topA: o.floor[0], topB: o.floor[1], topC: o.floor[2] || o.floor[0], side: o.side || '#a1887f', rock: o.side || '#a1887f',
+      outside: o.outside || '#8e8e93', stair: o.stair || '#cfd8dc', stairSide: o.stairSide || '#90a4ae', tone: o.tone, path: o.path, pathA: o.pathA, pathB: o.pathB,
+      outer: { h: 0, b: o.outside2 || o.outside || '#8e8e93', margin: 10 } });
+    curT = T;
+    const H = o.wallH || 2.8, wc = o.wall || ['#efe3d0', '#e6d7c0'], trim = o.trim || '#8d6e4c';
+    if (o.walls !== false) {
+      // tall walls at the back (north, west), low ones in front (south, east) so you can see in
+      for (let x = -X; x < X; x += 1) box(root, 1, H, 0.3, (Math.floor(x) & 1) ? wc[0] : wc[1], x + 0.5, H / 2, Z0 - 0.15);
+      for (let z = Z0; z < Z1; z += 1) box(root, 0.3, H, 1, (Math.floor(z) & 1) ? wc[1] : wc[0], -X - 0.15, H / 2, z + 0.5);
+      box(root, o.w + 0.6, 0.14, 0.4, trim, 0, H + 0.07, Z0 - 0.15);
+      box(root, 0.4, 0.14, o.d + 0.3, trim, -X - 0.15, H + 0.07, 0);
+      box(root, o.w + 0.3, 0.2, 0.34, trim, 0, 0.1, Z0 - 0.12);
+      box(root, 0.34, 0.2, o.d, trim, -X - 0.12, 0.1, 0);
+      const low = 0.6;
+      box(root, X - 1.6, low, 0.3, wc[0], (-X - 1.6) / 2, low / 2, Z1 + 0.15);
+      box(root, X - 1.6, low, 0.3, wc[0], (X + 1.6) / 2, low / 2, Z1 + 0.15);
+      box(root, 0.3, low, o.d, wc[0], X + 0.15, low / 2, 0);
+      box(root, X - 1.6, 0.08, 0.4, trim, (-X - 1.6) / 2, low + 0.04, Z1 + 0.15);
+      box(root, X - 1.6, 0.08, 0.4, trim, (X + 1.6) / 2, low + 0.04, Z1 + 0.15);
+      box(root, 0.4, 0.08, o.d, trim, X + 0.15, low + 0.04, 0);
+      // the way out: a door frame with the place's sign
+      for (const x of [-1.75, 1.75]) box(root, 0.3, 1.0, 0.4, trim, x, 0.5, Z1 + 0.15);
+      box(root, 3.2, 0.04, 1.4, '#8d6e63', 0, 0.02, Z1 + 1.2);
+      const exit = textSprite('🚪 Exit', 0.45);
+      exit.position.set(0, 1.4, Z1 + 0.6);
+      root.add(exit);
+    }
+    const colliders = [], stations = [];
+    const solid = (x0, z0, x1, z1) => colliders.push({ x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1) });
+    const round = (x, z, r) => colliders.push({ x, z, r });
+    const station = (act, x, z, label, sy = 2.5) => {
+      stations.push({ act, x, z });
+      if (label) { const s = textSprite(label, 0.42); s.position.set(x, (T.height(x, z) || 0) + sy, z); root.add(s); }
+    };
+    const fur = (type, x, z, rot = 0, y) => { const g = buildItem(type); g.position.set(x, y !== undefined ? y : T.height(x, z), z); g.rotation.y = rot; root.add(g); return g; };
+    const staff = (x, z, rot, shirt, hair, y) => {
+      const P = buildPlayer({ shirt, hair });
+      P.root.position.set(x, y !== undefined ? y : T.height(x, z), z);
+      P.root.rotation.y = rot;
+      root.add(P.root);
+      round(x, z, 0.35);
+      return P;
+    };
+    const plant = (x, z, s = 1) => { box(root, 0.5 * s, 0.45 * s, 0.5 * s, '#b0705a', x, 0.22 * s, z); box(root, 0.7 * s, 0.6 * s, 0.7 * s, '#4caf50', x, 0.75 * s, z); box(root, 0.45 * s, 0.4 * s, 0.45 * s, '#66bb6a', x, 1.2 * s, z); round(x, z, 0.4 * s); };
+    const out = (extra) => Object.assign({ colliders, spots: [], water: { pos: new V3(-2.6, 0, Z1 + 1.6), bowl: new V3(-2.6, 0, Z1 + 2.1), taken: null }, ponds: [], onPath: o.path || (() => false), loop: o.loop || { x: 4, z0: -2, z1: 4 },
+      vendors: [], q: {}, stations, spawn: { x: 0, z: Z1 - 1.6 }, venue: true, env: o.env || { sky: '#2b2340', hemi: 1.0, sun: 0.55, noWeather: true, lit: true, fog: [30, 70] } }, shapeOut(T, [], extra || {}), { exit: { x: 0, z: Z1 + 3 } });
+    // a water bowl for the dogs by the door
+    box(root, 0.44, 0.1, 0.44, '#3d7fd6', -2.6, 0.05, Z1 + 2.1);
+    box(root, 0.32, 0.03, 0.32, M.water, -2.6, 0.1, Z1 + 2.1);
+    return { T, X, Z0, Z1, solid, round, station, fur, staff, plant, out, colliders };
+  }
+  function storefront(root, x, z, w, sign, col, facing = 0) {
+    const g = pivot(root, x, 0, z);
+    g.rotation.y = facing;
+    box(g, w, 0.5, 0.25, col, 0, 2.35, 0);
+    for (const s of [-w / 2 + 0.1, w / 2 - 0.1]) box(g, 0.2, 2.6, 0.3, '#ffffff', s, 1.3, 0);
+    box(g, w - 0.4, 1.6, 0.06, new THREE.MeshLambertMaterial({ color: '#d6eefa', transparent: true, opacity: 0.45 }), 0, 1.1, 0.05);
+    const t = textSprite(sign, 0.45);
+    t.position.set(0, 2.35, 0.2);
+    g.add(t);
+    return g;
+  }
+
+  function buildVenue(id, root) {
+    switch (id) {
+      case 'vmall': return buildMallHall(root);
+      case 'vlibrary': return buildLibraryHall(root);
+      case 'varcade': return buildArcadeHall(root);
+      case 'vcafe': return buildCafeHall(root);
+      case 'vworkshop': return buildWorkshopHall(root);
+      case 'vpool': return buildPoolHall(root);
+      case 'vminigolf': return buildGolfPlace(root);
+      default: return buildFleaPlace(root);
+    }
+  }
+
+  // ----- the mall: shops downstairs, a gallery upstairs, escalators between -----
+  function buildMallHall(root) {
+    const GAL = { x0: -13, x1: 13, z0: -11, z1: -6.5 };
+    const h = hall(root, {
+      w: 26, d: 22, floor: ['#d5d9df', '#cbd0d7', '#dde1e6'], wall: ['#f1e9dc', '#e8dfd0'], trim: '#90a4ae', wallH: 5.2, outside: '#9ea7ad', env: { sky: '#3a3550', hemi: 0.82, sun: 0.5, noWeather: true, lit: true, fog: [30, 70] },
+      tone: (x, z, hh) => (hh > 1 ? (hash2(x, z) < 0.5 ? '#d7ccc8' : '#cfc3bf') : (Math.abs(x) < 3 && z > -2 && z < 9 ? ((Math.floor(x) + Math.floor(z)) & 1 ? '#c5cae9' : '#e8eaf6') : null)),
+      areas: [{ kind: 'flat', rect: GAL, h: 2.2 }, { kind: 'ramp', rect: { x0: -10.6, x1: -9.2, z0: -6.5, z1: -1 }, axis: 'z', h0: 2.2, h1: 0 }, { kind: 'ramp', rect: { x0: 9.2, x1: 10.6, z0: -6.5, z1: -1 }, axis: 'z', h0: 2.2, h1: 0 }],
+      side: '#b0bec5', stair: '#78909c', stairSide: '#546e7a', loop: { x: 6, z0: 1, z1: 8 },
+    });
+    const { solid, station, fur, staff, plant, round } = h;
+    // gallery front and its glass railing (open at the escalators)
+    box(root, 26, 0.1, 0.12, '#90a4ae', 0, 2.25, -6.45);
+    for (let x = -12.5; x <= 12.5; x += 1) if (!(x > -11 && x < -8.8) && !(x > 8.8 && x < 11)) box(root, 1, 0.9, 0.06, new THREE.MeshLambertMaterial({ color: '#b3e5fc', transparent: true, opacity: 0.45 }), x, 2.7, -6.48);
+    box(root, 26, 0.08, 0.14, '#cfd8dc', 0, 3.17, -6.48);
+    // escalators: moving steps, rubber rails
+    const steps = [];
+    for (const ex of [-9.9, 9.9]) {
+      for (const sx of [-0.78, 0.78]) { box(root, 0.16, 1.2, 5.6, '#cfd8dc', ex + sx, 1.3, -3.75); box(root, 0.18, 0.1, 5.8, '#263238', ex + sx, 1.95, -3.75); }
+      for (let k = 0; k < 10; k++) { const s = box(root, 1.3, 0.06, 0.5, '#455a64', ex, 0, 0); steps.push({ s, ex, k }); }
+    }
+    const escal = (t) => steps.forEach(({ s, ex, k }) => { const f = ((k / 10 + t * 0.12 * (ex < 0 ? 1 : -1)) % 1 + 1) % 1; const z = -1 - f * 5.5; s.position.set(ex, 2.2 * f + 0.05, z); });
+    escal(0);
+    // upstairs: toy shop and furniture showroom
+    storefront(root, -6, -10.8, 7, '🧸 Toy shop', '#90caf9');
+    for (const [t, x] of [['toybox', -8], ['beanbag', -5.5], ['toybox', -3.8]]) fur(t, x, -10, 0);
+    station('toys', -6, -8, '🧸 Toy shop', 4.6);
+    storefront(root, 6, -10.8, 9, '🛋️ Showroom', '#ffe082');
+    fur('sofa', 4, -10, 0); fur('lamp', 2.4, -10.2); fur('rug', 4, -8.8); fur('armchair', 7.5, -9.8, 0); fur('fireplace', 9.6, -10.3, 0); fur('plant', 10.8, -10.2);
+    station('showroom', 6, -7.7, '🛋️ Furniture showroom', 4.6);
+    staff(-1.5, -9.8, 0, '#4db6ac', '#3b2a1e', 2.2);
+    // downstairs: clothes with a mirror (west), the photo booth, weekly specials in the middle, the food court (east)
+    storefront(root, -12.85, -2.5, 6, '👗 Clothes', '#ef9a9a', Math.PI / 2);
+    for (let k = 0; k < 3; k++) { box(root, 0.08, 1.4, 1.4, '#9e9e9e', -11.8, 1.3, -4.3 + k * 1.8); box(root, 0.5, 0.9, 1.2, ['#e57373', '#64b5f6', '#81c784'][k], -11.8, 1, -4.3 + k * 1.8); }
+    box(root, 0.1, 1.9, 0.9, '#c9a227', -12.6, 1.1, 0.4); box(root, 0.06, 1.7, 0.75, '#e3f2fd', -12.55, 1.1, 0.4);
+    solid(-13, -5.2, -11.3, 0.9);
+    station('clothes', -10.4, -1.5, '👗 Clothes shop');
+    staff(-11.6, 1.6, Math.PI / 2, '#ba68c8', '#1a1a1a');
+    box(root, 1.6, 2.3, 1.6, '#5b7cfa', -11.6, 1.15, 6.4); box(root, 1.4, 1.6, 0.06, '#ffeb3b', -11.6, 1.3, 7.22); box(root, 0.9, 0.3, 0.06, '#ff7aa8', -11.6, 2.05, 7.24);
+    solid(-12.4, 5.6, -10.8, 7.2);
+    station('booth', -11.4, 8.4, '📸 Photo booth');
+    box(root, 2.4, 1.1, 1.4, '#ffffff', 0, 0.55, 4); box(root, 2.6, 0.12, 1.6, '#ffb74d', 0, 1.14, 4); box(root, 0.12, 1.6, 0.12, '#ffb74d', -1.1, 1.9, 4); box(root, 0.12, 1.6, 0.12, '#ffb74d', 1.1, 1.9, 4); box(root, 2.6, 0.5, 1.6, '#ff8a3d', 0, 2.9, 4);
+    solid(-1.3, 3.2, 1.3, 4.8);
+    station('specials', 0, 5.6, '⭐ Weekly specials', 3.4);
+    staff(0, 3.2, 0, '#ffb74d', '#6d4c41');
+    for (const [z, c, t] of [[0.5, '#a5d6a7', '🍜'], [4.5, '#ffcc80', '🥨'], [8.5, '#f8bbd0', '🍦']]) {
+      box(root, 1.4, 1.1, 2.6, c, 12.2, 0.55, z); box(root, 1.6, 0.4, 2.8, '#ffffff', 12.2, 2.4, z);
+      const e = emojiSprite(t, 0.7); e.position.set(12.2, 2.9, z); root.add(e);
+      solid(11.4, z - 1.3, 13, z + 1.3);
+    }
+    staff(12.6, 4.5, -Math.PI / 2, '#e57373', '#3b2a1e');
+    for (const [x, z] of [[8.6, 1.5], [8.6, 5.5], [8.6, 9]]) { fur('table', x, z); round(x, z, 0.6); }
+    station('food', 9.6, 3.4, '🍔 Food court');
+    for (const [x, z] of [[-4, 10.2], [4, 10.2], [-6.5, -0.2], [6.5, -0.2]]) plant(x, z);
+    return h.out({ anim: escal, venueSky: true });
+  }
+
+  // ----- the library: aisles of shelves to wander, a reading rug, a librarian -----
+  function buildLibraryHall(root) {
+    const h = hall(root, { w: 24, d: 20, floor: ['#8d6e4f', '#86684a', '#937455'], wall: ['#e8dcc3', '#e1d3b7'], trim: '#5d4037', wallH: 3.4,
+      tone: (x, z) => (x < -3 && x > -11 && z > 2.5 && z < 8 ? ((Math.floor(x) + Math.floor(z)) & 1 ? '#a5413f' : '#b5504d') : null), loop: { x: 3, z0: 3, z1: 7 } });
+    const { solid, station, fur, staff, plant } = h;
+    const COLS = ['#c0504d', '#3d7fd6', '#5f8a5c', '#e9a400', '#8a5cf6', '#e5738f', '#4db6ac', '#795548'];
+    const shelf = (x0, x1, z, two = true) => {
+      const len = x1 - x0, mx = (x0 + x1) / 2;
+      box(root, len, 2.4, 0.7, '#5d3a22', mx, 1.2, z);
+      for (let r = 0; r < 4; r++) for (const side of two ? [-1, 1] : [1]) {
+        let x = x0 + 0.1;
+        let k = Math.floor((x0 * 7 + r * 3 + z) * 13) & 7;
+        while (x < x1 - 0.15) { const w = 0.12 + ((k * 37) % 5) * 0.03; box(root, w, 0.42 - ((k * 11) % 3) * 0.05, 0.08, COLS[k % COLS.length], x + w / 2, 0.35 + r * 0.55, z + side * 0.33); x += w + 0.02; k++; }
+      }
+      box(root, len + 0.1, 0.1, 0.8, '#4e2e1a', mx, 2.45, z);
+      solid(x0, z - 0.4, x1, z + 0.4);
+    };
+    // aisles in the north-west, open on alternating ends so you can weave through
+    shelf(-11, -3, -8, false); shelf(-10, -2, -5.5); shelf(-11, -3.5, -3); shelf(-9.5, -2, -0.5);
+    shelf(1, 6, -8, false); shelf(1.5, 6, -5.5);
+    // a ladder against the back shelf
+    for (const x of [-6.4, -5.9]) box(root, 0.06, 2.6, 0.06, '#8d6e4f', x, 1.3, -7.5);
+    for (let k = 0; k < 6; k++) box(root, 0.56, 0.05, 0.05, '#8d6e4f', -6.15, 0.3 + k * 0.42, -7.5);
+    // the big book on its lectern
+    box(root, 0.5, 1.1, 0.5, '#5d3a22', 3.6, 0.55, -2.4); box(root, 0.9, 0.12, 0.7, '#3e2416', 3.6, 1.15, -2.4); box(root, 0.8, 0.08, 0.6, '#f5ecd9', 3.6, 1.24, -2.4);
+    h.round(3.6, -2.4, 0.5);
+    station('book', 3.6, -1.2, '📖 Breed encyclopedia');
+    // the quiz corner: a desk with an old computer
+    box(root, 1.8, 0.8, 0.9, '#6d4c41', 9.5, 0.4, -7.8); box(root, 0.7, 0.6, 0.5, '#e0e0e0', 9.5, 1.1, -7.9); box(root, 0.56, 0.42, 0.04, neon('#7cff6b', 0.5), 9.5, 1.12, -7.62);
+    solid(8.5, -8.4, 10.5, -7.2);
+    station('quiz', 9.5, -6.3, '❓ Dog quiz');
+    // the reading rug: armchairs, a lamp, a sleepy library cat on the cushion
+    fur('armchair', -9.5, 3.5, Math.PI / 2); fur('armchair', -9.5, 6.5, Math.PI / 2); fur('lamp', -10.6, 5); fur('cushion', -6, 5); fur('beanbag', -4.6, 7);
+    box(root, 0.3, 0.2, 0.5, '#757575', -6, 0.2, 5); box(root, 0.18, 0.18, 0.18, '#757575', -6, 0.32, 5.25);
+    solid(-10.2, 2.9, -8.8, 7.1);
+    // the librarian's desk
+    box(root, 3.2, 1.0, 1, '#6d4c41', 6.5, 0.5, 5); box(root, 3.4, 0.08, 1.2, '#4e2e1a', 6.5, 1.04, 5); box(root, 0.5, 0.4, 0.4, '#c0504d', 5.6, 1.25, 5); box(root, 0.3, 0.06, 0.4, '#3d7fd6', 7.5, 1.12, 5.1);
+    solid(4.9, 4.4, 8.1, 5.6);
+    staff(6.5, 3.9, 0, '#8a5cf6', '#9c9c9c');
+    station('borrow', 6.5, 6.6, '📚 Borrow a book');
+    for (const [x, z] of [[10.6, 9], [-10.6, 9], [10.6, -3]]) plant(x, z);
+    // tall windows with light on the back wall
+    for (const x of [-2, 2.5, 8]) { box(root, 1.4, 1.8, 0.06, '#ffffff', x, 2, -9.84); box(root, 1.2, 1.6, 0.07, M.window, x, 2, -9.82); }
+    return h.out();
+  }
+
+  // ----- the arcade: neon, cabinets, the claw machine, Boop-a-Mole, the dance pads, prizes -----
+  function buildArcadeHall(root) {
+    const NE = ['#ff5fa2', '#5be0ff', '#ffe24a', '#7cff6b', '#b98bff'];
+    const h = hall(root, { w: 24, d: 18, floor: ['#1c1736', '#211a40', '#18132e'], wall: ['#2a2350', '#251e48'], trim: '#ff5fa2', wallH: 3.2, outside: '#3a3346',
+      tone: (x, z) => { const k = hash2(x * 3.1, z * 1.7); return k < 0.06 ? NE[Math.floor(k * 80) % 5] : null; },
+      env: { sky: '#0c0a18', hemi: 0.62, sun: 0.38, noWeather: true, lit: true, fog: [26, 60] }, loop: { x: 4, z0: 1, z1: 6 } });
+    const { solid, station, staff, round } = h;
+    const lights = [];
+    // neon strips along the walls
+    box(root, 24, 0.1, 0.1, neon('#ff5fa2', 1.2), 0, 3.0, -8.8); box(root, 0.1, 0.1, 18, neon('#5be0ff', 1.2), -11.8, 3.0, 0);
+    box(root, 24, 0.08, 0.08, neon('#5be0ff', 1), 0, 0.25, -8.8);
+    // cabinets along the back, screens flickering
+    for (let k = 0; k < 7; k++) {
+      const x = -9 + k * 3, c = NE[k % 5];
+      box(root, 1.3, 2.2, 1.1, '#3f2a8a', x, 1.1, -8.1); box(root, 1.1, 0.7, 0.05, neon(c, 0.8), x, 1.55, -7.53); box(root, 1.32, 0.3, 1.12, neon(c, 1), x, 2.3, -8.1);
+      box(root, 1.3, 0.12, 0.6, '#2a1c60', x, 1.0, -7.4); box(root, 0.08, 0.14, 0.08, '#e53935', x - 0.3, 1.12, -7.3);
+      lights.push(box(root, 0.3, 0.3, 0.05, neon(NE[(k + 2) % 5], 1), x + 0.25, 1.6, -7.5));
+      solid(x - 0.65, -8.7, x + 0.65, -7.1);
+    }
+    // two claw machines (west)
+    for (const z of [-3, 0]) {
+      box(root, 1.6, 0.9, 1.6, '#e53935', -9.6, 0.45, z); box(root, 1.6, 1.5, 1.6, new THREE.MeshLambertMaterial({ color: '#b3e5fc', transparent: true, opacity: 0.35 }), -9.6, 1.65, z); box(root, 1.64, 0.25, 1.64, neon('#ffe24a', 1), -9.6, 2.5, z);
+      for (let k = 0; k < 6; k++) box(root, 0.28, 0.28, 0.28, ['#f4a6c6', '#9fd3f5', '#ffe082', '#b8e994', '#d7b8ff', '#f6d365'][k], -10.1 + (k % 3) * 0.5, 1.05, z - 0.3 + Math.floor(k / 3) * 0.55);
+      box(root, 0.08, 0.5, 0.08, '#cfd8dc', -9.6, 2.1, z); box(root, 0.3, 0.12, 0.3, '#cfd8dc', -9.6, 1.85, z);
+      solid(-10.4, z - 0.8, -8.8, z + 0.8);
+    }
+    station('claw', -8.1, -1.5, '🧸 Claw machine');
+    // Boop-a-Mole table
+    box(root, 2.2, 0.9, 1.6, '#43a047', -3, 0.45, 3); box(root, 2.3, 0.1, 1.7, '#ffe24a', -3, 0.92, 3);
+    const moles = [];
+    for (let k = 0; k < 6; k++) { box(root, 0.36, 0.04, 0.36, '#3e2723', -3.7 + (k % 3) * 0.7, 0.96, 2.6 + Math.floor(k / 3) * 0.75); moles.push(box(root, 0.24, 0.26, 0.24, '#9c7a5b', -3.7 + (k % 3) * 0.7, 0.9, 2.6 + Math.floor(k / 3) * 0.75)); }
+    box(root, 2.2, 1.2, 0.2, '#2e7d32', -3, 1.5, 2.15); box(root, 1.4, 0.3, 0.04, neon('#ffe24a', 0.8), -3, 1.75, 2.27);
+    solid(-4.1, 2.1, -1.9, 3.8);
+    station('mole', -3, 4.6, '🔨 Boop-a-Mole');
+    // the dance machine: lit pads on the floor and a big screen
+    const pads = [];
+    for (let k = 0; k < 9; k++) pads.push(box(root, 0.62, 0.05, 0.62, neon(NE[k % 5], 0.3), 4.3 + (k % 3) * 0.7, 0.03, -3.6 + Math.floor(k / 3) * 0.7));
+    box(root, 2.6, 2.4, 0.5, '#3f2a8a', 5, 1.2, -5.6); box(root, 2.2, 1.3, 0.05, neon('#b98bff', 0.9), 5, 1.5, -5.33); box(root, 2.7, 0.3, 0.55, neon('#ff5fa2', 1), 5, 2.5, -5.6);
+    solid(3.7, -5.9, 6.3, -5.3);
+    station('beat', 5, -1.4, '🎵 Paw Beat');
+    // the prize counter
+    box(root, 4, 1.1, 1, '#5b3fb0', 9.6, 0.55, 4); box(root, 4.2, 0.1, 1.2, neon('#ffe24a', 0.7), 9.6, 1.12, 4);
+    box(root, 4.2, 2.6, 0.4, '#2a2350', 9.6, 1.3, 6.4);
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 6; k++) box(root, 0.32, 0.32, 0.3, ['#f4a6c6', '#9fd3f5', '#ffe082', '#b8e994', '#d7b8ff', '#ffcc80'][(k + r) % 6], 7.9 + k * 0.65, 0.6 + r * 0.75, 6.2);
+    solid(7.5, 3.5, 11.7, 4.6); solid(7.5, 6.1, 11.7, 6.7);
+    staff(9.6, 5.3, Math.PI, '#ff5fa2', '#1a1a1a');
+    station('prizes', 9.6, 2.6, '🎁 Prize counter');
+    round(0, 0, 0.01);
+    const anim = (t) => {
+      lights.forEach((l, k) => { l.visible = Math.sin(t * 5 + k * 1.3) > -0.3; });
+      pads.forEach((p, k) => { p.material.emissiveIntensity = 0.25 + 0.9 * Math.max(0, Math.sin(t * 6 + k * 2.1)); });
+      moles.forEach((m, k) => { m.position.y = 0.88 + Math.max(0, Math.sin(t * 2.3 + k * 1.9)) * 0.22; });
+    };
+    return h.out({ anim });
+  }
+
+  // ----- the café upstairs: a counter with the espresso machine, the neighbors' big table -----
+  function buildCafeHall(root) {
+    const h = hall(root, { w: 18, d: 14, floor: ['#a0714a', '#996b45', '#a8774f'], wall: ['#f2dcc0', '#ecd2b2'], trim: '#5d3a22', wallH: 3.0,
+      tone: (x, z) => ((Math.floor(z) & 1) ? null : (hash2(x, z) < 0.5 ? '#8f6340' : null)), loop: { x: 3, z0: 0, z1: 4 }, outside: '#6d4c41' });
+    const { solid, station, fur, staff, plant, round } = h;
+    // the stairs you came up, going down outside the door
+    for (let k = 0; k < 4; k++) box(root, 3, 0.18, 0.5, '#8d5a34', 0, -0.1 - k * 0.2, 7.6 + k * 0.5);
+    // counter and espresso machine
+    box(root, 6, 1.1, 1, '#6d4128', 4.5, 0.55, -4.6); box(root, 6.2, 0.1, 1.2, '#f2e3c8', 4.5, 1.12, -4.6);
+    box(root, 0.9, 0.7, 0.6, '#b0bec5', 3, 1.5, -4.7); box(root, 0.7, 0.2, 0.5, '#455a64', 3, 1.95, -4.7); box(root, 0.1, 0.25, 0.1, '#263238', 2.8, 1.3, -4.35); box(root, 0.18, 0.15, 0.18, '#ffffff', 2.8, 1.2, -4.3);
+    for (let k = 0; k < 4; k++) box(root, 0.6, 0.5, 0.6, ['#f8bbd0', '#ffe082', '#c5e1a5', '#d7ccc8'][k], 4.8 + k * 0.7, 1.4, -4.7);
+    box(root, 3, 1.6, 0.08, '#263238', 4.5, 2.2, -6.9); box(root, 2.8, 1.4, 0.06, '#37474f', 4.5, 2.2, -6.85);
+    solid(1.4, -5.2, 7.6, -4);
+    staff(4.5, -5.6, 0, '#8d6e4f', '#3b2a1e');
+    station('latte', 3, -3.2, '☕ Latte art');
+    // the big table with neighbors around it
+    box(root, 3.4, 0.12, 1.6, '#8d5a34', -4, 0.78, 0.5); for (const [x, z] of [[-5.5, -0.1], [-2.5, -0.1], [-5.5, 1.1], [-2.5, 1.1]]) box(root, 0.12, 0.76, 0.12, '#6d4128', x, 0.38, z);
+    for (const [x, z] of [[-5, -0.6], [-3, -0.6]]) { fur('chair', x, z, 0); }
+    const n1 = staff(-5, 1.6, Math.PI, '#e57373', '#3b2a1e'); const n2 = staff(-3, 1.6, Math.PI, '#4db6ac', '#d9a441');
+    void n1; void n2;
+    box(root, 0.25, 0.25, 0.25, '#ffffff', -4.4, 0.95, 0.4); box(root, 0.25, 0.25, 0.25, '#ffffff', -3.4, 0.95, 0.6); box(root, 0.6, 0.15, 0.6, '#ffcc80', -4, 0.92, 0.5);
+    solid(-5.8, -0.4, -2.2, 1.4);
+    station('table', -4, 2.9, '💬 The neighbors’ table');
+    // little tables by the windows
+    for (const [x, z] of [[-6.5, -5], [-2.5, -5], [6.5, 3.5]]) { fur('table', x, z); round(x, z, 0.6); fur('chair', x + 0.9, z, -Math.PI / 2); }
+    for (const x of [-6, -2, 1]) { box(root, 1.4, 1.2, 0.06, '#ffffff', x, 1.8, -6.84); box(root, 1.2, 1.0, 0.07, M.window, x, 1.8, -6.82); }
+    box(root, 0.44, 0.1, 0.44, '#3d7fd6', 7.8, 0.05, 5.6); box(root, 0.32, 0.03, 0.32, M.water, 7.8, 0.1, 5.6);
+    plant(-8, 5.6, 0.9); plant(8, -2, 0.9);
+    return h.out();
+  }
+
+  // ----- the workshop hall: pottery wheel, sewing table, woodwork bench -----
+  function buildWorkshopHall(root) {
+    const h = hall(root, { w: 22, d: 16, floor: ['#bfa27e', '#b69871', '#c6aa87'], wall: ['#d9c3a2', '#cfb894'], trim: '#6d4c41', wallH: 3.4, loop: { x: 4, z0: 1, z1: 5 } });
+    const { solid, station, staff, round } = h;
+    // a tool wall
+    box(root, 8, 0.12, 0.2, '#6d4c41', -4, 2.4, -7.8);
+    for (let k = 0; k < 10; k++) box(root, 0.12, 0.5 + (k % 3) * 0.2, 0.08, ['#9e9e9e', '#795548', '#e53935', '#ffca28'][k % 4], -7.5 + k * 0.8, 2.0, -7.85);
+    // pottery: the wheel, shelves of pots, a kiln
+    box(root, 1.4, 0.6, 1.4, '#6d4c41', -6.5, 0.3, -3); box(root, 1.1, 0.08, 1.1, '#8d6e63', -6.5, 0.64, -3); box(root, 0.5, 0.45, 0.5, '#c86b4a', -6.5, 0.9, -3);
+    box(root, 2.4, 2, 0.6, '#8d5a34', -9.2, 1, -6.8); for (let k = 0; k < 6; k++) box(root, 0.35, 0.35, 0.35, ['#c86b4a', '#5aa9e6', '#ef6fa8', '#f5c542'][k % 4], -10 + (k % 3) * 0.75, 0.6 + Math.floor(k / 3) * 0.8, -6.6);
+    box(root, 1.4, 1.6, 1.4, '#78909c', -9.5, 0.8, -1.5); box(root, 0.8, 0.5, 0.08, neon('#ff8a3d', 0.8), -9.5, 0.7, -0.78);
+    solid(-7.2, -3.7, -5.8, -2.3); solid(-10.4, -7.2, -8, -6.4); solid(-10.2, -2.2, -8.8, -0.8);
+    station('pottery', -6.5, -1.4, '🏺 Pottery');
+    // sewing: a table with a machine and bolts of fabric
+    box(root, 2.6, 0.8, 1.2, '#a1785a', 0, 0.4, -4); box(root, 0.6, 0.4, 0.4, '#e0e0e0', -0.4, 1, -4); box(root, 0.1, 0.3, 0.1, '#9e9e9e', -0.2, 1.3, -4);
+    for (let k = 0; k < 5; k++) box(root, 0.3, 1.2, 0.3, ['#e5484d', '#3d7fd6', '#f5c542', '#3fbf7f', '#ef6fa8'][k], -1.6 + k * 0.8, 0.6, -6.6);
+    box(root, 1.4, 0.04, 1, '#ef6fa8', 0.6, 0.82, -4);
+    solid(-1.3, -4.6, 1.3, -3.4);
+    station('sewing', 0, -2.4, '🧵 Sewing');
+    staff(1.8, -5.2, 0, '#6b7a4a', '#3b2a1e');
+    // woodwork: a bench, planks, a saw, a half-painted dog house
+    box(root, 3, 0.9, 1.2, '#8d5a34', 6.5, 0.45, -4); box(root, 1.6, 0.1, 0.4, '#e3c08f', 6.2, 0.95, -4); box(root, 0.6, 0.04, 0.12, '#9e9e9e', 7.4, 0.95, -4);
+    for (let k = 0; k < 5; k++) box(root, 0.2, 2.2, 0.1, '#e3c08f', 8.6 + k * 0.25, 1.1, -7.6);
+    box(root, 1, 0.8, 1, '#7fb3d5', 9.4, 0.4, -2); box(root, 1.1, 0.3, 1.1, '#f5c542', 9.4, 0.95, -2);
+    solid(4.9, -4.7, 8.1, -3.3); solid(8.8, -2.6, 10, -1.4);
+    station('wood', 6.5, -2.4, '🪚 Woodwork');
+    // the shavings corner where dogs nap
+    for (let k = 0; k < 14; k++) box(root, 0.3, 0.06, 0.3, '#f3e2b3', 7 + (k % 5) * 0.5, 0.03, 4 + Math.floor(k / 5) * 0.5);
+    round(0, 0, 0.01);
+    return h.out();
+  }
+
+  // ----- the indoor pool: lanes, starting blocks, the diving board; dogs wait at the entrance -----
+  function buildPoolHall(root) {
+    const POOL = { x0: -9, x1: 9, z0: -7, z1: 3 };
+    const h = hall(root, { w: 26, d: 20, floor: ['#e3f2f7', '#d6ecf3', '#eaf6fa'], wall: ['#d6ecf3', '#cfe7f0'], trim: '#4fb3e0', wallH: 4.2, blocks: [POOL], loop: { x: 11, z0: 5, z1: 8.5 } });
+    const { station, staff, solid } = h;
+    box(root, 18, 0.06, 10, '#4fb3e0', 0, 0.02, -2); box(root, 18.4, 0.1, 0.2, '#ffffff', 0, 0.05, -7.1); box(root, 18.4, 0.1, 0.2, '#ffffff', 0, 0.05, 3.1);
+    for (let l = 1; l < 4; l++) for (let x = -9; x < 9; x += 0.5) box(root, 0.4, 0.08, 0.08, (x * 2) & 1 ? '#e53935' : '#ffffff', x + 0.25, 0.08, -7 + l * 2.5);
+    for (let k = 0; k < 4; k++) { box(root, 0.6, 0.5, 0.6, '#ffffff', -9.5, 0.25, -5.75 + k * 2.5); box(root, 0.3, 0.06, 0.3, ['#e53935', '#3d7fd6', '#3fbf7f', '#f5c542'][k], -9.5, 0.53, -5.75 + k * 2.5); }
+    station('swim', -10.6, -1.4, '🏊 Swim race');
+    // the diving tower at the far end
+    for (const z of [-3, -1]) box(root, 0.2, 2.6, 0.2, '#b0bec5', 10.6, 1.3, z);
+    box(root, 1.4, 0.15, 2.4, '#90a4ae', 10.6, 2.6, -2); box(root, 3.2, 0.1, 0.8, '#ffffff', 8.6, 2.7, -2);
+    for (let k = 0; k < 7; k++) box(root, 0.6, 0.06, 0.06, '#b0bec5', 11.8, 0.3 + k * 0.35, -2);
+    solid(10.2, -3.4, 12.2, -0.6);
+    station('dive', 11, 0.6, '🤸 Diving board');
+    staff(-11.5, 4.5, Math.PI / 2, '#e53935', '#1a1a1a');
+    for (let k = 0; k < 4; k++) { box(root, 2.2, 0.4, 0.6, '#ffffff', -6 + k * 4, 0.2, 9); }
+    // towels at the entrance, where dogs wait
+    for (const x of [2.8, 4.2, 5.6]) box(root, 1.1, 0.04, 0.8, ['#ff8a3d', '#ef6fa8', '#5aa9e6'][Math.round((x - 2.8) / 1.4)], x, 0.02, 11);
+    return h.out({ dogWait: [[2.8, 11], [4.2, 11], [5.6, 11], [7, 11]] });
+  }
+
+  // ----- mini golf by the sea (outdoors) -----
+  function buildGolfPlace(root) {
+    const h = hall(root, { w: 28, d: 22, floor: ['#7cc56a', '#76bf63', '#83cb70'], walls: false, outside: '#6fb4e6', outside2: '#5aa4dc',
+      tone: (x, z) => (z < -8.5 ? (hash2(x, z) < 0.5 ? '#ecd9a4' : '#e3cd93') : null),
+      env: { sky: null }, loop: { x: 9, z0: 0, z1: 8 } });
+    const { station, staff, solid, round } = h;
+    // a white picket fence around, the gate at the front
+    for (let x = -14; x <= 14; x += 0.75) { if (Math.abs(x) < 1.8) continue; box(root, 0.09, 0.6, 0.09, '#f4efe6', x, 0.3, 11.1); }
+    for (let z = -11; z <= 11; z += 0.75) { box(root, 0.09, 0.6, 0.09, '#f4efe6', -14.1, 0.3, z); box(root, 0.09, 0.6, 0.09, '#f4efe6', 14.1, 0.3, z); }
+    box(root, 28.4, 0.08, 0.08, '#f4efe6', 0, 0.45, -11.1);
+    const sign = textSprite('⛳ Paws & Putts Mini Golf', 0.6); sign.position.set(0, 2.6, 11.4); root.add(sign);
+    for (const x of [-1.8, 1.8]) box(root, 0.2, 2.2, 0.2, '#f4efe6', x, 1.1, 11.1);
+    // holes to look at: felt greens with borders, a doghouse, hydrants, a big bone
+    const green = (x, z, w, d) => { box(root, w + 0.3, 0.16, d + 0.3, '#8d5a34', x, 0.08, z); box(root, w, 0.18, d, '#43a047', x, 0.1, z); solid(x - w / 2 - 0.15, z - d / 2 - 0.15, x + w / 2 + 0.15, z + d / 2 + 0.15); };
+    green(-9, -4, 6, 3); box(root, 0.12, 0.12, 0.12, '#1b1b1b', -11, 0.2, -4); box(root, 0.05, 0.9, 0.05, '#ffffff', -11, 0.65, -4); box(root, 0.3, 0.2, 0.03, '#e53935', -10.85, 1, -4);
+    box(root, 1.2, 0.9, 1.0, '#d9a066', -7.5, 0.6, -4); box(root, 1.4, 0.3, 1.2, '#c0392b', -7.5, 1.15, -4);
+    green(8, -4, 6, 3); for (const x of [6.5, 8, 9.5]) { box(root, 0.3, 0.6, 0.3, '#e53935', x, 0.5, -4); box(root, 0.5, 0.1, 0.12, '#ffca28', x, 0.5, -4); }
+    green(-9, 5, 5, 3); box(root, 2.2, 0.35, 0.5, '#f5ecd9', -9, 0.35, 5); for (const dx of [-1.2, 1.2]) for (const dz of [-0.3, 0.3]) box(root, 0.45, 0.4, 0.45, '#f5ecd9', -9 + dx, 0.35, 5 + dz);
+    green(9, 5, 5, 3); box(root, 1.5, 0.4, 1, '#5aa9e6', 9, 0.25, 5); box(root, 1.3, 0.05, 0.8, M.water, 9, 0.46, 5);
+    // a windmill shaped like a dog's head, turning
+    box(root, 1.6, 2.2, 1.6, '#d9a441', 0, 1.1, -7); box(root, 0.4, 0.6, 0.3, '#d9a441', -0.6, 2.4, -7); box(root, 0.4, 0.6, 0.3, '#d9a441', 0.6, 2.4, -7); box(root, 0.5, 0.3, 0.2, '#2b1d14', 0, 1.4, -6.15);
+    const mill = pivot(root, 0, 1.6, -6.1);
+    for (let k = 0; k < 4; k++) { const b = box(mill, 0.3, 1.8, 0.06, '#ffffff', 0, 0.9, 0); const p2 = pivot(mill); p2.rotation.z = (k * Math.PI) / 2; p2.add(b); }
+    solid(-0.9, -7.9, 0.9, -6.1);
+    // the clubhouse: putters, scorecards
+    box(root, 4, 2.2, 2.2, '#f4efe6', 6.5, 1.1, 8.6); box(root, 4.4, 0.4, 2.6, '#e53935', 6.5, 2.4, 8.6); box(root, 3, 0.1, 0.6, '#8d5a34', 6.5, 1.1, 7.4);
+    for (let k = 0; k < 5; k++) box(root, 0.06, 1, 0.06, ['#e53935', '#3d7fd6', '#f5c542', '#3fbf7f', '#8a5cf6'][k], 5 + k * 0.4, 1.4, 7.6);
+    solid(4.4, 7.4, 8.6, 9.8);
+    staff(6.5, 9.2, Math.PI, '#ffb74d', '#6d4c41');
+    station('golf', 6.5, 6.4, '⛳ Play nine holes');
+    for (const [x, z] of [[-12.5, 9.5], [12.5, -9.5], [-12.5, -9.5]]) { voxelTree(root, x, 0, z, mulberry32(Math.round(x * 7 + z)), 0.9); round(x, z, 0.6); }
+    return h.out({ anim: (t) => { mill.rotation.z = t * 1.2; } });
+  }
+
+  // ----- the Sunday flea market (outdoors, on the park square) -----
+  function buildFleaPlace(root) {
+    const h = hall(root, { w: 26, d: 22, floor: ['#cfc2a8', '#c2b397', '#d6cab2'], walls: false, outside: '#7cc56a', outside2: '#6db85c',
+      tone: (x, z) => ((Math.floor(x) + Math.floor(z)) % 3 === 0 ? '#bfae93' : null), env: { sky: null }, loop: { x: 7, z0: 0, z1: 7 } });
+    const { station, staff, solid, round } = h;
+    const stall = (x, z, a, b, wares, seller) => {
+      for (let s = 0; s < 8; s++) box(root, 0.5, 0.1, 2.4, s % 2 ? b : a, x - 1.75 + s * 0.5, 2.5, z);
+      for (const dx of [-2, 2]) for (const dz of [-1, 1]) box(root, 0.12, 2.5, 0.12, '#8d6e4f', x + dx, 1.25, z + dz);
+      box(root, 4, 0.9, 1.2, '#a5713f', x, 0.45, z + 0.6);
+      wares.forEach((t, k) => { const g = buildItem(t); g.position.set(x - 1.3 + k * 1.3, 0.9, z + 0.6); g.scale.setScalar(0.6); root.add(g); });
+      staff(x, z - 0.5, 0, seller[0], seller[1]);
+      solid(x - 2.1, z - 1.1, x + 2.1, z + 1.25);
+    };
+    stall(-8, -6, '#e5484d', '#ffffff', ['brasslamp', 'grandclock', 'vradio'], ['#b39ddb', '#d6d6d6']);
+    stall(0, -7, '#3d7fd6', '#ffffff', ['globe', 'gramophone', 'vtrunk'], ['#8d6e4f', '#4e342e']);
+    stall(8, -6, '#f5c542', '#ffffff', ['rocker', 'velvetchair', 'lamp'], ['#4db6ac', '#1a1a1a']);
+    station('stalls', 0, -4.2, '🧺 Browse the stalls', 3.2);
+    // rugs on the ground with odds and ends, crates, bunting
+    for (const [x, z, c] of [[-9, 3, '#7b2d5a'], [9, 3, '#2f4a8a']]) { box(root, 3, 0.04, 2, c, x, 0.02, z); for (let k = 0; k < 4; k++) box(root, 0.3, 0.3, 0.3, ['#c9a227', '#8d5a34', '#90caf9', '#e8d7b0'][k], x - 1 + k * 0.6, 0.17, z); }
+    for (const [x, z] of [[-11, -1], [11, -1], [-4, 6], [4, 6]]) { box(root, 0.8, 0.6, 0.8, '#a5713f', x, 0.3, z); round(x, z, 0.5); }
+    for (let k = 0; k < 18; k++) box(root, 0.3, 0.3, 0.04, ['#e5484d', '#f5c542', '#3d7fd6', '#3fbf7f'][k % 4], -12 + k * 1.4, 3.2 - Math.sin((k / 17) * Math.PI) * 0.3, -9.5);
+    for (const [x, z] of [[-12.5, 9.5], [12.5, 9.5], [-12.5, -10], [12.5, -10]]) { voxelTree(root, x, 0, z, mulberry32(Math.round(x * 3 + z * 5)), 1); round(x, z, 0.6); }
+    const sign = textSprite('🧺 Sunday flea market', 0.6); sign.position.set(0, 2.6, 11.4); root.add(sign);
+    return h.out();
+  }
+
   function buildLocation(id, root) {
     curT = null;
     try { return buildLocationRaw(id, root); } finally { curT = null; }
   }
   function buildLocationRaw(id, root) {
+    if (/^v[a-z]+$/.test(id) && !['park'].includes(id)) return buildVenue(id, root);
     switch (id) {
       case 'oldtown': return buildOldTown(root);
       case 'forest': return buildForest(root);
@@ -4472,6 +4862,8 @@ window.VP_ART = (function () {
   // ===================================================================
   // Line icons on a 24 grid. They use currentColor, so CSS decides the color.
   const ICON_PATHS = {
+    door: '<path d="M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17M4 21h16"/><circle cx="14.5" cy="12.5" r=".9" fill="currentColor"/>',
+    turn: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/>',
     stairs: '<path d="M4 20h4v-4h4v-4h4V8h4V4"/><path d="M4 20V16"/>',
     wall: '<rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 12h18M9 5v7M15 12v7"/>',
     fish: '<path d="M3 12c3-5 9-6 13-2l5-3v10l-5-3c-4 4-10 3-13-2z"/><circle cx="8" cy="11" r=".8" fill="currentColor"/>',
@@ -4846,6 +5238,7 @@ window.VP_ART = (function () {
   }
   const hasThumb = (kind, id) => thumbCache.has(kind + ':' + id);
   const dropThumb = (kind, id) => thumbCache.delete(kind + ':' + id);
+  const addIcons = (o) => { for (const [k, v] of Object.entries(o || {})) if (!ICON_PATHS[k]) ICON_PATHS[k] = v; };
   function drawThumb(kind, id) {
     const g = new THREE.Group();
     switch (kind) {
@@ -4906,7 +5299,7 @@ window.VP_ART = (function () {
 
   return {
     mulberry32, geo, mat, box, pivot, blob, emojiTexture, emojiSprite, textSprite, setSpriteText, M,
-    buildItem, setCustom, dropThumb, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, buildDuck, buildBottle, buildBed, buildPlant, coatOf, buildSnowman, buildCatchable, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
+    buildItem, setCustom, dropThumb, addIcons, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, buildDuck, buildBottle, buildBed, buildPlant, coatOf, buildSnowman, buildCatchable, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
     icon, thumbURL, hasThumb, scentFX, setScentGold,
