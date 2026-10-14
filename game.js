@@ -459,6 +459,23 @@
     const cal = calOf(gameDay);
     return { dateKey: `${p.year}-${p.month}-${p.day}`, month: cal.month, day: cal.day, year: cal.year, realMonth: +p.month, hour, realHour, gameDay, weekday: WEEKDAYS[((gameDay % 7) + 7) % 7], hm: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` };
   }
+  // when something happened, in the game's time: "just now", "Today, 09:41", "Yesterday, 18:02", "Mon 12 Oct, 09:41"
+  const whenFmt = (() => { try { return new Intl.DateTimeFormat('en-GB', { timeZone: CONFIG.TIME_ZONE, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); } catch (_) { return null; } })();
+  const dayKeyOf = (t) => { if (!berlinFmt) return new Date(t).toDateString(); const p = {}; for (const x of berlinFmt.formatToParts(new Date(t))) p[x.type] = x.value; return `${p.year}-${p.month}-${p.day}`; };
+  const clockOf = (t) => { if (!berlinFmt) { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } const p = {}; for (const x of berlinFmt.formatToParts(new Date(t))) p[x.type] = x.value; return `${String(+p.hour % 24).padStart(2, '0')}:${p.minute}`; };
+  function whenText(t) {
+    if (!t) return '';
+    const ago = Date.now() - t;
+    if (ago < 60000) return 'just now';
+    if (ago < 3600000) return `${Math.round(ago / 60000)} min ago`;
+    const k = dayKeyOf(t);
+    if (k === dayKeyOf(Date.now())) return `Today, ${clockOf(t)}`;
+    if (k === dayKeyOf(Date.now() - 86400000)) return `Yesterday, ${clockOf(t)}`;
+    if (!whenFmt) return new Date(t).toLocaleString();
+    const p = {}; for (const x of whenFmt.formatToParts(new Date(t))) p[x.type] = x.value;
+    return `${p.weekday} ${p.day} ${p.month}, ${p.hour}:${p.minute}`;
+  }
+  const minsLeft = (until) => Math.max(0, Math.ceil((until - Date.now()) / 60000));
   const CALD = D.CAL.monthDays, CALY = D.CAL.monthDays * 12;
   const CAL_BASE = Math.floor(Date.UTC(2026, 9, 1) / 3600000 / (D.CAL.monthDays * 12)) - 1;
   function calOf(gd) {
@@ -522,9 +539,9 @@
     if (E && E.sky) world.background.copy(envColor.set(E.sky)).lerp(L.sky, E.dark ? 0 : 0.15 * L.night);
     if (lightning) world.background.lerp(new THREE.Color('#ffffff'), 0.5);
     // nights are properly dark, so lamps, lanterns and flashlights make a difference
-    const deep = E && E.dark ? 0 : L.night * (place === 'home' ? 0.42 : 0.38);
-    hemiLight.intensity = (E && E.hemi != null ? E.hemi * (E.dark ? 1 : 1 - 0.4 * L.night) : L.hemi) * (1 - deep) + lightning * 0.8;
-    sunLight.intensity = (E && E.sun != null ? E.sun * (E.dark ? 1 : 1 - 0.5 * L.night) : L.sun) * (1 - deep) + lightning * 1.2;
+    const deep = E && (E.dark || E.lit) ? 0 : L.night * (place === 'home' ? 0.42 : 0.38);
+    hemiLight.intensity = (E && E.hemi != null ? E.hemi * (E.dark || E.lit ? 1 : 1 - 0.4 * L.night) : L.hemi) * (1 - deep) + lightning * 0.8;
+    sunLight.intensity = (E && E.sun != null ? E.sun * (E.dark || E.lit ? 1 : 1 - 0.5 * L.night) : L.sun) * (1 - deep) + lightning * 1.2;
     ART.M.lamp.emissiveIntensity = 0.65 + (E && E.dark ? 1 : L.night) * 0.9;
     ART.M.window.color.copy(dayWindow).lerp(nightWindow, L.night);
     playerLight.visible = !!(E && E.dark);
@@ -851,7 +868,7 @@
     const p = player.root.position;
     const cut = mode === 'build' || mode === 'decorate';
     const pcx = Math.floor(p.x / CHUNK), pcz = Math.floor(p.z / CHUNK);
-    const key = Object.entries(W).map((e) => e.join(':')).join('|') + '/' + (cut ? 'c' : pcx + ',' + pcz) + '/' + H.chunks.length + '/' + Object.keys(H.rooms || {}).length;
+    const key = Object.entries(W).map((e) => e.join(':')).join('|') + '/' + (cut ? 'c' : pcx + ',' + pcz) + '/' + H.chunks.length + '/' + Object.keys(H.rooms || {}).length + '/' + viewRot();
     if (!force && key === innerWallKey) return;
     innerWallKey = key;
     innerWallGroup.clear();
@@ -861,7 +878,9 @@
       const a = [x, z], b = east ? [x + 1, z] : [x, z + 1];
       if (!hasChunk(...a) || !hasChunk(...b)) continue;
       // in front of you = the wall's line is south or east of where you stand
-      const front = cut || (east ? (x + 1) * CHUNK > p.x && Math.abs((z + 0.5) * CHUNK - p.z) < CHUNK * 1.6 : (z + 1) * CHUNK > p.z && Math.abs((x + 0.5) * CHUNK - p.x) < CHUNK * 1.6) && !(east ? pcx === x + 1 : pcz === z + 1);
+      // in front = between you and the camera (the camera can be turned at home)
+      const sx = camOffsetDirTo().x >= 0 ? 1 : -1, sz = camOffsetDirTo().z >= 0 ? 1 : -1;
+      const front = cut || (east ? sx * ((x + 1) * CHUNK - p.x) > 0 && Math.abs((z + 0.5) * CHUNK - p.z) < CHUNK * 1.6 : sz * ((z + 1) * CHUNK - p.z) > 0 && Math.abs((x + 0.5) * CHUNK - p.x) < CHUNK * 1.6);
       const h = front ? 0.45 : 2.4;
       const sideStyle = (c) => (isGardenChunk(...c) ? null : roomStyle(...c));
       const sA = sideStyle(a), sB = sideStyle(b);
@@ -895,7 +914,125 @@
     }
   }
 
+  // ----- the front door, and which outer walls stand -----
+  const SIDE_N = { n: [0, -1], s: [0, 1], w: [-1, 0], e: [1, 0] };
+  function isBackSide(side) {
+    const a = viewAngTo, c = Math.cos(a), sn = Math.sin(a);
+    const ox = CAM_BASE.x * c + CAM_BASE.z * sn, oz = -CAM_BASE.x * sn + CAM_BASE.z * c;
+    const [nx, nz] = SIDE_N[side];
+    return nx * ox + nz * oz < 0;
+  }
+  // a door can go on any outer side of a room downstairs (not a garden, and not where another room joins)
+  const doorOK = (D0) => !!D0 && SIDE_N[D0.side] && hasChunk(D0.cx, D0.cz) && !isUpChunk(D0.cx) && !isGardenChunk(D0.cx, D0.cz) && !hasChunk(D0.cx + SIDE_N[D0.side][0], D0.cz + SIDE_N[D0.side][1]) && D0.u >= 0 && D0.u < CHUNK;
+  function doorSpot() {
+    const H = home();
+    if (doorOK(H.door)) return H.door;
+    // the default: the side that faces you at first (south), in the middle of the front-most room
+    const down = H.chunks.filter(([cx, cz]) => !isUpChunk(cx) && !isGardenChunk(cx, cz));
+    const cands = [];
+    for (const [cx, cz] of down) for (const side of ['s', 'e', 'w', 'n']) if (doorOK({ cx, cz, side, u: 2 })) cands.push({ cx, cz, side, u: 2 });
+    cands.sort((a, b) => ['s', 'e', 'w', 'n'].indexOf(a.side) - ['s', 'e', 'w', 'n'].indexOf(b.side) || b.cz - a.cz || a.cx - b.cx);
+    return cands[0] || null;
+  }
+  // the door's cell inside, and the line along the wall
+  function doorGeo(Dr) {
+    const C = CHUNK, x0 = Dr.cx * C, z0 = Dr.cz * C;
+    switch (Dr.side) {
+      case 'n': return { i: x0 + Dr.u, j: z0, ex: x0 + Dr.u + 0.5, ez: z0, out: [0, -1], along: 'x' };
+      case 's': return { i: x0 + Dr.u, j: z0 + C - 1, ex: x0 + Dr.u + 0.5, ez: z0 + C, out: [0, 1], along: 'x' };
+      case 'w': return { i: x0, j: z0 + Dr.u, ex: x0, ez: z0 + Dr.u + 0.5, out: [-1, 0], along: 'z' };
+      default: return { i: x0 + C - 1, j: z0 + Dr.u, ex: x0 + C, ez: z0 + Dr.u + 0.5, out: [1, 0], along: 'z' };
+    }
+  }
+  const doorInside = () => { const Dr = doorSpot(); if (!Dr) return null; const g = doorGeo(Dr); return new V3(g.i + 0.5, 0, g.j + 0.5); };
+  const nearDoor = (pp) => { const p = doorInside(); return !!p && place === 'home' && !visit && !isUpX(pp.x) && flatDist(pp, p) < 1.05; };
+  // where you come in: just inside the front door (or the middle of the first room)
+  function homeEntry() { const p = doorInside(); return p ? freeNear(p.x, p.z) : freeNear(CHUNK / 2, CHUNK - 1.2); }
+  function placeAtDoor() {
+    const Dr = doorSpot();
+    player.root.position.copy(homeEntry());
+    const o = Dr ? doorGeo(Dr).out : [0, 1];
+    player.root.rotation.y = player.face = Math.atan2(-o[0], -o[1]);
+  }
+  // spots for the dogs just inside the door, a little further in each
+  function entryNear(i) {
+    const p = doorInside();
+    if (!p) return freeNear(clamp(CHUNK / 2 - 0.7 + i * 0.5, 0.5, CHUNK - 0.5), CHUNK - 2);
+    const o = doorGeo(doorSpot()).out;
+    const side = [o[1], -o[0]];
+    return freeNear(p.x - o[0] * 1.2 + side[0] * (i - 1) * 0.6, p.z - o[1] * 1.2 + side[1] * (i - 1) * 0.6);
+  }
+  function outerWall(cx, cz, side, st, W, n, back) {
+    const C = CHUNK, h = C / 2, x0 = cx * C, z0 = cz * C;
+    const Dr = doorSpot(), here = Dr && Dr.cx === cx && Dr.cz === cz && Dr.side === side ? Dr : null;
+    const along = side === 'n' || side === 's' ? 'x' : 'z';
+    const line = side === 'n' ? z0 : side === 's' ? z0 + C : side === 'w' ? x0 : x0 + C;
+    const out = side === 'n' || side === 'w' ? -1 : 1;
+    const seg = (u0, u1, hh, mat, y, thick = 0.2) => {
+      const len = u1 - u0, mid = (along === 'x' ? x0 : z0) + (u0 + u1) / 2, off = line + out * thick / 2;
+      if (along === 'x') box(roomGroup, len, hh, thick, mat, mid, y, off);
+      else box(roomGroup, thick, hh, len, mat, off, y, mid);
+    };
+    const pieces = here ? [[-0.2, here.u], [here.u + 1, C + 0.2]] : [[-0.2, C + 0.2]];
+    if (back) {
+      for (const [a, b] of pieces) {
+        if (b - a < 0.01) continue;
+        seg(a, b, 2.4, ART.wallMaterial(st.wall, b - a), 1.2);
+        seg(a, b, 0.16, W.trim, 0.08, 0.26);
+        seg(a, b, 0.1, W.trim, 2.43, 0.26);
+      }
+      if (here) { seg(here.u, here.u + 1, 0.3, ART.wallMaterial(st.wall, 1), 2.25); seg(here.u - 0.02, here.u + 1.02, 0.1, W.trim, 2.43, 0.26); }
+      // a window on long sides, a little painting on the others (not where the door is)
+      const mid = here && Math.abs(here.u + 0.5 - h) < 1.2 ? (here.u + 0.5 < h ? h + 1.4 : h - 1.4) : h;
+      const inward = -out * 0.03;
+      const at = (u, y) => (along === 'x' ? [x0 + u, y, line + inward] : [line + inward, y, z0 + u]);
+      if (along === 'x') {
+        const [px, py, pz] = at(mid, 1.45);
+        box(roomGroup, 1.2, 0.95, 0.06, '#ffffff', px, py, pz);
+        box(roomGroup, 1.02, 0.77, 0.07, ART.M.window, px, py, pz + Math.sign(inward) * 0.01);
+        box(roomGroup, 0.06, 0.77, 0.08, '#ffffff', px, py, pz + Math.sign(inward) * 0.015);
+        box(roomGroup, 1.02, 0.06, 0.08, '#ffffff', px, py, pz + Math.sign(inward) * 0.015);
+      } else {
+        const [px, py, pz] = at(mid, 1.5);
+        box(roomGroup, 0.06, 0.66, 0.86, '#8a5a3b', px, py, pz);
+        box(roomGroup, 0.07, 0.5, 0.7, ARTS[(n + cx + cz + 8) % ARTS.length], px + Math.sign(inward) * 0.005, py, pz);
+      }
+    } else {
+      for (const [a, b] of pieces) if (b - a > 0.01) seg(Math.max(0, a), Math.min(C, b), 0.14, W.trim, -0.06, 0.08);
+    }
+    if (here) drawDoor(here, back, W);
+  }
+  function drawDoor(Dr, back, W) {
+    const g = doorGeo(Dr), [ox, oz] = g.out;
+    const grp = pivot(roomGroup, g.ex, 0, g.ez);
+    grp.rotation.y = Math.atan2(ox, oz);   // local +z points outside
+    const col = home().doorColor || '#8a5a3b';
+    for (const x of [-0.52, 0.52]) box(grp, 0.1, 2.2, 0.26, W.trim, x, 1.1, 0);
+    box(grp, 1.14, 0.12, 0.26, W.trim, 0, 2.2, 0);
+    // the door stands a little open when you're right next to it
+    const hinge = pivot(grp, -0.46, 0, 0.02);
+    box(hinge, 0.92, 2.1, 0.08, col, 0.46, 1.05, 0);
+    box(hinge, 0.7, 0.8, 0.02, shadeHex(col, 0.85), 0.46, 1.45, 0.05);
+    box(hinge, 0.7, 0.7, 0.02, shadeHex(col, 0.85), 0.46, 0.55, 0.05);
+    box(hinge, 0.08, 0.08, 0.06, '#f5c542', 0.82, 1.05, -0.06);
+    box(hinge, 0.08, 0.08, 0.06, '#f5c542', 0.82, 1.05, 0.08);
+    doorHinge = hinge;
+    // a doormat outside and one inside, and a little step
+    box(grp, 1.1, 0.03, 0.6, '#b5651d', 0, 0.015, 0.45);
+    box(grp, 0.9, 0.035, 0.45, '#8d4e1f', 0, 0.02, 0.45);
+    box(grp, 1.0, 0.025, 0.5, '#c9a882', 0, 0.012, -0.4);
+    if (!back) { for (const x of [-0.85, 0.85]) box(grp, 0.6, 0.45, 0.2, W.trim, x, 0.22, -0.1); }
+  }
+  let doorHinge = null;
+  const shadeHex = (hex, k) => '#' + [1, 3, 5].map((i) => Math.round(clamp(parseInt(hex.slice(i, i + 2), 16) * k, 0, 255)).toString(16).padStart(2, '0')).join('');
+  function updateDoor(dt) {
+    if (!doorHinge || place !== 'home') return;
+    const open = nearDoor(player.root.position) || dogs.some((d) => nearDoor(d.root.position));
+    doorHinge.rotation.y = lerp(doorHinge.rotation.y, open ? -1.2 : 0, damp(0.002, dt));
+  }
+
   function buildRoom() {
+    doorHinge = null;
     roomGroup.clear();
     gridGroup.clear();
     const C = CHUNK, h = C / 2;
@@ -920,27 +1057,12 @@
       grid.position.set(x0 + h, 0.012, z0 + h);
       gridGroup.add(grid);
 
-      const westOpen = hasChunk(cx - 1, cz);
-      if (!hasChunk(cx, cz - 1)) {
-        const xs = westOpen ? x0 : x0 - 0.2, len = x0 + C - xs, mid = xs + len / 2;
-        box(roomGroup, len, 2.4, 0.2, ART.wallMaterial(st.wall, len), mid, 1.2, z0 - 0.1);
-        box(roomGroup, len, 0.16, 0.26, W.trim, mid, 0.08, z0 - 0.1);
-        box(roomGroup, len + 0.04, 0.1, 0.26, W.trim, mid, 2.43, z0 - 0.1);
-        box(roomGroup, 1.2, 0.95, 0.06, '#ffffff', x0 + h, 1.45, z0 + 0.02);
-        box(roomGroup, 1.02, 0.77, 0.07, ART.M.window, x0 + h, 1.45, z0 + 0.03);
-        box(roomGroup, 0.06, 0.77, 0.08, '#ffffff', x0 + h, 1.45, z0 + 0.035);
-        box(roomGroup, 1.02, 0.06, 0.08, '#ffffff', x0 + h, 1.45, z0 + 0.035);
+      // outer walls: the sides facing away from the camera are full walls, the ones in front are cut away
+      for (const side of ['n', 'w', 's', 'e']) {
+        const [ndx, ndz] = SIDE_N[side];
+        if (hasChunk(cx + ndx, cz + ndz)) continue;
+        outerWall(cx, cz, side, st, W, n, isBackSide(side));
       }
-      if (!westOpen) {
-        box(roomGroup, 0.2, 2.4, C, ART.wallMaterial(st.wall, C), x0 - 0.1, 1.2, z0 + h);
-        box(roomGroup, 0.26, 0.16, C, W.trim, x0 - 0.1, 0.08, z0 + h);
-        box(roomGroup, 0.26, 0.1, C, W.trim, x0 - 0.1, 2.43, z0 + h);
-        box(roomGroup, 0.06, 0.66, 0.86, '#8a5a3b', x0 + 0.03, 1.5, z0 + h);
-        box(roomGroup, 0.07, 0.5, 0.7, ARTS[(n + cx + cz + 8) % ARTS.length], x0 + 0.035, 1.5, z0 + h);
-        box(roomGroup, 0.08, 0.16, 0.16, '#ffffff', x0 + 0.04, 1.58, z0 + h + 0.15);
-      }
-      if (!hasChunk(cx, cz + 1)) box(roomGroup, C, 0.14, 0.08, W.trim, x0 + h, -0.06, z0 + C + 0.04);
-      if (!hasChunk(cx + 1, cz)) box(roomGroup, 0.08, 0.14, C + 0.08, W.trim, x0 + C + 0.04, -0.06, z0 + h + 0.04);
     });
     buildStairs();
     buildInnerWalls(true);
@@ -1105,7 +1227,7 @@
   const hasGadget = (id) => (state.gadgets || []).includes(id);
   const wearsMiner = () => Object.values((state.look && state.look.outfit) || {}).some((id) => D.OUTFITS[id] && D.OUTFITS[id].model === 'miner');
   const dogLamp = (d) => !!d.acc && (d.acc.head === 'headlamp' || d.acc.head === 'minerhat');
-  const walkDark = () => place === 'park' && (nightLevel > 0.45 || !!(S && S.env && S.env.dark));
+  const walkDark = () => place === 'park' && !(S && S.env && S.env.lit) && (nightLevel > 0.45 || !!(S && S.env && S.env.dark));
   function walkLit() { return hasGadget('flashlight') || wearsMiner() || dogs.some(dogLamp); }
   function nightHidesSpots() { return walkDark() && !walkLit(); }
   const lv = new V3();
@@ -1226,9 +1348,16 @@
   }
   let loc = 'park';
   let S = null, parkColliders = [], sniffSpots = [], parkWater = null;
+  // the player places, as places you walk around in (scene ids start with v: vmall, vpool…)
+  const VLOC = {
+    vcafe: { name: 'Café Pfote upstairs', icon: '☕', walkers: [0, 1], indoor: true }, vmall: { name: 'Old Town Mall', icon: '🛍️', walkers: [2, 3], indoor: true },
+    vlibrary: { name: 'Town library', icon: '📚', walkers: [0, 1], indoor: true }, varcade: { name: 'Pixel Arcade', icon: '🕹️', walkers: [0, 1], indoor: true },
+    vminigolf: { name: 'Mini golf', icon: '⛳', walkers: [1, 2] }, vflea: { name: 'Sunday flea market', icon: '🧺', walkers: [2, 3] },
+    vworkshop: { name: 'Workshop hall', icon: '🔨', walkers: [0, 1], indoor: true }, vpool: { name: 'Indoor pool', icon: '🏊', walkers: [0, 0], indoor: true },
+  };
   function useScene(id) {
     if (S) S.root.visible = false;
-    loc = D.LOCATIONS[id] ? id : 'park';
+    loc = D.LOCATIONS[id] || VLOC[id] ? id : 'park';
     S = sceneOf(loc);
     parkRoot = S.root;
     parkColliders = S.colliders;
@@ -1236,7 +1365,7 @@
     parkWater = S.water;
   }
   useScene('park');
-  const LOC = () => D.LOCATIONS[loc] || D.LOCATIONS.park;
+  const LOC = () => D.LOCATIONS[loc] || VLOC[loc] || D.LOCATIONS.park;
   const inPond = (x, z, m = 0) => S.ponds.some((p) => x > p.x0 - m && x < p.x1 + m && z > p.z0 - m && z < p.z1 + m);
   const onPath = (x, z) => S.onPath(x, z);
   const locUnlocked = (id) => id === 'park' || (state.unlocked || []).includes(id);
@@ -1801,9 +1930,34 @@
   window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
 
   const joy = { active: false, x: 0, y: 0 };
-  const camOffsetDir = new V3(0.42, 1.15, 1).normalize();
+  const CAM_BASE = new V3(0.42, 1.15, 1).normalize();
+  const camOffsetDir = CAM_BASE.clone();
   const camFwd = new V3(-camOffsetDir.x, 0, -camOffsetDir.z).normalize();
   const camRight = new V3().crossVectors(camFwd, new V3(0, 1, 0)).normalize();
+  // turning the view at home: a quarter turn at a time, gliding there
+  let viewAng = 0, viewAngTo = 0;
+  function setViewAngle(a) {
+    viewAng = a;
+    const c = Math.cos(a), sn = Math.sin(a);
+    camOffsetDir.set(CAM_BASE.x * c + CAM_BASE.z * sn, CAM_BASE.y, -CAM_BASE.x * sn + CAM_BASE.z * c);
+    camFwd.set(-camOffsetDir.x, 0, -camOffsetDir.z).normalize();
+    camRight.crossVectors(camFwd, new V3(0, 1, 0)).normalize();
+  }
+  const camOffsetDirTo = () => { const c = Math.cos(viewAngTo), sn = Math.sin(viewAngTo); return { x: CAM_BASE.x * c + CAM_BASE.z * sn, z: -CAM_BASE.x * sn + CAM_BASE.z * c }; };
+  const viewRot = () => ((Math.round(viewAngTo / (Math.PI / 2)) % 4) + 4) % 4;
+  function turnView() {
+    if (place !== 'home') return;
+    viewAngTo += Math.PI / 2;
+    state.viewRot = viewRot();
+    buildRoom();
+    sfx('whoosh');
+    save();
+  }
+  function useHomeView(on) {
+    viewAngTo = on ? ((state.viewRot || 0) * Math.PI) / 2 : 0;
+    setViewAngle(viewAngTo);
+    $('turnBtn').classList.toggle('hidden', !on);
+  }
 
   function updatePlayer(dt) {
     if (quirk.sled) return; // sledding moves you
@@ -2100,8 +2254,8 @@
       let joy = def.happy || 15;
       if (this.flag('bored')) {
         if (this.lastToys.length >= 3 && this.lastToys.slice(-3).every((t) => t === type)) {
-          joy *= 0.4;
-          if (Math.random() < 0.5) toast(`${this.name} is getting bored of the ${def.name} 🥱`);
+          joy *= 0.65;
+          if (Math.random() < 0.15) toast(`${this.name} would love a different toy for a change 🎾`);
         }
         if (first) joy += 10;
       }
@@ -2238,7 +2392,7 @@
     tickNeeds(dt) {
       const W = place === 'park' ? localWeather() : curWeather();
       const pup = this.isPuppy();
-      if (place === 'park') {
+      if (place === 'park' && !venueId) {
         const R = D.NEEDS.park, X = LOC().needs || {};
         const nm = this.needMul();
         this.hunger -= R.hunger * this.mod('hunger') * (X.hunger || 1) * nm * dt;
@@ -2264,7 +2418,7 @@
         else this.energy -= R.energy * this.mod('energy') * (pup ? 1.4 : 1) * nm * dt;
         this.clean -= R.clean * dt;
         const pos = this.root.position;
-        if (W.precip && isGardenTile(Math.floor(pos.x), Math.floor(pos.z))) {
+        if (W.precip && !venueId && isGardenTile(Math.floor(pos.x), Math.floor(pos.z))) {
           const g = 0.03 * dt * (this.acc.body && D.ACCESSORIES[this.acc.body].rainproof ? 0.5 : 1);
           this.clean -= g;
           this.dirt[W.muddy ? 'mud' : 'grass'] += g;
@@ -2272,7 +2426,9 @@
         const needy = this.hunger < LOW || this.thirst < LOW || this.energy < CRITICAL;
         let decay = needy ? R.needyDecay : R.happyDecay;
         if (this.clean < 50) decay += 0.04 * this.mod('dirtMood');
-        if (this.flag('lonely')) decay += dogs.length === 1 ? 0.05 : -0.04;
+        if (this.flag('lonely')) decay += dogs.length === 1 ? (homeFun >= 2 ? 0 : 0.02) : -0.04;
+        // a home with things to do (toys, a TV, a sofa, a garden…) keeps spirits up by itself
+        decay -= 0.008 * homeFun;
         if (this.state === 'hide') decay += 0.05;
         if (this.state === 'lounge') decay -= 0.05;
         if (W.precip === 'rain' && this.flag('rainJoy') && isGardenTile(Math.floor(pos.x), Math.floor(pos.z))) decay -= 0.03;
@@ -2566,6 +2722,7 @@
         const spot = frontOf(tb);
         if (spot) { this.goTo(spot, 2, () => pullToyOut(this, tb), 0.45); return; }
       }
+      if (!visit && this.happy < 78 && Math.random() < 0.6 && cheerUpIdea(this)) return;
       if (!visit && gardenDogIdea(this)) return;
       if (!visit && critterChaseIdea(this)) return;
       if (this.flag('digs') && !visit && Object.keys(state.gardens).length && Math.random() < 0.12) {
@@ -3382,6 +3539,7 @@
   function spawnWalkers() {
     clearWalkers();
     const [lo, hi] = LOC().walkers || [3, 5];
+    if (!hi) return;
     const W = curWeather();
     // fewer neighbors are out in bad weather or at night
     const fewer = (W.lightning ? 3 : W.precip ? 1 : 0) + (nightLevel > 0.5 ? 1 : 0);
@@ -3450,7 +3608,7 @@
       w.parts.armL.rotation.x = -s * 0.8;
       w.parts.armR.rotation.x = -0.45;
       benchPose(w);
-      if (!w.met && pos.distanceTo(pp) < 2.2) { w.met = true; if (!storyMeet(w)) neighborGift(w); }
+      if (!w.met && pos.distanceTo(pp) < 2.2) { w.met = true; if (w.noDog || !storyMeet(w)) neighborGift(w); }
       w.label.visible = pos.distanceTo(pp) < 9;
       // neighbors slow down for a moment when they pass you, so you can say hi
       if (terrainOn()) pos.y = layerH(pos.x, pos.z, pos.y);
@@ -4128,7 +4286,7 @@
     const t = houseTier(), cur = D.HOUSE_TIERS[t];
     const upTxt = (T) => (T.up ? ` + ${T.up} upstairs` : '');
     $('hsNow').innerHTML = `<div class="ic">${IC('home')}</div><div class="txt"><b>${esc(cur.name)}</b><small>${t ? esc(cur.perk) : 'Upgrade it to fit more rooms and make life nicer for your dogs.'} · room for ${cur.rooms} rooms${upOpen() ? upTxt(cur) : ''}</small>` +
-      (unlockedFeat('rooms') && !visit ? `<button class="small" data-act="rooms">${IC('crane')} Rooms: add, move, walls${upOpen() ? ', stairs' : ''}</button>` : '') + `</div>`;
+      (unlockedFeat('rooms') && !visit ? `<button class="soft small" data-act="rooms">${IC('crane')} Rooms, walls, door${upOpen() ? ', stairs' : ''}</button>` : '') + `</div>`;
     $('hsList').innerHTML = D.HOUSE_TIERS.map((T, i) => {
       if (i === 0) return '';
       const done = i <= t, next = i === t + 1;
@@ -4625,6 +4783,47 @@
       }
     }
   }
+  // ----- the dog bubbles: small when the pack is big, a "+3" to see the rest; a dog you're looking after sits below, marked -----
+  let packOpenAll = false, packKey = '';
+  function layoutPack() {
+    const P = $('pack');
+    if (!P) return;
+    const shown = dogs.filter((d) => d.ui && d.ui.el.style.display !== 'none');
+    const n = shown.length, many = n > 3, lots = n > 6;
+    const T = state.sitting, sd = sitDog || parkedSit, N = T && D.NEIGHBORS.find((x) => x.owner === T.owner);
+    const key = `${n}|${many}|${lots}|${packOpenAll}|${sd ? sd.name : ''}|${T && T.until ? minsLeft(T.until) : ''}|${!!parkedSit}|${T && T.ready}`;
+    if (key === packKey) return;
+    packKey = key;
+    P.classList.toggle('many', many);
+    shown.forEach((d, i) => d.ui.el.classList.toggle('packHide', lots && !packOpenAll && i >= 5 && !d.ui.open));
+    let more = document.getElementById('packMore');
+    if (lots) {
+      if (!more) { more = document.createElement('button'); more.id = 'packMore'; more.className = 'packMore'; more.addEventListener('click', () => { packOpenAll = !packOpenAll; packKey = ''; layoutPack(); }); }
+      more.textContent = packOpenAll ? 'Less' : `+${n - 5}`;
+      P.appendChild(more);
+    } else if (more) more.remove();
+    let sp = document.getElementById('sitPill');
+    if (sd && N) {
+      if (!sp) {
+        sp = document.createElement('button');
+        sp.id = 'sitPill';
+        sp.className = 'sitPill';
+        sp.addEventListener('click', sitPillInfo);
+      }
+      const left = T.ready ? 'Pick-up' : T.until ? (minsLeft(T.until) >= 60 ? `${Math.floor(minsLeft(T.until) / 60)}h ${minsLeft(T.until) % 60}m` : `${minsLeft(T.until)} min`) : '';
+      sp.innerHTML = `<img class="portrait" src="${ART.portraitURL(N.dog.breed, N.dog.coat)}" alt=""><span class="sitTxt"><b>${esc(N.dog.name)}</b><small>${esc(N.owner)}’s dog${parkedSit ? ' · at home' : ''}</small></span>${left ? `<span class="sitTime">${esc(left)}</span>` : ''}`;
+      sp.classList.toggle('away', !!parkedSit);
+      P.appendChild(sp);
+    } else if (sp) sp.remove();
+  }
+  function sitPillInfo() {
+    const T = state.sitting, sd = sitDog || parkedSit, N = T && D.NEIGHBORS.find((x) => x.owner === T.owner);
+    if (!T || !N) return;
+    const needs = sd ? D.STATS.filter((st) => sd[st.k] < LOW).map((st) => st.name.toLowerCase()) : [];
+    const when = T.ready ? `${T.owner} is here to pick ${N.dog.name} up` : T.until ? `${T.owner} picks ${N.dog.name} up at ${clockOf(T.until)} (in ${minsLeft(T.until)} min)` : `${T.owner} is dropping ${N.dog.name} off at your home`;
+    toast(`${N.dog.name}: ${when}.${needs.length ? ` Could use: ${needs.join(', ')}.` : ' All happy!'}`);
+    if (sitDog) camFocus = { dog: sitDog, t: 2.5 };
+  }
   // Tapping an alert icon: glide to the dog and point at what it needs
   function focusDog(d, k) {
     selected = d;
@@ -4757,6 +4956,48 @@
       return new V3(i + 0.5, 0, j + 0.5);
     }
     return null;
+  }
+  // how much there is to do at home: counted now and then, it softens boredom for every dog
+  let homeFun = 0, homeFunT = 0;
+  function countHomeFun() {
+    const F = home().furniture, has = (fn) => F.some(fn);
+    homeFun = [has((f) => f.type === 'toybox'), has((f) => f.type === 'tv'), has((f) => D.ITEMS[f.type].lounge), state.toys.length >= 3,
+      Object.keys(state.gardens || {}).length > 0, has((f) => D.ITEMS[f.type].agility || f.type === 'digpit'), has((f) => ['piano', 'guitar', 'jukebox', 'aquarium', 'bigplush'].includes(f.type))].filter(Boolean).length;
+  }
+  // a dog that's a little down finds something to do on its own: a toy, the sofa, the TV, the garden, a friend
+  function cheerUpIdea(d) {
+    const F = home().furniture, ideas = [];
+    const tb = F.find((f) => f.type === 'toybox');
+    if (tb && state.toys.length && state.clutter.filter((c) => c.kind === 'toy').length < D.CLUTTER_MAX) ideas.push(['toybox', 3, tb]);
+    const loose = state.clutter.find((c) => c.kind === 'toy' && !dogs.some((o) => o.playing === c));
+    if (loose) ideas.push(['toy', 3, loose]);
+    if (F.some((f) => f.type === 'tv')) ideas.push(['tv', 2]);
+    if (F.some((f) => D.ITEMS[f.type].lounge)) ideas.push(['sofa', 2]);
+    if (Object.keys(state.gardens || {}).length) ideas.push(['garden', 2]);
+    const pal = dogs.find((o) => o !== d && ['idle', 'sit', 'wander', 'lounge'].includes(o.state) && o.energy > 30 && !isRival(d, o));
+    if (pal && d.energy > 30) ideas.push(['pal', 3, pal]);
+    ideas.push(['self', 1]);
+    let r = Math.random() * ideas.reduce((s2, x) => s2 + x[1], 0), pickI = ideas[0];
+    for (const x of ideas) { r -= x[1]; if (r <= 0) { pickI = x; break; } }
+    const lift = (n, emo) => { d.happy = Math.min(100, d.happy + n); if (emo) spawnEmoji(emo, d.headWorld(0.35), { size: 0.4, life: 1.4 }); };
+    switch (pickI[0]) {
+      case 'toybox': { const spot = frontOf(pickI[2]); if (!spot) return false; d.goTo(spot, 2, () => pullToyOut(d, pickI[2]), 0.45); return true; }
+      case 'toy': {
+        const c = pickI[2];
+        d.playing = c;
+        d.goTo(new V3(c.i + 0.5 + (c.ox || 0), 0, c.j + 0.5 + (c.oz || 0)), 2.2, () => { d.playing = null; d.setState('playtoy', rand(3, 5)); lift(8, '🎾'); }, 0.35);
+        return true;
+      }
+      case 'tv': { const tv = F.find((f) => f.type === 'tv'); const spot = tv && frontOf(tv); if (!spot) return false; if (!tv.on) { tv.on = true; rebuildFurniture(); } d.goTo(spot, 1.6, () => { d.faceTo(tileCenter(tv)); d.setState('watch', rand(10, 16)); lift(5, '📺'); }, 0.3); return true; }
+      case 'sofa': { const spot = loungeSpot(d); if (!spot) return false; d.goTo(spot, 1.6, () => { d.setState('lounge', rand(8, 14)); lift(5, '😌'); }, 0.25); return true; }
+      case 'garden': { const t = randomGardenPoint(); if (!t) return false; d.goTo(t, 2, () => { d.setState('sit', 3); lift(6, '🌼'); }, 0.3); return true; }
+      case 'pal': {
+        const o = pickI[2];
+        d.goTo(() => o.root.position, 2.8, () => { d.faceTo(o.root.position); o.faceTo(d.root.position); d.setState('happy', 2); o.setState('happy', 2); lift(7, '💕'); o.happy = Math.min(100, o.happy + 5); addFriendship(d, o, 1); }, 1);
+        return true;
+      }
+      default: d.setState('happy', 1.6); lift(3, '🐾'); return true;
+    }
   }
   function pullToyOut(d, tb) {
     const types = state.toys;
@@ -6480,7 +6721,10 @@
   // =====================================================================
   function inboxAdd(o) {
     state.inbox = state.inbox || [];
-    state.inbox.unshift({ title: o.title || '', text: o.text || '', th: o.th || '', icon: o.icon || '', at: Date.now(), read: false });
+    // the same card twice in a row (shown, then filed): keep one
+    const dup = state.inbox.find((x) => x.title === (o.title || '') && x.text === (o.text || '') && Math.abs(x.at - (o.at || Date.now())) < 60000);
+    if (dup) { if (!o.read) dup.read = false; renderInboxTile(); return; }
+    state.inbox.unshift({ title: o.title || '', text: o.text || '', th: o.th || '', icon: o.icon || '', at: o.at || Date.now(), read: !!o.read });
     state.inbox = state.inbox.filter((x) => Date.now() - x.at < 7 * 86400000).slice(0, 40);
     renderInboxTile();
   }
@@ -6488,12 +6732,13 @@
   function renderInboxTile() {
     const n = inboxUnread(), t = $('tileInbox');
     if (!t) return;
-    t.classList.toggle('hidden', !n);
+    t.classList.toggle('hidden', !(state.inbox || []).length);
     $('inboxBadge').textContent = String(n);
+    $('inboxBadge').classList.toggle('hidden', !n);
   }
   function openInbox() {
     const list = state.inbox || [];
-    $('inboxList').innerHTML = list.map((x) => `<div class="row inboxRow${x.read ? '' : ' unread'}"><div class="ic">${x.th || IC(x.icon || 'sparkle')}</div><div class="txt"><b>${esc(plain(x.title))}</b><small>${esc(plain(x.text))}</small></div></div>`).join('') || '<p class="sub">Nothing new.</p>';
+    $('inboxList').innerHTML = list.map((x) => `<div class="row inboxRow${x.read ? '' : ' unread'}"><div class="ic">${x.th || IC(x.icon || 'sparkle')}</div><div class="txt"><b>${esc(plain(x.title))}<span class="when">${esc(whenText(x.at))}</span></b><small>${esc(plain(x.text))}</small></div></div>`).join('') || '<p class="sub">Nothing new.</p>';
     list.forEach((x) => { x.read = true; });
     $('inbox').classList.remove('hidden');
     renderInboxTile();
@@ -6699,45 +6944,81 @@
   // ----- player places (venues): a full-screen place of their own, not a walk -----
   let venueId = null;
   const venueCovers = () => !!(VEN && VEN.covers());
+  // a player place is a real place you walk around in, with stations for the little games
+  let waitDogs = [];
+  function venueCtx(pp) {
+    if (!S || !S.stations) return null;
+    if (S.exit && pp.z > S.exit.z - 1.8) return 'vexit';
+    let best = null, bd = 1.8;
+    for (const st of S.stations) { const d = Math.hypot(st.x - pp.x, st.z - pp.z); if (d < bd) { bd = d; best = st; } }
+    return best ? 'v:' + best.act : null;
+  }
+  function clearWaitDogs() { for (const w of waitDogs) w.root.parent && w.root.parent.remove(w.root); waitDogs = []; }
   function enterVenue(id, withIds) {
     if (!VEN || !VEN.VENUES[id]) return;
     if (tm) exitTrickMode();
     if (mode === 'decorate') exitDecorate();
     if (mode === 'build') exitBuildMode();
-    if (place === 'park') goHome(); else rejoinDogs();
+    if (place === 'park') goHome();
+    const V = VEN.VENUES[id];
+    const ids = withIds || allDogs().map((d) => d.id);
+    rejoinDogs();
+    splitDogs(ids, 'home');
+    // at the pool, dogs wait at the entrance on a towel
+    const waiting = V.dogsWait ? dogs.slice() : [];
+    for (const d of waiting) { dogs.splice(dogs.indexOf(d), 1); benchDog(d, 'venue'); restDogs.push(d); }
+    const sitWaits = !!(V.dogsWait && sitDog);
+    if (sitWaits) parkSit();
+    if (selected && !dogs.includes(selected)) selected = dogs[0] || null;
     endFun('leave');
     if (talk) endTalk(false);
-    packOrder = allDogs().map((d) => d.id);
-    const goers = dogs.filter((d) => withIds.includes(d.id));
-    for (const d of goers) { dogs.splice(dogs.indexOf(d), 1); benchDog(d, 'venue'); restDogs.push(d); }
-    const sitCame = !!(sitDog && withIds.includes('sit'));
-    if (sitCame) parkSit();
-    if (selected && !dogs.includes(selected)) selected = dogs[0] || null;
+    useScene('v' + id);
+    useHomeView(false);
+    place = 'park';
     venueId = id;
+    homeRoot.visible = false;
+    parkRoot.visible = true;
+    resetBall();
+    towelTask = null; useTask = null; vendorTask = null; camFocus = null;
     player.moveTarget = null;
-    player.root.visible = false;
-    setCtx(null);
-    VEN.show(id, goers, sitCame ? parkedSit : null);
-    if (NET.ready) pushStatus();
+    const sp = S.spawn || { x: 0, z: 12 };
+    player.root.position.set(sp.x, groundAt(sp.x, sp.z), sp.z);
+    player.root.rotation.y = player.face = Math.PI;
+    dogs.forEach((d, i) => {
+      d.releaseClaim(); d.dropSpot(); d.onArrive = null; d.path = null; d.zoomLeft = 0;
+      d.root.position.set(sp.x - 0.6 * (dogs.length - 1) / 2 + i * 0.6, 0, sp.z + 1.3);
+      d.root.rotation.y = d.face = Math.PI;
+      d.setState('follow');
+    });
+    if (sitDog) { sitDog.releaseClaim(); sitDog.root.position.set(sp.x + 0.9, 0, sp.z + 1.3); sitDog.setState('follow'); }
+    parkWater.taken = null;
+    walkDist = 0; walkEarn = 0; tiredWarned = true;
+    clearWaitDogs();
+    (S.dogWait || []).slice(0, 4).forEach((at, k) => {
+      const d = waiting[k] || (sitWaits && k === waiting.length ? parkedSit : null);
+      if (!d) return;
+      const P = ART.buildDog(d.breed, d.coat);
+      P.root.position.set(at[0], 0.04, at[1]);
+      P.root.rotation.y = Math.PI;
+      parkRoot.add(P.root);
+      const lb = textSprite(d.name, 0.26);
+      lb.position.y = 1.1;
+      P.root.add(lb);
+      waitDogs.push(P);
+    });
+    spawnWalkers();
+    if (NET.ready) { liveJoin(); pushStatus(); }
+    refreshLeashBtn();
+    refreshUI();
+    applyEnvironment();
+    updateCamera(0, true);
+    arriveFade();
+    VEN.show(id, dogs.slice().concat(waiting), sitDog || (sitWaits ? parkedSit : null));
     earn('venue');
     save();
   }
-  function leaveVenue(silent) {
-    if (!venueId) return;
-    venueId = null;
-    if (VEN) VEN.hide();
-    const back = restDogs.slice();
-    rejoinDogs();
-    player.root.visible = true;
-    player.root.position.copy(freeNear(CHUNK / 2, CHUNK - 1.2));
-    player.root.rotation.y = player.face = Math.PI;
-    back.forEach((d, i) => { d.root.position.copy(freeNear(clamp(CHUNK / 2 - 0.5 + i * 0.5, 0.5, CHUNK - 0.5), CHUNK - 2)); d.idle(rand(1, 2)); d.addBond(1); });
-    if (sitDog) sitDog.root.position.copy(freeNear(CHUNK / 2 + 0.9, CHUNK - 2));
-    if (NET.ready) pushStatus();
-    if (!silent) { refreshUI(); updateCamera(0, true); arriveFade(); toast('Back home 🏠'); }
-    save();
-  }
-
+  // leaving a player place: home, through the usual way
+  function leaveVenue() { if (venueId) goHome(); }
   const SHAPE_TIPS = {
     park: 'There is more to explore now: a hill with a view, a sunken pond and a meadow to the east. Not every corner is easy to find.',
     beach: 'There is more to explore now: dunes, a boardwalk and a rocky headland with stairs up to the lighthouse. Some places only show at the right tide.',
@@ -6755,13 +7036,14 @@
     if (!allDogs().length) return;
     if (!locUnlocked(id)) { toast('That place is still locked 🔒'); return; }
     if (!canVisitNow(id)) { toast(`${D.LOCATIONS[id].icon} ${D.LOCATIONS[id].name} is closed right now — it opens at ${D.LOCATIONS[id].hours[0]}:00`); return; }
-    if (venueId) leaveVenue(true);
+    if (venueId) goHome();
     // who comes along: the dogs you picked on the map (the rest stay home), or everyone
     if (withIds) { rejoinDogs(); splitDogs(withIds, 'home'); }
     else if (place === 'home') rejoinDogs();
     endFun('leave');
     clearPatches();
     useScene(id);
+    useHomeView(false);
     place = 'park';
     homeRoot.visible = false;
     parkRoot.visible = true;
@@ -6830,8 +7112,9 @@
 
   function goHome() {
     if (tm) exitTrickMode();
-    if (venueId) { leaveVenue(); return; }
-    const stayed = place === 'park' ? restDogs.slice() : [];
+    const wasVenue = venueId;
+    if (venueId) { if (VEN) VEN.hide(); clearWaitDogs(); venueId = null; }
+    const stayed = place === 'park' ? restDogs.filter((d) => d.restAt === 'home') : [];
     rejoinDogs();
     endFun('leave');
     clearPatches();
@@ -6842,6 +7125,8 @@
     clearLostDog();
     const wasAt = loc;
     place = 'home';
+    useHomeView(true);
+    buildRoom();
     homeRoot.visible = true;
     parkRoot.visible = false;
     resetBall();
@@ -6853,24 +7138,23 @@
     for (let i = 0; i < dogs.length; i++) for (let j = i + 1; j < dogs.length; j++) addFriendship(dogs[i], dogs[j], 1);
     towelTask = null;
     player.moveTarget = null;
-    player.root.position.copy(freeNear(CHUNK / 2, CHUNK - 1.2));
-    player.root.rotation.y = player.face = Math.PI;
+    placeAtDoor();
     dogs.forEach((d, i) => {
       d.dropSpot();
       d.offLeash = false;
       d.returning = false;
       d.partner = null;
       d.leash.visible = false;
-      d.root.position.copy(freeNear(clamp(CHUNK / 2 - 0.7 + i * 0.5, 0.5, CHUNK - 0.5), CHUNK - 2));
+      d.root.position.copy(entryNear(i));
       d.idle(rand(1, 3));
       d.addBond(2);
       d.updateDirtLook();
     });
     sniffSpots.forEach((s) => { s.taken = null; if (s.golden) { s.golden = false; ART.setScentGold(s.sparkle, false); } });
     parkWater.taken = null;
-    recordWalk(wasAt);
+    if (!wasVenue) recordWalk(wasAt);
     spawnPatches();
-    if (sitDog) { sitDog.dropSpot(); sitDog.offLeash = false; sitDog.returning = false; sitDog.leash.visible = false; sitDog.root.position.copy(freeNear(CHUNK / 2 + 0.9, CHUNK - 2)); sitDog.idle(rand(1, 3)); }
+    if (sitDog) { sitDog.dropSpot(); sitDog.offLeash = false; sitDog.returning = false; sitDog.leash.visible = false; sitDog.root.position.copy(entryNear(3)); sitDog.idle(rand(1, 3)); }
     renderBeds();
     sittingTick();
     round3Home();
@@ -6883,7 +7167,7 @@
     applyEnvironment();
     updateCamera(0, true);
     arriveFade();
-    toast(walkEarn > 0 ? `Great walk! You earned 🪙 ${walkEarn}` : 'Back home 🏠');
+    toast(!wasVenue && walkEarn > 0 ? `Great walk! You earned 🪙 ${walkEarn}` : 'Back home 🏠');
     save();
   }
 
@@ -7135,7 +7419,7 @@
       case 'carnival': want = updateCarnival(dt, q, pp); break;
       case 'fairy': updateFairy(dt, q, pp); break;
       case 'moon': updateMoon(dt, q, pp); break;
-      default: break;
+      default: if (venueId) want = venueCtx(pp); break;
     }
     // the museum door, your market stall, the pier and the disc mat come before a chat
     if (!want && !fun) { const r3 = round3Ctx(pp); if (r3 && r3 !== 'favor' && r3 !== 'catch' && r3 !== 'snowman') want = r3; }
@@ -7273,7 +7557,7 @@
   const CTX = { talk: ['chat', 'Talk'], stay: ['hand', 'Stay'], echo: ['echo', 'Speak'], sled: ['sled', 'Sled'], ferris: ['ferris', 'Ride'], portal: ['portal', 'Portal'], rocket: ['rocket', 'Rocket'],
     sit: ['seat', 'Sit'], skip: ['stone', 'Skip'], stars: ['star', 'Stars'], rake: ['rake', 'Rake'], shovel: ['rake', 'Shovel'],
     pickup: ['person', 'Hand over'], bed: ['sprout', 'Dig a bed'], treasure: ['map', 'Dig here'], bottle: ['search', 'Bottle'], run: ['flag', 'Run'], enter: ['flag', 'Enter'], ducks: ['wave', 'Feed ducks'],
-    catch: ['net', 'Catch'], museum: ['museum', 'Museum'], market: ['stall', 'Market'], fish: ['fish', 'Fish'], disc: ['disc', 'Disc dog'], favor: ['search', 'Help'], snowman: ['snowman', 'Snowman'], flakes: ['snow', 'Snowflakes'] };
+    door: ['door', 'Door'], vexit: ['home', 'Leave'], catch: ['net', 'Catch'], museum: ['museum', 'Museum'], market: ['stall', 'Market'], fish: ['fish', 'Fish'], disc: ['disc', 'Disc dog'], favor: ['search', 'Help'], snowman: ['snowman', 'Snowman'], flakes: ['snow', 'Snowflakes'] };
   let ctxKind = null;
   function setCtx(k) {
     if (k === ctxKind) return;
@@ -7288,6 +7572,9 @@
   function ctxAction() {
     switch (ctxKind) {
       case 'talk': startTalk(nearestWalker(player.root.position)); break;
+      case 'door': openWorldMap(); break;
+      case 'vexit': goHome(); break;
+      default: if (ctxKind && ctxKind.startsWith('v:')) { if (VEN) VEN.runAct(ctxKind.slice(2)); break; } if (!hobbyAction(ctxKind)) round3Action(ctxKind); break;
       case 'stay': askStay(); break;
       case 'echo': doEcho(); break;
       case 'sled': startSled(); break;
@@ -7298,7 +7585,6 @@
       case 'skip': startSkip(); break;
       case 'stars': startGaze(); break;
       case 'rake': case 'shovel': startRake(); break;
-      default: if (!hobbyAction(ctxKind)) round3Action(ctxKind); break;
     }
   }
   const flatDist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -8190,7 +8476,11 @@
       dogPortrait: (d) => ART.portraitURL(d.breed, d.coat), personPortrait: (N) => ART.personPortraitURL(N),
       walkCount: () => (state.stats && state.stats.walks) || 0,
     };
-    try { return window.PPVenues(api); } catch (e) { console.error(e); return null; }
+    try {
+      const V = window.PPVenues(api);
+      if (V && V.ctxDefs) { Object.assign(CTX, V.ctxDefs()); if (ART.addIcons) ART.addIcons(V.XI); }
+      return V;
+    } catch (e) { console.error(e); return null; }
   }
   function openWorldMap() {
     tutEvent('walk');
@@ -8497,6 +8787,7 @@
     }
     camLook.set(lerp(camLook.x, tx, k), snap ? ly : lerp(camLook.y, ly, damp(0.05, dt)), lerp(camLook.z, tz, k));
     camDist = lerp(camDist, dist, snap ? 1 : damp(0.05, dt));
+    if (Math.abs(viewAng - viewAngTo) > 1e-4) setViewAngle(snap ? viewAngTo : (Math.abs(viewAngTo - viewAng) < 0.003 ? viewAngTo : lerp(viewAng, viewAngTo, damp(0.0004, dt))));
     fogPush = Math.max(0, camDist - 12);
     camera.position.set(camLook.x + camOffsetDir.x * camDist, camLook.y + camOffsetDir.y * camDist, camLook.z + camOffsetDir.z * camDist);
     camera.lookAt(camLook);
@@ -8553,7 +8844,8 @@
     const p = NAV.parent[id];
     delete NAV.parent[id];
     setBackIcon(id, false);
-    if (p) setTimeout(() => { if (!modalOpen() && !title && (mode === 'normal' || p === 'hub')) navReopen(p); }, 30);
+    // straight away (still before the screen is drawn), so there's no empty frame in between
+    if (p && !modalOpen() && !title && (mode === 'normal' || p === 'hub')) navReopen(p);
   }
   // a tap on a close button (or next to a sheet) is you closing it yourself
   document.addEventListener('click', (e) => {
@@ -8562,10 +8854,19 @@
     const m = t.classList && t.classList.contains('modal') ? t : (t.closest('.sheetHead .x, [data-act^="close"]') || { closest: () => null }).closest('.modal');
     if (m && m.id) NAV.userClose = { id: m.id, at: Date.now() };
   }, true);
+  // one sheet swapping for another: no fading backdrop, just a quick slide, so nothing flickers
+  let swapT = 0, swapTimer = null;
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
       const was = (m.oldValue || '').includes('hidden'), now = m.target.classList.contains('hidden');
-      if (was !== now) { sfx(now ? 'close' : 'open'); if (now) navClosed(m.target.id); else navOpened(m.target.id); }
+      if (was === now) continue;
+      if (now) { swapT = performance.now(); document.body.classList.add('navSwap'); clearTimeout(swapTimer); swapTimer = setTimeout(() => document.body.classList.remove('navSwap'), 450); }
+      else {
+        const sh = m.target.querySelector('.sheet');
+        if (sh && performance.now() - swapT < 450) { sh.classList.remove('swapIn', 'swapBack'); void sh.offsetWidth; sh.classList.add(NAV.backing ? 'swapBack' : 'swapIn'); setTimeout(() => sh.classList.remove('swapIn', 'swapBack'), 300); }
+      }
+      sfx(now ? 'close' : 'open');
+      if (now) navClosed(m.target.id); else navOpened(m.target.id);
     }
     document.body.classList.toggle('sheetOpen', modalOpen());
   });
@@ -8991,8 +9292,23 @@
     p.position.set(i + 0.5, y, j + 0.5);
     candGroup.add(p);
   }
+  // every place a front door could go
+  function doorSlots() {
+    const out = [];
+    for (const [cx, cz] of state.chunks) for (const side of ['n', 's', 'w', 'e']) for (let u = 0; u < CHUNK; u++) { const D0 = { cx, cz, side, u }; if (doorOK(D0)) out.push(D0); }
+    return out;
+  }
   function showCandidates() {
     candGroup.clear();
+    if (buildTool === 'door') {
+      const cur = doorSpot();
+      for (const D0 of doorSlots()) {
+        const g = doorGeo(D0), isCur = cur && cur.cx === D0.cx && cur.cz === D0.cz && cur.side === D0.side && cur.u === D0.u;
+        tilePlate(g.i, g.j, isCur ? 0xffb74d : 0x81c784, isCur ? 0.08 : 0.06);
+      }
+      if (cur) { const g = doorGeo(cur), sp = emojiSprite('🚪', 0.9); sp.position.set(g.i + 0.5, 1.4, g.j + 0.5); candGroup.add(sp); }
+      return;
+    }
     if (buildTool === 'walls') {
       for (const E of innerEdges(editFloor)) {
         const w = (state.walls || {})[E.k] || 'open';
@@ -9026,9 +9342,9 @@
     if (movePick) plate(movePick[0], movePick[1], pickMat, 0.05);
   }
   // ----- the bar at the bottom -----
-  const TOOL_NAMES = { add: 'Add', move: 'Move', walls: 'Walls', remove: 'Remove', stairs: 'Stairs' };
+  const TOOL_NAMES = { add: 'Add', move: 'Move', walls: 'Walls', door: 'Door', remove: 'Remove', stairs: 'Stairs' };
   function renderBuildBar() {
-    const tools = ['add', 'move', 'walls', 'remove'].concat(upOpen() ? ['stairs'] : []);
+    const tools = ['add', 'move', 'walls', 'door', 'remove'].concat(upOpen() ? ['stairs'] : []);
     $('buildTabs').innerHTML = tools.map((t) => `<button class="decoTab${t === buildTool ? ' sel' : ''}" data-act="buildTool" data-tool="${t}">${TOOL_NAMES[t]}</button>`).join('');
     const fl = editFloor, where = fl ? 'upstairs' : 'downstairs';
     let title = '', help = '';
@@ -9045,6 +9361,10 @@
       case 'walls':
         title = `Walls between rooms: 🪙 ${D.HOME_BUILD.wall} each`;
         help = innerEdges(fl).length ? 'Tap the line between two rooms: open → wall → doorway' : 'Only where two rooms touch';
+        break;
+      case 'door':
+        title = 'Your front door';
+        help = 'Tap a green tile along an outside wall to move it there (free). Gardens don’t get doors';
         break;
       case 'remove':
         title = 'Tear down a room (no refund)';
@@ -9094,7 +9414,7 @@
   function setBuildTool(t) {
     buildTool = t;
     movePick = null; stairDraft = null; buildPick = null;
-    if (t === 'stairs') editFloor = 0;
+    if (t === 'stairs' || t === 'door') editFloor = 0;
     refreshBuild();
   }
   function toggleBuildFloor() {
@@ -9108,6 +9428,19 @@
     const isCand = buildCands.some(([x, z]) => x === cx && z === cz);
     switch (buildTool) {
       case 'add': if (isCand) addRoomAt(cx, cz); return;
+      case 'door': {
+        const i = Math.floor(gp.x), j = Math.floor(gp.z);
+        const D0 = doorSlots().map((x) => { const g = doorGeo(x); return [x, Math.hypot(g.i + 0.5 - gp.x, g.j + 0.5 - gp.z)]; }).sort((a, b) => a[1] - b[1])[0];
+        void i; void j;
+        if (!D0 || D0[1] > 1.2) return;
+        state.door = Object.assign({}, D0[0]);
+        buildRoom();
+        refreshBuild();
+        sfx('find');
+        toast('The front door is here now 🚪');
+        save();
+        return;
+      }
       case 'move':
         if (!movePick) {
           if (!hasChunk(cx, cz) || chunkFloor([cx]) !== editFloor) return;
@@ -10129,6 +10462,7 @@
     placeToast();
   }
   function updateHud() {
+    layoutPack();
     $('coinCount').textContent = state.coins;
     $('ticketCount').textContent = state.tickets || 0;
     $('ticketStat').classList.toggle('hidden', !state.tickets);
@@ -10193,16 +10527,16 @@
     refreshGates();
     $('tileHouseSub').textContent = D.HOUSE_TIERS[houseTier()].name;
     const asks = Object.keys(D.STORIES).filter((o) => storyOf(o) && storyChapter(o) && storyReady(o)).length;
-    $('tilePeopleSub').textContent = asks ? `${asks} waiting for you` : 'Their stories';
+    $('tilePeopleSub').textContent = asks ? `${asks} waiting` : 'Stories';
     const home = place === 'home' && !visit;
     $('tileDecorate').classList.toggle('hidden', !home);
     $('hubTitle').textContent = place === 'park' ? LOC().name : 'Menu';
-    $('tileBagSub').textContent = `${state.toys.length} toys · throwing the ${(D.TOYS[state.toy] || D.TOYS.tennis).name.toLowerCase()}`;
+    $('tileBagSub').textContent = `${state.toys.length} toy${state.toys.length === 1 ? '' : 's'}`;
     let all = 0, got = 0;
     for (const [id] of bookPages()) { const pg = bookPage(id); all += pg.total; got += pg.done; }
-    $('tileAlbumSub').textContent = `${got} of ${all} collected`;
+    $('tileAlbumSub').textContent = `${got} / ${all}`;
     const left = state.daily && unlockedFeat('daily') ? state.daily.items.filter((c) => !c.done).length : 0;
-    $('tileDailySub').textContent = !state.daily ? "Today's goals" : left ? `${left} left today` : 'All done today';
+    $('tileDailySub').textContent = !state.daily ? 'Today' : left ? `${left} left` : 'All done';
     computeComfort();
     renderComfortChip();
     renderEventRow();
@@ -10252,6 +10586,7 @@
     else if (act === 'critters') { $('bag').classList.add('hidden'); openCritters(); }
     else if (act === 'friends') { $('hub').classList.add('hidden'); openFriends(); }
     else if (act === 'locinfo') locChipInfo();
+    else if (act === 'turn') turnView();
     else if (act === 'home') goHome();
     else if (act === 'decorate') enterDecorate();
     else if (act === 'done') exitDecorate();
@@ -10700,7 +11035,9 @@
     if (visit || title) return;
     const n = tipQ.filter((t) => t.news);
     if (n.length >= 4) tipQ.splice(tipQ.indexOf(n[0]), 1);
-    tipQ.push(Object.assign({ news: true }, o));
+    tipQ.push(Object.assign({ news: true, at: Date.now() }, o));
+    // everything that happens is kept, with its time, in Menu → What's new
+    inboxAdd(Object.assign({}, o, { at: Date.now(), read: true }));
     $('tips').dataset.last = `${($('tips').dataset.last || '').slice(-300)} | ${o.title || ''} ${o.text || ''}`;
     pumpTips();
   }
@@ -11247,7 +11584,7 @@
   }
   function updateMinimap(dt) {
     const el = $('minimap');
-    const show = place === 'park' && !title && mode === 'normal' && !visit && unlockedFeat('minimap');
+    const show = place === 'park' && !venueId && !title && mode === 'normal' && !visit && unlockedFeat('minimap');
     el.classList.toggle('hidden', !show);
     if (!show) { mmBig = false; el.classList.remove('big'); return; }
     mmIdle += dt;
@@ -11711,6 +12048,7 @@
     for (const g of guests) g.update(dt);
     for (const d of dogs) d.update(dt);
     for (const d of restDogs) restTick(d, dt);
+    if ((homeFunT -= dt) <= 0) { homeFunT = 3; countHomeFun(); }
     separateDogs();
     updateBall(dt);
     if (tm) updateTrickMode(dt);
@@ -11724,10 +12062,12 @@
       updateTerrain(dt);
       if (unlockedFeat('calendar')) { updateHunts(dt); calNight(dt); updateSkyFX(dt); }
       updateVendorTask();
+      if (S.anim) S.anim(animT);
       if (!tiredWarned && dogs.some((d) => d.energy < CRITICAL)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
     } else {
       for (const r of furnRT.values()) if (r.group.userData.anim) r.group.userData.anim(animT);
       updateFillAnims(dt);
+      updateDoor(dt);
       if (!visit && state.furniture.some((f) => D.ITEMS[f.type].auto && !f.filled)) autoRefill();
       if (mode === 'normal') setCtx(funCtx());
       buildInnerWalls();
@@ -11804,12 +12144,12 @@
     visit = v;
     noSave = true;
     syncChunkSet();
+    useHomeView(true);
     buildRoom();
     rebuildFurniture();
     rebuildSite();
     renderClutter();
-    player.root.position.copy(freeNear(CHUNK / 2, CHUNK - 1.2));
-    player.root.rotation.y = player.face = Math.PI;
+    placeAtDoor();
     for (const dd of v.dogs) {
       const g = new GuestDog(dd);
       g.root.position.copy(randomFreePoint());
@@ -11862,6 +12202,7 @@
     setTimeout(() => { if (window.fetch) bootPrints(); }, 3000);
     applyPlayerLook();
     syncChunkSet();
+    useHomeView(true);
     buildRoom();
     rebuildFurniture();
     if (hadSave && notes.has('water')) giveWaterBowl();
@@ -11869,8 +12210,7 @@
     renderClutter();
     computeComfort();
     renderComfortChip();
-    player.root.position.copy(freeNear(CHUNK / 2, CHUNK - 1.2));
-    player.root.rotation.y = player.face = Math.PI;
+    placeAtDoor();
     for (const dd of state.dogs) addDog(dd, false);
     selected = dogs[0] || null;
     growBeds();
@@ -12030,6 +12370,7 @@
   // =====================================================================
   // seats on walks: the benches each place already had, plus a few new benches and logs along the neighbors' loop
   function addSeats(sc) {
+    if (sc.venue) { sc.seats = []; return; }
     const SEAT_STYLE = { grounds: 'wood', park: 'wood', oldtown: 'dark', forest: 'log', beach: 'wood', alpine: 'dark', caves: 'stone', snowy: 'snow', carnival: 'red', fairy: 'mush', moon: 'metal' };
     const seats = [];
     const tmp = new V3();
@@ -13635,6 +13976,7 @@
   function funCtx() {
     if (fun || mode !== 'normal' || visit || title) return null;
     const pp = player.root.position;
+    if (place === 'home' && nearDoor(pp) && !venueId) return 'door';
     const hc = hobbyCtx(pp) || round3Ctx(pp);
     if (hc) return hc;
     if (unlockedFeat('piles') && patches.length && nearPatch(pp, 2.2)) return patches[0].kind === 'snow' ? 'shovel' : 'rake';
@@ -14379,7 +14721,7 @@
     for (const [f, r] of furnRT) if (f.type === 'mailbox' && r.group.userData.flag) r.group.userData.flag.rotation.x = up ? 0 : 1.4;
   }
   function receive(o) {
-    mail().inbox.unshift(Object.assign({ id: newId(), gd: clockNow.gameDay, read: false }, o));
+    mail().inbox.unshift(Object.assign({ id: newId(), gd: clockNow.gameDay, t: Date.now(), read: false }, o));
     state.mail.inbox = state.mail.inbox.slice(0, 30);
     const N = D.NEIGHBORS.find((x) => x.owner === o.from);
     if (o.real) news({ title: o.title || `📬 A letter from ${o.from}`, text: hasItem('mailbox') ? 'It’s in your mailbox at home.' : 'Put a mailbox up at home to read it (Shop → Decor).', th: o.dg ? TH('dog', o.dg) : TH('pic', '💌') });
@@ -14478,10 +14820,11 @@
     if (mailTab === 'inbox') {
       if (!M.inbox.length) { B.innerHTML = '<p class="sub">No letters yet. Write to a neighbor, and they’ll write back the next day.</p>'; return; }
       B.innerHTML = M.inbox.map((m) => {
-        if (m.gazette) return `<div class="row letter gz${m.read ? '' : ' unread'}" data-ml="${m.id}"><div class="ic">${IC('paper')}</div><div class="txt"><b>${esc(m.gazette.name)}</b><small>Issue ${m.gazette.no}: ${esc(m.gazette.head[0])}</small></div></div>`;
+        const when = m.t ? `<span class="when">${esc(whenText(m.t))}</span>` : '';
+        if (m.gazette) return `<div class="row letter gz${m.read ? '' : ' unread'}" data-ml="${m.id}"><div class="ic">${IC('paper')}</div><div class="txt"><b>${esc(m.gazette.name)}${when}</b><small>Issue ${m.gazette.no}: ${esc(m.gazette.head[0])}</small></div></div>`;
         const N = D.NEIGHBORS.find((x) => x.owner === m.from);
         const open = m.id === mailOpenId;
-        return `<div class="row letter${m.read ? '' : ' unread'}" data-ml="${m.id}">${N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : m.real && m.dg ? TH('dog', m.dg) : TH('pic', '💌')}<div class="txt"><b>${esc(m.from)}</b><small>${esc(open ? '' : m.text.split('\n')[1] || '')}</small>${open ? `<p class="letterTxt">${esc(m.text).replace(/\n/g, '<br>')}</p>${m.gift ? `<p class="sub">Enclosed: ${esc(giftText(m.gift))}${m.gotGift ? ' (collected)' : ''}</p>` : ''}${m.ask === 'sit' && !m.answered ? `<div class="btnRow"><button class="primary small" data-sit="yes" data-m="${m.id}">Yes, I’ll look after ${esc(N ? N.dog.name : 'the dog')}</button><button class="soft small" data-sit="no" data-m="${m.id}">Not this time</button></div>` : ''}` : ''}</div></div>`;
+        return `<div class="row letter${m.read ? '' : ' unread'}" data-ml="${m.id}">${N ? `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` : m.real && m.dg ? TH('dog', m.dg) : TH('pic', '💌')}<div class="txt"><b>${esc(m.from)}${when}</b><small>${esc(open ? '' : m.text.split('\n')[1] || '')}</small>${open ? `<p class="letterTxt">${esc(m.text).replace(/\n/g, '<br>')}</p>${m.gift ? `<p class="sub">Enclosed: ${esc(giftText(m.gift))}${m.gotGift ? ' (collected)' : ''}</p>` : ''}${m.ask === 'sit' && !m.answered ? `<div class="btnRow"><button class="primary small" data-sit="yes" data-m="${m.id}">Yes, I’ll look after ${esc(N ? N.dog.name : 'the dog')}</button><button class="soft small" data-sit="no" data-m="${m.id}">Not this time</button></div>` : ''}` : ''}</div></div>`;
       }).join('');
       return;
     }
@@ -14726,13 +15069,13 @@
     if (!N || sitDog || parkedSit) return;
     if (T.pending) { T.pending = false; T.until = Date.now() + D.SIT.minutes * 60000; }
     sitDog = new SitDog(T.data || {}, N);
-    sitDog.root.position.copy(freeNear(CHUNK / 2 + 0.6, CHUNK - 1.6));
+    sitDog.root.position.copy(entryNear(2));
     world.add(sitDog.root);
     sitDog.idle(1);
     if (!T.told) {
       T.told = true;
       const q = D.SIT_QUIRKS[N.dog.traits[0]];
-      news({ title: `${N.dog.name} is staying with you`, text: `${T.owner} dropped ${N.dog.name} off for a day (about an hour). ${N.dog.name} ${q}. Feed, walk and cuddle ${N.dog.name}, and ${T.owner} will be back to pick ${N.dog.name} up.`, th: TH('dog', `${N.dog.breed}|${N.dog.coat}`) });
+      news({ title: `${N.dog.name} is staying with you`, text: `${T.owner} dropped ${N.dog.name} off for a day (about an hour, until ${clockOf(T.until)}). ${N.dog.name} ${q}. Feed, walk and cuddle ${N.dog.name}, and ${T.owner} will be back to pick ${N.dog.name} up.`, th: TH('dog', `${N.dog.breed}|${N.dog.coat}`) });
       tip('sitting', { title: 'Dog sitting', text: 'A neighbor’s dog stays with you for a while. It comes on walks on its own leash, eats from your bowls and gets to know your dogs (not every pair gets along). Look after it well for a bigger thank-you.', icon: 'dog' });
     }
   }
@@ -14757,8 +15100,8 @@
     if (T.ready && place === 'home' && !venueId && !sitOwner) {
       const N = D.NEIGHBORS.find((x) => x.owner === T.owner);
       sitOwner = ART.buildPlayer({ shirt: N.shirt, hair: N.hair });
-      sitOwner.root.position.copy(freeNear(CHUNK / 2 - 0.8, CHUNK - 0.8));
-      sitOwner.root.rotation.y = Math.PI;
+      sitOwner.root.position.copy(homeEntry());
+      { const o = doorSpot() ? doorGeo(doorSpot()).out : [0, 1]; sitOwner.root.rotation.y = Math.atan2(-o[0], -o[1]); }
       const lb = textSprite(N.owner, 0.3); lb.position.y = 2.15; sitOwner.root.add(lb);
       homeRoot.add(sitOwner.root);
     }
@@ -17409,7 +17752,7 @@
       startFishing, fishTap, fishPick, startSnowman, snowStart, snowNext, renderSnow, meltSnowmen, snowOnGround, startFlakes, flakesTap, set lastTap(v) { lastTap = v; }, startDisc, discTap, disc, discCupToday,
       openSettings, LIVE, liveJoin, liveLeave, liveSay, liveSync, openRemote, setRoomPassword, hashRoom, pushStatus, watchFriends, friendStatusLine, renderMulti, setSettingsTab, exportSaveObject, mpMode,
       NET, onl, goOnline, goOffline, openFriends, renderFriends, addFriendByCode, acceptFriend, removeFriend, sendToFriend, visitFriend, leaveReaction, pushBackup, pushHome, fetchBackup, restoreBackup, linkEmail, signInEmail, safeName, refreshFriends, visitPayload, visitFromPayload, get friendView() { return friendView; },
-      get VEN() { return VEN; }, enterVenue, leaveVenue, get venueId() { return venueId; }, allDogs, get restDogs() { return restDogs; }, splitDogs, rejoinDogs, openWorldMap, get parkedSit() { return parkedSit; }, bookOn, sittingAway, applyCustom, sitArrive, get sitOwner() { return sitOwner; }, updateWalkers, welcomeBack,
+      get VEN() { return VEN; }, turnView, doorSpot, doorSlots, doorInside, nearDoor, whenText, layoutPack, cheerUpIdea, get homeFun() { return homeFun; }, countHomeFun, get camOffsetDir() { return camOffsetDir; }, buildRoom, addDog, newDogData, enterVenue, leaveVenue, get venueId() { return venueId; }, allDogs, get restDogs() { return restDogs; }, splitDogs, rejoinDogs, openWorldMap, get parkedSit() { return parkedSit; }, bookOn, sittingAway, applyCustom, sitArrive, get sitOwner() { return sitOwner; }, updateWalkers, welcomeBack,
       rollFavor, startFavor, get favorW() { return favorW; }, weekStat, rollWeek, deliverGazette, openGazette, addRivalry, rivalry, rivalOf, toyPals, round3Ctx, round3Action, nearPier, nearDiscMat, nearMuseum, nearMarket,
     };
   }
