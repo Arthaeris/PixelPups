@@ -4755,12 +4755,34 @@
     if (pos) confetti(pos.clone().add(new V3(0, 1, 0)));
     save();
   }
+  // auto-feeders and fountains fill up again a few seconds after a dog empties them
+  const fillAnims = [];
   function autoRefill() {
-    const mins = CONFIG.AUTO_REFILL_MINUTES * 60000 / (houseTier() >= 3 ? 2 : 1);
+    if (visit) return;
+    const wait = (CONFIG.AUTO_REFILL_SECONDS || 15) * 1000 / (houseTier() >= 3 ? 2 : 1);
     for (const f of state.furniture) {
       if (!D.ITEMS[f.type].auto || f.filled) continue;
-      if (!f.emptiedAt) f.emptiedAt = Date.now();
-      if (Date.now() - f.emptiedAt >= mins) { f.filled = true; f.emptiedAt = 0; refreshBowl(f); }
+      if (!f.emptiedAt || f.emptiedAt > Date.now()) f.emptiedAt = Date.now();
+      if (Date.now() - f.emptiedAt >= wait) { f.filled = true; f.emptiedAt = 0; refillAnim(f); }
+    }
+  }
+  function refillAnim(f) {
+    refreshBowl(f);
+    const r = furnRT.get(f), c = r && r.group.userData.content;
+    if (c) { c.scale.y = 0.05; fillAnims.push({ c, t: 0 }); }
+    if (place === 'home') {
+      const water = D.ITEMS[f.type].role === 'water';
+      const at = tileCenter(f);
+      for (let k = 0; k < 5; k++) setTimeout(() => spawnEmoji(water ? '💧' : '🟤', at.clone().add(new V3(rand(-0.15, 0.15), 1.1, rand(-0.15, 0.15))), { size: 0.22, life: 0.6, vy: -1.4 }), k * 110);
+      sfx(water ? 'plip' : 'bounce');
+    }
+  }
+  function updateFillAnims(dt) {
+    for (let k = fillAnims.length - 1; k >= 0; k--) {
+      const A = fillAnims[k];
+      A.t += dt;
+      A.c.scale.y = Math.min(1, 0.05 + A.t / 0.8);
+      if (A.t >= 0.8) { A.c.scale.y = 1; fillAnims.splice(k, 1); }
     }
   }
 
@@ -6598,6 +6620,7 @@
     spawnDucks();
     spawnBottle();
     round3Walk();
+    if (NET.ready) { liveJoin(); pushStatus(); }
     walkStartT = Date.now();
     if (sitDog) { sitDog.reset && sitDog.releaseClaim(); sitDog.root.position.set(0.9, groundAt(0.9, 17.3), 17.3); sitDog.root.rotation.y = sitDog.face = Math.PI; sitDog.setState('follow'); if (state.sitting) state.sitting.walks = (state.sitting.walks || 0) + 1; }
     placeMeetup();
@@ -6632,6 +6655,7 @@
     clearPatches();
     clearDucks();
     clearCatchables();
+    liveLeave();
     if (bottle) { bottle.g.parent && bottle.g.parent.remove(bottle.g); bottle = null; }
     clearLostDog();
     const wasAt = loc;
@@ -6668,6 +6692,7 @@
     renderBeds();
     sittingTick();
     round3Home();
+    if (NET.ready) pushStatus();
     // a dog that got wet on the walk shakes off at the door, right next to you
     const wet = dogs.find((d) => d.wetT > 0);
     if (wet) setTimeout(() => { if (place === 'home') shakeOff(wet, 'walk'); }, 1400);
@@ -8269,12 +8294,60 @@
   // the joystick stays out of the way: faint from the start, nearly gone after a moment of steady walking
   let joyAng = null, joyFadeT = null;
   const joyWake = () => { joyBase.classList.remove('fade'); clearTimeout(joyFadeT); joyFadeT = setTimeout(() => joyBase.classList.add('fade'), 1100); };
-  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet', 'bedSheet', 'courseSheet', 'tourney', 'paint', 'mail', 'tmapSheet', 'nameAsk', 'bake', 'stall', 'museum', 'critters', 'gazette', 'friends'];
+  const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet', 'bedSheet', 'courseSheet', 'tourney', 'paint', 'mail', 'tmapSheet', 'nameAsk', 'bake', 'stall', 'museum', 'critters', 'gazette', 'friends', 'mpPlayer'];
   // sheets: a soft sound when they open and close; tips step aside while one is open
+  // ----- going back: a menu opened from another menu returns there when you close it -----
+  const NAV = { parent: {}, lastClose: null, userClose: null, backing: false };
+  const NAV_SKIP = new Set(['confirm', 'start', 'nameAsk', 'photoPreview', 'bathFull', 'away', 'tourney', 'mpPlayer', 'giftModal']);
+  function navReopen(id) {
+    const tab = setTab;
+    const R = {
+      hub: openHub, settings: () => { openSettings(); setSettingsTab(tab); }, friends: openFriends, bag: openBag, house: openHouse, people: openPeople,
+      album: openAlbum, daily: openDaily, ranks: openRanks, shop: () => openShop(shopVendor), mail: openMail, critters: openCritters, museum: openMuseum,
+      playSheet: () => { if (playDog) openPlay(playDog); }, dogSheet: () => { if (sheetDog) openDogSheet(sheetDog); }, inbox: openInbox,
+    }[id];
+    NAV.backing = true;
+    try { if (R) R(); else $(id).classList.remove('hidden'); } catch (_) { $(id).classList.remove('hidden'); }
+    setTimeout(() => { NAV.backing = false; }, 0);
+  }
+  function setBackIcon(id, back) {
+    const x = $(id) && $(id).querySelector('.sheetHead .x');
+    if (!x) return;
+    if (back && !x.dataset.orig) { x.dataset.orig = x.innerHTML; x.innerHTML = IC('left'); x.setAttribute('aria-label', 'Back'); x.classList.add('back'); }
+    else if (!back && x.dataset.orig) { x.innerHTML = x.dataset.orig; delete x.dataset.orig; x.setAttribute('aria-label', 'Close'); x.classList.remove('back'); }
+  }
+  function navOpened(id) {
+    if (NAV_SKIP.has(id)) return;
+    if (!NAV.backing) {
+      const lc = NAV.lastClose;
+      if (lc && !lc.user && lc.id !== id && Date.now() - lc.at < 700 && !NAV_SKIP.has(lc.id) && NAV.parent[lc.id] !== id) NAV.parent[id] = lc.id;
+      else delete NAV.parent[id];
+    }
+    setBackIcon(id, !!NAV.parent[id]);
+  }
+  const NAV_OFF = /[?&]nonav\b/.test(location.search);   // for automated tests of single sheets
+  function navClosed(id) {
+    if (NAV_SKIP.has(id) || NAV_OFF) return;
+    const user = NAV.userClose && NAV.userClose.id === id && Date.now() - NAV.userClose.at < 700;
+    NAV.lastClose = { id, at: Date.now(), user };
+    if (!user) return;
+    NAV.userClose = null;
+    const p = NAV.parent[id];
+    delete NAV.parent[id];
+    setBackIcon(id, false);
+    if (p) setTimeout(() => { if (!modalOpen() && !title && (mode === 'normal' || p === 'hub')) navReopen(p); }, 30);
+  }
+  // a tap on a close button (or next to a sheet) is you closing it yourself
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    const m = t.classList && t.classList.contains('modal') ? t : (t.closest('.sheetHead .x, [data-act^="close"]') || { closest: () => null }).closest('.modal');
+    if (m && m.id) NAV.userClose = { id: m.id, at: Date.now() };
+  }, true);
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
       const was = (m.oldValue || '').includes('hidden'), now = m.target.classList.contains('hidden');
-      if (was !== now) sfx(now ? 'close' : 'open');
+      if (was !== now) { sfx(now ? 'close' : 'open'); if (now) navClosed(m.target.id); else navOpened(m.target.id); }
     }
     document.body.classList.toggle('sheetOpen', modalOpen());
   });
@@ -8371,6 +8444,7 @@
     if (mode === 'build') { if (hitGround) buildTap(gp); return; }
     camFocus = null;
     if (funTap()) return;
+    if (place === 'park' && tapRemote(raycaster)) return;
 
     let dog = null;
     const onView = (d) => place !== 'home' || floorOfX(d.root.position.x) === vf;
@@ -9604,6 +9678,7 @@
     $('optHaptics').checked = !!prefs.haptics;
     $('optBig').checked = !!prefs.bigui;
     $('replayTut').disabled = !dogs.length;
+    setSettingsTab('general');
     $('settings').classList.remove('hidden');
   }
   $('optSfx').addEventListener('change', (e) => { prefs.sfx = e.target.checked; savePrefs(); wakeAudio(); sfx('tip'); });
@@ -9721,14 +9796,14 @@
     }
     if (b.id === 'resetTips') { state.tips = []; save(); toast('Tips will show again'); return; }
     if (b.id === 'exportBtn') {
-      $('saveCode').value = encodeSave(currentSaveObject());
+      $('saveCode').value = encodeSave(exportSaveObject());
       $('codeBox').classList.remove('hidden');
     } else if (b.id === 'copyBtn') {
       const ta = $('saveCode');
       try { await navigator.clipboard.writeText(ta.value); toast('Save code copied 📋'); }
       catch (_) { ta.focus(); ta.select(); try { document.execCommand('copy'); toast('Save code copied 📋'); } catch (__) { toast('Select the code and copy it manually'); } }
     } else if (b.id === 'downloadBtn') {
-      const blob = new Blob([JSON.stringify(currentSaveObject(), null, 1)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(exportSaveObject(), null, 1)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `pixelpups-save-${clockNow.dateKey}.json`;
@@ -10922,7 +10997,7 @@
     if (lostDog) P.push([lostDog.pos.x, lostDog.pos.z, 'lost']);
     return P;
   }
-  const MM_LABEL = { exit: 'Way home', shop: 'Shop', sniff: 'Sniff spot', gold: 'Something shiny', magic: 'Magic', special: 'Something to do', ticket: 'Game booth', flag: 'Checkpoint', lost: 'Lost dog', you: 'You', dog: 'Your dogs', walker: 'Neighbors' };
+  const MM_LABEL = { exit: 'Way home', shop: 'Shop', sniff: 'Sniff spot', gold: 'Something shiny', magic: 'Magic', special: 'Something to do', ticket: 'Game booth', flag: 'Checkpoint', lost: 'Lost dog', you: 'You', dog: 'Your dogs', walker: 'Neighbors', online: 'Other players', friend: 'Friends online' };
   function mmGlyph(x, k, px, py, s) {
     x.save();
     x.translate(px, py);
@@ -10966,6 +11041,14 @@
     const used = new Set(['you']);
     for (const [px, pz, kind] of mmPoints()) { mmGlyph(x, kind, toPx(px), toPz(pz), kind === 'sniff' ? s * 0.8 : s); used.add(kind); }
     for (const w of walkers) { const p = w.parts.root.position; x.fillStyle = 'rgba(80,70,110,0.75)'; x.beginPath(); x.arc(toPx(p.x), toPz(p.z), s * 0.55, 0, TAU); x.fill(); used.add('walker'); }
+    // other players online: a bright ring, green for friends, so they never look like neighbors
+    for (const P of LIVE.others.values()) {
+      const p = P.parts.root.position, fr = (onl().friends[P.uid] || {}).st === 'friend';
+      x.fillStyle = fr ? '#2ecc71' : '#00b8d4'; x.strokeStyle = '#ffffff'; x.lineWidth = Math.max(1.5, s * 0.3);
+      x.beginPath(); x.arc(toPx(p.x), toPz(p.z), s * 0.8, 0, TAU); x.fill(); x.stroke();
+      x.fillStyle = '#ffffff'; x.beginPath(); x.arc(toPx(p.x), toPz(p.z), s * 0.28, 0, TAU); x.fill();
+      used.add(fr ? 'friend' : 'online');
+    }
     for (const d of dogs) {
       const p = d.root.position, C = ART.coatOf(d.breed, d.coat);
       x.fillStyle = C.body; x.strokeStyle = '#fff'; x.lineWidth = s * 0.3;
@@ -11390,6 +11473,7 @@
     hobbyUpdate(dt);
     round3Update(dt);
     round3Slow(dt);
+    if (place === 'park') { liveTick(dt); liveAnimate(dt); }
     updateTowelTask();
     updateUseTask();
     cookTick(dt);
@@ -11411,6 +11495,8 @@
       if (!tiredWarned && dogs.some((d) => d.energy < CRITICAL)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
     } else {
       for (const r of furnRT.values()) if (r.group.userData.anim) r.group.userData.anim(animT);
+      updateFillAnims(dt);
+      if (!visit && state.furniture.some((f) => D.ITEMS[f.type].auto && !f.filled)) autoRefill();
       if (mode === 'normal') setCtx(funCtx());
       buildInnerWalls();
     }
@@ -14428,6 +14514,8 @@
       const N = D.NEIGHBORS.find((x) => x.owner === T.owner);
       news({ title: `${T.owner} is back`, text: `${T.owner} is waiting at your front door to pick up ${N.dog.name}.`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
     }
+    // after a day the owner always takes their dog back: if nobody comes to the door, they let themselves in
+    if (T.ready && place === 'home' && !visit && Date.now() > T.until + D.SIT.grace * 60000) { finishSitting(true); return; }
     if (T.ready && place === 'home' && !sitOwner) {
       const N = D.NEIGHBORS.find((x) => x.owner === T.owner);
       sitOwner = ART.buildPlayer({ shirt: N.shirt, hair: N.hair });
@@ -14438,7 +14526,7 @@
     }
   }
   const nearSitOwner = (pp) => sitOwner && place === 'home' && flatDist(sitOwner.root.position, pp) < 2.4;
-  function finishSitting() {
+  function finishSitting(auto) {
     const T = state.sitting, N = T && D.NEIGHBORS.find((x) => x.owner === T.owner);
     if (!T || !N) return;
     const d = sitDog || { happy: (T.data || {}).happy || 60, hunger: (T.data || {}).hunger || 60 };
@@ -14455,7 +14543,8 @@
     state.stats.sits = (state.stats.sits || 0) + 1;
     progress('sitting');
     const misses = [T.walks < 1 && 'a walk', T.petted < 3 && 'more cuddles', !(d.hunger >= 45) && 'a full bowl'].filter(Boolean);
-    toast(`${T.owner}: ${nfill(pick(D.SIT_THANKS), N)} +🪙 ${coins}`);
+    if (auto) news({ title: `${T.owner} picked up ${N.dog.name}`, text: `${T.owner} came by and took ${N.dog.name} home. ${nfill(pick(D.SIT_THANKS), N)} (+🪙 ${coins})`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
+    else toast(`${T.owner}: ${nfill(pick(D.SIT_THANKS), N)} +🪙 ${coins}`);
     if (misses.length) setTimeout(() => toast(`Next time ${N.dog.name} would like ${misses.join(' and ')}`), 2600);
     confetti(player.root.position.clone().add(new V3(0, 1.4, 0)), 4);
     state.sitting = null;
@@ -16173,7 +16262,7 @@
       NET.db = fb.database();
       NET.ready = true;
       NET.err = '';
-      if (visit) return true;
+      if (visit) { pushStatus(); return true; }
       const O = onl();
       O.on = true;
       O.uid = u.uid;
@@ -16182,6 +16271,8 @@
       await pushProfile(true);
       listenInbox();
       refreshFriends();
+      pushStatus();
+      if (place === 'park') liveJoin();
       setTimeout(() => { pushHome(true); pushBackup(false); }, 1500);
       save();
       return true;
@@ -16193,6 +16284,9 @@
     }
   }
   function goOffline() {
+    liveLeave();
+    statusOffline();
+    watchFriends(false);
     if (NET.inbox) { NET.inbox.off('value'); NET.inbox = null; }
     onl().on = false;
     NET.ready = false;
@@ -16552,7 +16646,7 @@
     friendView = null;
     renderFriends();
     $('friends').classList.remove('hidden');
-    if (NET.ready) refreshFriends();
+    if (NET.ready) { refreshFriends(); watchFriends(true); }
     else if (onl().on) goOnline(true).then(renderFriendsIfOpen);
   }
   const renderFriendsIfOpen = () => { if (!$('friends').classList.contains('hidden')) renderFriends(); updateFriendBadge(); };
@@ -16587,7 +16681,7 @@
       `<div class="addRow"><input id="friendCodeIn" class="nameField" maxlength="7" autocapitalize="characters" autocomplete="off" placeholder="A friend’s code"><button class="primary small" data-fa="add">Add</button></div>`;
     if (req.length) h += '<div class="section">Want to be friends</div>' + req.map(([uid, R]) => `<div class="row"><div class="ic">${fThumb(R.dg)}</div><div class="txt"><b>${esc(R.name)}</b><small>Code ${esc(R.code || '?')}</small></div><div class="btnCol"><button class="small primary" data-fa="accept" data-uid="${uid}">Yes</button><button class="small soft" data-fa="decline" data-uid="${uid}">No</button></div></div>`).join('');
     h += `<div class="section">Friends (${fr.length})</div>`;
-    h += fr.length ? fr.map(([uid, F]) => `<button class="row friendRow" data-fa="open" data-uid="${uid}"><div class="ic">${fThumb(F.dg)}</div><div class="txt"><b>${esc(F.name)}</b><small>${esc([F.rank ? `Rank ${F.rank}` : '', seenText(F.seen)].filter(Boolean).join(' · ') || 'Friend')}</small></div>${IC('right')}</button>`).join('')
+    h += fr.length ? fr.map(([uid, F]) => `<button class="row friendRow" data-fa="open" data-uid="${uid}"><div class="ic">${fThumb(F.dg)}</div><div class="txt"><b>${esc(F.name)}</b><small>${esc(friendStatusLine(F))}</small></div>${IC('right')}</button>`).join('')
       : '<p class="sub">No friends yet. Share your code, or type in a friend’s code.</p>';
     if (sent.length) h += '<div class="section">Waiting for a yes</div>' + sent.map(([uid, F]) => `<div class="row"><div class="ic">${fThumb(F.dg)}</div><div class="txt"><b>${esc(F.name)}</b><small>Request sent</small></div><button class="small soft" data-fa="remove" data-uid="${uid}">Cancel</button></div>`).join('');
     const bl = Object.entries(O.blocked);
@@ -16658,6 +16752,361 @@
   });
   $('visitReact').addEventListener('click', (e) => { const b = e.target.closest('[data-emo]'); if (b) leaveReaction(b.dataset.emo); });
 
+
+  // =====================================================================
+  // Live walks: everyone online in the same world (or the same multiplayer password) walks together.
+  // Each place is split into groups of up to LIVE_MAX players, so phones keep up.
+  // =====================================================================
+  const LIVE_MAX = 8;
+  const LIVE_STALE = 45000;
+  const SAYS = [['hi', 'Hi!'], ['cute', 'Cute dog!'], ['follow', 'Follow me!'], ['play', 'Let’s play!'], ['wow', 'Wow!'], ['bye', 'Bye!'], ['heart', '💕'], ['wave', '👋'], ['laugh', '😄'], ['paw', '🐾']];
+  const LIVE = { room: null, loc: null, shard: null, ref: null, me: null, others: new Map(), sendT: 0, beatT: 0, last: '', joining: false, statusRef: null };
+  // which world you're in: everyone, a password room, or nobody (live walks off)
+  const mpMode = () => onl().mode || 'world';
+  async function roomId() {
+    const O = onl();
+    if (mpMode() === 'off') return null;
+    if (mpMode() === 'room' && O.roomKey) return O.roomKey;
+    return 'pub';
+  }
+  async function hashRoom(pw) {
+    const text = 'pixelpups:' + String(pw).trim().toLowerCase();
+    try {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return 'p_' + [...new Uint8Array(buf)].slice(0, 10).map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch (_) { return 'p_' + hashStr(text).toString(16).padStart(8, '0') + hashStr(text + '!').toString(16).padStart(8, '0'); }
+  }
+  async function setRoomPassword(pw) {
+    const O = onl(), t = String(pw || '').trim();
+    if (!t) { O.mode = 'world'; O.roomKey = ''; O.roomHint = ''; }
+    else if (t.length < 4) { toast('Use at least 4 characters'); return false; }
+    else { O.mode = 'room'; O.roomKey = await hashRoom(t); O.roomHint = t.slice(0, 1) + '•'.repeat(Math.max(2, t.length - 2)) + t.slice(-1); }
+    save();
+    await liveLeave();
+    if (place === 'park') liveJoin();
+    return true;
+  }
+  // ----- joining the group for this place -----
+  async function liveJoin() {
+    if (!NET.ready || visit || place !== 'park' || LIVE.joining) return;
+    const room = await roomId();
+    if (!room) return;
+    LIVE.joining = true;
+    try {
+      const base = `live/${room}/${loc}`;
+      const all = (await ref(base).once('value')).val() || {};
+      const now = Date.now();
+      // fill up the fullest group that still has room, so people meet
+      let best = null, bn = -1, maxN = -1;
+      for (const [sh, members] of Object.entries(all)) {
+        const n = Object.values(members || {}).filter((m) => m && now - (m.t || 0) < LIVE_STALE).length;
+        maxN = Math.max(maxN, +sh);
+        if (n < LIVE_MAX && n > bn) { bn = n; best = sh; }
+      }
+      const shard = best !== null ? best : String(maxN + 1);
+      if (place !== 'park') return;
+      LIVE.room = room; LIVE.loc = loc; LIVE.shard = shard;
+      LIVE.ref = ref(`${base}/${shard}`);
+      LIVE.me = LIVE.ref.child(NET.uid);
+      const entry = liveEntry(true);
+      await LIVE.me.set(entry);
+      try { LIVE.me.onDisconnect().remove(); } catch (_) { /* fine */ }
+      LIVE.ref.on('value', (snap) => liveSync(snap.val() || {}), () => {});
+      LIVE.sendT = 0;
+    } catch (e) { NET.err = niceErr(e); } finally { LIVE.joining = false; }
+  }
+  async function liveLeave() {
+    if (LIVE.ref) LIVE.ref.off('value');
+    if (LIVE.me) { const me = LIVE.me; try { me.onDisconnect().cancel(); } catch (_) { /* fine */ } me.remove().catch(() => {}); }
+    LIVE.ref = LIVE.me = null;
+    LIVE.room = LIVE.loc = LIVE.shard = null;
+    for (const P of LIVE.others.values()) dropRemote(P);
+    LIVE.others.clear();
+    $('mpBtn').classList.add('hidden');
+    $('mpSay').classList.add('hidden');
+  }
+  const r2 = (v) => Math.round(v * 100) / 100;
+  function liveEntry(full) {
+    const p = player.root.position;
+    const e = { x: r2(p.x), y: r2(p.y), z: r2(p.z), r: r2(player.root.rotation.y), t: TS(),
+      d: dogs.slice(0, 4).map((d) => [d.breed, d.coat, r2(d.root.position.x), r2(d.root.position.z), r2(d.root.rotation.y), r2(d.root.position.y)].join(',')).join(';').slice(0, 240) };
+    if (full) Object.assign(e, { n: safeName(youName() || (dogs[0] ? `${dogs[0].name}’s human` : 'Player')), c: onl().code || '', lk: JSON.stringify(state.look || {}).slice(0, 300) });
+    return e;
+  }
+  // send your position a few times a second while you move, and a heartbeat now and then
+  function liveTick(dt) {
+    if (!LIVE.me) return;
+    LIVE.sendT -= dt;
+    LIVE.beatT -= dt;
+    if (LIVE.sendT > 0) return;
+    LIVE.sendT = 0.3;
+    const e = liveEntry(false);
+    const key = [e.x, e.z, e.r, e.d].join('|');
+    if (key === LIVE.last && LIVE.beatT > 0) return;
+    LIVE.last = key;
+    LIVE.beatT = 10;
+    LIVE.me.update(e).catch(() => {});
+  }
+  // ----- other players -----
+  function liveSync(all) {
+    const now = Date.now(), O = onl();
+    const seen = new Set();
+    for (const [uid, m] of Object.entries(all)) {
+      if (uid === NET.uid || !m || O.blocked[uid] || now - (m.t || 0) > LIVE_STALE) continue;
+      seen.add(uid);
+      let P = LIVE.others.get(uid);
+      if (!P) { P = makeRemote(uid, m); LIVE.others.set(uid, P); }
+      P.m = m;
+      P.tx = +m.x || 0; P.ty = +m.y || 0; P.tz = +m.z || 0; P.tr = +m.r || 0;
+      const ds = String(m.d || '').split(';').filter(Boolean).map((s) => s.split(','));
+      ds.forEach((a, i) => { const R = P.dogs[i]; if (R) { R.tx = +a[2] || 0; R.tz = +a[3] || 0; R.tr = +a[4] || 0; R.ty = +a[5] || 0; } });
+      if (m.e && m.et && m.et !== P.lastSay && now - m.et < 8000) { P.lastSay = m.et; sayBubble(P.parts.root, m.e, 2.35); }
+    }
+    for (const [uid, P] of LIVE.others) if (!seen.has(uid)) { dropRemote(P); LIVE.others.delete(uid); }
+    $('mpBtn').classList.toggle('hidden', !LIVE.others.size);
+    if (!LIVE.others.size) $('mpSay').classList.add('hidden');
+    const n = LIVE.others.size;
+    if (n && !LIVE.greeted) { LIVE.greeted = true; toast(`${n === 1 ? 'Someone else is' : `${n} others are`} walking here too 👋`); }
+  }
+  function makeRemote(uid, m) {
+    let look = {};
+    try { look = cleanLook(JSON.parse(m.lk || '{}')); } catch (_) { look = {}; }
+    const parts = ART.buildPlayer(look);
+    parts.root.position.set(+m.x || 0, +m.y || 0, +m.z || 0);
+    parkRoot.add(parts.root);
+    const label = textSprite(safeName(m.n), 0.3);
+    label.position.y = 2.15;
+    parts.root.add(label);
+    parts.root.userData.remote = uid;
+    const dogsR = String(m.d || '').split(';').filter(Boolean).slice(0, 4).map((s) => {
+      const a = s.split(',');
+      const br = D.BREEDS[a[0]] ? a[0] : 'retriever';
+      const P2 = ART.buildDog(br, a[1]);
+      const root = P2.root;
+      root.position.set(+a[2] || 0, 0, +a[3] || 0);
+      root.userData.remote = uid;
+      parkRoot.add(root);
+      return { parts: P2, root, tx: +a[2] || 0, tz: +a[3] || 0, tr: 0, ty: 0, ph: Math.random() * 6 };
+    });
+    return { uid, parts, dogs: dogsR, tx: 0, tz: 0, ty: 0, tr: 0, ph: 0, m };
+  }
+  function dropRemote(P) {
+    P.parts.root.parent && P.parts.root.parent.remove(P.parts.root);
+    for (const R of P.dogs) R.root.parent && R.root.parent.remove(R.root);
+  }
+  // smooth movement between updates
+  function liveAnimate(dt) {
+    const k = 1 - Math.pow(0.004, dt);
+    for (const P of LIVE.others.values()) {
+      const p = P.parts.root.position;
+      const ox = p.x, oz = p.z;
+      if (Math.hypot(P.tx - p.x, P.tz - p.z) > 8) p.set(P.tx, P.ty, P.tz);
+      p.x += (P.tx - p.x) * k; p.z += (P.tz - p.z) * k; p.y += (P.ty - p.y) * k;
+      P.parts.root.rotation.y = angleLerp(P.parts.root.rotation.y, P.tr, k);
+      const moved = Math.hypot(p.x - ox, p.z - oz);
+      P.ph += moved * 4.2;
+      const s = Math.sin(P.ph) * 0.7 * (moved > 0.002 ? 1 : 0);
+      if (P.parts.legL) { P.parts.legL.rotation.x = s; P.parts.legR.rotation.x = -s; P.parts.armL.rotation.x = -s * 0.8; P.parts.armR.rotation.x = s * 0.8; }
+      for (const R of P.dogs) {
+        const q = R.root.position, qx = q.x, qz = q.z;
+        if (Math.hypot(R.tx - q.x, R.tz - q.z) > 8) q.set(R.tx, 0, R.tz);
+        q.x += (R.tx - q.x) * k; q.z += (R.tz - q.z) * k;
+        q.y = (terrainOn() ? groundAt(q.x, q.z) : 0) + Math.max(0, R.ty - groundAt(q.x, q.z)) * 0;
+        R.root.rotation.y = angleLerp(R.root.rotation.y, R.tr, k);
+        const mv = Math.hypot(q.x - qx, q.z - qz);
+        R.ph += mv * 9;
+        R.root.position.y += Math.abs(Math.sin(R.ph)) * 0.04 * (mv > 0.002 ? 1 : 0);
+        const L = R.parts.legs;
+        if (L && L.length) L.forEach((leg, i) => { leg.rotation.x = Math.sin(R.ph + (i % 2 ? Math.PI : 0)) * 0.6 * (mv > 0.002 ? 1 : 0); });
+      }
+    }
+  }
+  function sayBubble(root, id, h) {
+    const S2 = SAYS.find((x) => x[0] === id);
+    if (!S2) return;
+    const b = textSprite(S2[1], 0.36);
+    b.position.y = h + 0.45;
+    root.add(b);
+    setTimeout(() => root.remove(b), 3500);
+  }
+  async function liveSay(id) {
+    if (!LIVE.me || !SAYS.some((x) => x[0] === id)) return;
+    if (Date.now() - (LIVE.sayAt || 0) < 2000) return;
+    LIVE.sayAt = Date.now();
+    sayBubble(player.root, id, 2.35);
+    $('mpSay').classList.add('hidden');
+    try { await LIVE.me.update({ e: id, et: TS() }); } catch (_) { /* fine */ }
+  }
+  // tapping another player
+  let mpPick = null;
+  function tapRemote(ray) {
+    if (!LIVE.others.size) return false;
+    const roots = [];
+    for (const P of LIVE.others.values()) { roots.push(P.parts.root); for (const R of P.dogs) roots.push(R.root); }
+    const hits = ray.intersectObjects(roots, true);
+    for (const h of hits) {
+      let o = h.object;
+      while (o && !o.userData.remote) o = o.parent;
+      if (o) { openRemote(o.userData.remote); return true; }
+    }
+    return false;
+  }
+  function openRemote(uid) {
+    const P = LIVE.others.get(uid);
+    if (!P) return;
+    mpPick = uid;
+    const O = onl(), m = P.m, isF = O.friends[uid] && O.friends[uid].st === 'friend', sent = O.friends[uid] && O.friends[uid].st === 'sent';
+    const dogsTxt = String(m.d || '').split(';').filter(Boolean).length;
+    $('mpPlayerBody').innerHTML = `<div class="friendHead"><div class="ic">${IC('person')}</div><div><b>${esc(safeName(m.n))}</b><small>${dogsTxt} dog${dogsTxt === 1 ? '' : 's'} · ${isF ? 'Your friend' : sent ? 'Friend request sent' : 'Walking here'}</small></div></div>` +
+      `<div class="mailKinds">${SAYS.map(([k, t]) => `<button class="soft" data-say="${k}">${esc(t)}</button>`).join('')}</div>` +
+      `<div class="btnRow">${!isF && !sent && m.c ? '<button class="primary small" data-mp="friend">Add as friend</button>' : ''}<button class="soft small" data-mp="block">Block</button><button class="soft small" data-mp="report">Report</button></div>`;
+    $('mpPlayer').classList.remove('hidden');
+  }
+  $('mpPlayer').addEventListener('click', async (e) => {
+    if (e.target.id === 'mpPlayer' || e.target.closest('[data-act="closeMp"]')) { $('mpPlayer').classList.add('hidden'); return; }
+    const s2 = e.target.closest('[data-say]');
+    if (s2) { liveSay(s2.dataset.say); $('mpPlayer').classList.add('hidden'); return; }
+    const b = e.target.closest('[data-mp]');
+    if (!b || !mpPick) return;
+    const P = LIVE.others.get(mpPick);
+    if (b.dataset.mp === 'friend' && P) { b.disabled = true; await addFriendByCode(P.m.c); openRemote(mpPick); }
+    if (b.dataset.mp === 'block') {
+      const O = onl();
+      O.blocked[mpPick] = safeName(P ? P.m.n : 'Player');
+      try { await ref(`users/${NET.uid}/blocked/${mpPick}`).set(true); } catch (_) { /* local block still hides them */ }
+      if (O.friends[mpPick]) await removeFriend(mpPick, true);
+      if (P) { dropRemote(P); LIVE.others.delete(mpPick); }
+      save();
+      $('mpPlayer').classList.add('hidden');
+      toast('Blocked. You won’t see them anymore');
+    }
+    if (b.dataset.mp === 'report') { await reportPlayer(mpPick, 'Seen on a live walk'); }
+  });
+  $('mpBtn').addEventListener('click', () => {
+    const el = $('mpSay');
+    if (!el.classList.contains('hidden')) { el.classList.add('hidden'); return; }
+    el.innerHTML = SAYS.map(([k, t]) => `<button class="soft small" data-say="${k}">${esc(t)}</button>`).join('');
+    el.classList.remove('hidden');
+  });
+  $('mpSay').addEventListener('click', (e) => { const b = e.target.closest('[data-say]'); if (b) liveSay(b.dataset.say); });
+
+  // =====================================================================
+  // Where you are, for your friends: online or not, and in which place
+  // =====================================================================
+  const whereName = (w) => (w === 'home' ? 'Home' : w === 'visit' ? 'Visiting a friend' : D.LOCATIONS[w] ? D.LOCATIONS[w].name : '');
+  function pushStatus() {
+    if (!NET.ready) return;
+    const where = visit ? 'visit' : place === 'home' ? 'home' : loc;
+    if (where === LIVE.where && LIVE.statusRef) return;
+    LIVE.where = where;
+    LIVE.statusRef = ref(`status/${NET.uid}`);
+    LIVE.statusRef.set({ on: true, loc: where, at: TS() }).catch(() => {});
+    try { LIVE.statusRef.onDisconnect().set({ on: false, loc: '', at: TS() }); } catch (_) { /* fine */ }
+  }
+  function statusOffline() {
+    if (!LIVE.statusRef) return;
+    LIVE.statusRef.set({ on: false, loc: '', at: TS() }).catch(() => {});
+    LIVE.statusRef = null; LIVE.where = null;
+  }
+  // friends' status: watched while a friends list is on screen
+  const watching = new Map();
+  function watchFriends(on) {
+    for (const [uid, r] of watching) if (!on || !onl().friends[uid]) { r.off('value'); watching.delete(uid); }
+    if (!on || !NET.ready) return;
+    for (const [uid, F] of Object.entries(onl().friends)) {
+      if (F.st !== 'friend' || watching.has(uid)) continue;
+      const r = ref(`status/${uid}`);
+      watching.set(uid, r);
+      r.on('value', (snap) => {
+        const v = snap.val() || {};
+        const Fx = onl().friends[uid];
+        if (!Fx) return;
+        Fx.online = !!v.on && Date.now() - (v.at || 0) < 6 * 3600000;
+        Fx.where = v.loc || '';
+        if (v.at) Fx.last = v.at;
+        renderFriendsIfOpen();
+        renderMultiIfOpen();
+      }, () => {});
+    }
+  }
+  function friendStatusLine(F) {
+    if (F.online) return `Online${whereName(F.where) ? ` · ${whereName(F.where)}` : ''}`;
+    const t = F.last || F.seen;
+    if (!t) return 'Not online yet';
+    const m = Math.round((Date.now() - t) / 60000);
+    return `Last online ${m < 2 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`}`;
+  }
+
+  // =====================================================================
+  // Settings → Multiplayer
+  // =====================================================================
+  let setTab = 'general';
+  function setSettingsTab(t) {
+    setTab = t;
+    document.querySelectorAll('#setTabs .seg').forEach((b) => b.classList.toggle('sel', b.dataset.st === t));
+    $('setGeneral').classList.toggle('hidden', t !== 'general');
+    $('setMulti').classList.toggle('hidden', t !== 'multi');
+    if (t === 'multi') { renderMulti(); watchFriends(true); }
+  }
+  const renderMultiIfOpen = () => { if (!$('settings').classList.contains('hidden') && setTab === 'multi') renderMulti(); };
+  function renderMulti() {
+    const O = onl(), B = $('setMulti');
+    const on = O.on && NET.ready;
+    const mode = mpMode();
+    let h = `<div class="section">${IC('person')}Playing online</div>`;
+    if (!on) {
+      h += `<p class="sub">Go online to walk with other players, visit friends and keep a cloud backup. Offline, everything works like before.</p>${NET.err && O.on ? `<p class="sub warn">${esc(NET.err)}</p>` : ''}<button class="primary" data-mm="online">${O.on ? 'Connect again' : 'Go online'}</button>`;
+    } else {
+      h += `<p class="sub">You’re online${O.code ? ` · friend code <b>${esc(O.code)}</b>` : ''}.</p><button class="soft small" data-mm="offline">Go offline</button>`;
+    }
+    h += `<div class="section">${IC('walk')}Who you meet on walks</div>` +
+      `<div class="segs mpModes">${[['world', 'Everyone'], ['room', 'Password'], ['off', 'Nobody']].map(([k, n]) => `<button class="seg${mode === k ? ' sel' : ''}" data-mode="${k}">${n}</button>`).join('')}</div>` +
+      (mode === 'world' ? '<p class="sub small">Everyone who plays online in the default world can meet you on walks, in groups of up to 8 per place.</p>' : '') +
+      (mode === 'off' ? '<p class="sub small">You walk alone. Friends can still visit your home and write to you.</p>' : '') +
+      (mode === 'room' ? `<p class="sub small">You only meet players who use the same multiplayer password. It stays set until you change it. It only decides who you see, so don’t use a password you use anywhere else.</p>` +
+        `${O.roomHint ? `<p class="sub">Current password: <b>${esc(O.roomHint)}</b></p>` : ''}<div class="addRow"><input id="roomPw" class="nameField" type="text" maxlength="32" autocomplete="off" autocapitalize="off" placeholder="${O.roomHint ? 'A new password' : 'Multiplayer password'}"><button class="primary small" data-mm="setpw">Use</button></div>${O.roomHint ? '<button class="soft small" data-mm="clearpw">Back to everyone</button>' : ''}` : '');
+    const fr = Object.entries(O.friends).filter(([, F]) => F.st === 'friend').sort((a, b) => (b[1].online ? 1 : 0) - (a[1].online ? 1 : 0) || (b[1].last || b[1].seen || 0) - (a[1].last || a[1].seen || 0));
+    h += `<div class="section">${IC('wave')}Friends</div>`;
+    if (!fr.length) h += '<p class="sub">Friends who said yes show up here, with when they were last online and where they are.</p>';
+    else h += fr.map(([uid, F]) => {
+      const go = F.online && F.where && D.LOCATIONS[F.where] && locUnlocked(F.where) && !(place === 'park' && loc === F.where);
+      return `<div class="row friendStat${F.online ? ' on' : ''}"><div class="ic">${fThumb(F.dg)}<i class="dotOn"></i></div><div class="txt"><b>${esc(F.name)}</b><small>${esc(friendStatusLine(F))}</small></div>${go ? `<button class="small soft" data-mm="goto" data-loc="${F.where}">Go there</button>` : ''}</div>`;
+    }).join('');
+    h += '<button class="soft small" data-mm="friends">Open Friends</button>';
+    B.innerHTML = h;
+  }
+  $('setTabs').addEventListener('click', (e) => { const b = e.target.closest('[data-st]'); if (b) setSettingsTab(b.dataset.st); });
+  $('setMulti').addEventListener('click', async (e) => {
+    const m = e.target.closest('[data-mode]');
+    if (m) {
+      const O = onl();
+      if (m.dataset.mode === 'room' && !O.roomKey) { O.mode = 'room'; renderMulti(); return; }
+      O.mode = m.dataset.mode;
+      save();
+      await liveLeave();
+      if (place === 'park') liveJoin();
+      renderMulti();
+      return;
+    }
+    const b = e.target.closest('[data-mm]');
+    if (!b) return;
+    switch (b.dataset.mm) {
+      case 'online': b.disabled = true; b.textContent = 'Connecting…'; await goOnline(false); renderMulti(); watchFriends(true); break;
+      case 'offline': goOffline(); renderMulti(); break;
+      case 'setpw': if (await setRoomPassword($('roomPw').value)) { toast('Multiplayer password set'); renderMulti(); } break;
+      case 'clearpw': await setRoomPassword(''); toast('Back in the default world'); renderMulti(); break;
+      case 'friends': $('settings').classList.add('hidden'); openFriends(); break;
+      case 'goto': $('settings').classList.add('hidden'); goWalk(b.dataset.loc); break;
+      default: break;
+    }
+  });
+  // save codes and files you hand out never include your email
+  function exportSaveObject() {
+    const o = JSON.parse(JSON.stringify(currentSaveObject()));
+    if (o.online) { delete o.online.email; delete o.online.roomHint; }
+    return o;
+  }
+
   // Add ?debug to the game link to poke at the game from the browser console
   if (/[?&]debug\b/.test(location.search)) {
     window.VP = {
@@ -16700,6 +17149,7 @@
       openBake, startBake, bakeCut, bakeToIce, iceAt, bakeOven, get bake() { return bake; }, giveTreat, openStall, startStall, stallSell, get stall() { return stall; }, marketDay, marketStock, weekHot,
       openMuseum, museumTick, hallVisitors, hallChoices, museum, museumFame, renderMuseum, spawnCatchables, get catchables() { return catchables; }, swingNet, catchIt, openCritters, renderExhibits, get roamers() { return roamers; },
       startFishing, fishTap, fishPick, startSnowman, snowStart, snowNext, renderSnow, meltSnowmen, snowOnGround, startFlakes, flakesTap, set lastTap(v) { lastTap = v; }, startDisc, discTap, disc, discCupToday,
+      openSettings, LIVE, liveJoin, liveLeave, liveSay, liveSync, openRemote, setRoomPassword, hashRoom, pushStatus, watchFriends, friendStatusLine, renderMulti, setSettingsTab, exportSaveObject, mpMode,
       NET, onl, goOnline, goOffline, openFriends, renderFriends, addFriendByCode, acceptFriend, removeFriend, sendToFriend, visitFriend, leaveReaction, pushBackup, pushHome, fetchBackup, restoreBackup, linkEmail, signInEmail, safeName, refreshFriends, visitPayload, visitFromPayload, get friendView() { return friendView; },
       rollFavor, startFavor, get favorW() { return favorW; }, weekStat, rollWeek, deliverGazette, openGazette, addRivalry, rivalry, rivalOf, toyPals, round3Ctx, round3Action, nearPier, nearDiscMat, nearMuseum, nearMarket,
     };
