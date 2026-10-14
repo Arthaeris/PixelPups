@@ -160,6 +160,9 @@
     </div>
   </div>
 
+  <button id="mpBtn" class="glass hidden" aria-label="Say something">👋</button>
+  <div id="mpSay" class="glass hidden"></div>
+
   <div id="visitBar" class="panel glass hidden">
     <div><b id="visitName">Visiting</b><div class="sub" id="visitHint"></div></div>
     <div id="visitReact" class="hidden"><button class="soft small" data-emo="💕">💕</button><button class="soft small" data-emo="🐾">🐾</button><button class="soft small" data-emo="🌟">🌟</button><button class="soft small" data-emo="😄">😄</button></div>
@@ -454,6 +457,13 @@
     </div>
   </div>
 
+  <div id="mpPlayer" class="modal center hidden">
+    <div class="sheet">
+      <div class="sheetHead"><h2>Another player</h2><button class="x" data-act="closeMp" aria-label="Close"><i data-i="x"></i></button></div>
+      <div class="sheetBody" id="mpPlayerBody"></div>
+    </div>
+  </div>
+
   <div id="nameAsk" class="modal center hidden">
     <div class="sheet">
       <div class="sheetHead"><h2>What should we call you?</h2></div>
@@ -607,8 +617,11 @@
       <div class="sheetHead">
         <h2>Settings</h2>
         <button class="x" data-act="closeSettings" aria-label="Close"><i data-i="x"></i></button>
+        <div id="setTabs" class="headRow segs"><button class="seg sel" data-st="general">General</button><button class="seg" data-st="multi">Multiplayer</button></div>
       </div>
       <div class="sheetBody">
+        <div id="setMulti" class="hidden"></div>
+        <div id="setGeneral">
         <div class="section"><i data-i="rotate"></i>Updates</div>
         <p class="sub" id="updInfo">Phones sometimes hold on to an old copy of the game. Check here for a newer version.</p>
         <div class="btnRow">
@@ -666,6 +679,7 @@
         <div class="section"><i data-i="sprout"></i>New game</div>
         <button class="soft danger" id="newGameBtn">Start a new game</button>
         <p class="sub ver" id="verInfo"></p>
+        </div>
       </div>
     </div>
   </div>
