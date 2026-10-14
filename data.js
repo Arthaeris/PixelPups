@@ -9,7 +9,7 @@ window.VP_DATA = (function () {
     SAVE_KEY: 'voxelpaws-save-v1',     // keep this name so old saves are found
     BACKUP_KEY: 'voxelpaws-backup',
     SAVE_VERSION: 13,
-    AUTO_REFILL_SECONDS: 15,           // luxury feeder / fountain refill this long after being emptied
+    AUTO_REFILL_MINUTES: 20,           // luxury feeder / fountain refill this long after being emptied
     OFFLEASH_COME_LEVEL: 2,            // Come must reach this level before a dog can go off-leash
     TIME_ZONE: 'Europe/Berlin',        // all clocks, weather and daily resets use German time
     // Playing with friends online (Firebase). The apiKey is not a secret: the database rules protect the data.
@@ -1907,7 +1907,7 @@ window.VP_DATA = (function () {
   // ===================================================================
   // Dog sitting: neighbors' dogs come to stay for a day
   // ===================================================================
-  const SIT = { minutes: 60, grace: 10, coins: [40, 80] };   // grace: minutes the owner waits at the door before letting themselves in
+  const SIT = { minutes: 60, coins: [40, 80] };
   const SIT_ASK = ['I have to go away for a day. Could you look after {ndog}? {ndog} adores your {dog}!', 'Could {ndog} stay with you for a day? I’ll pay you back, promise.', 'Emergency! Work trip. Would you take {ndog} for a day?'];
   const SIT_QUIRKS = {
     foodie: 'eats every crumb it finds', social: 'wants to play with everyone', zoomies: 'never stops running', brainiac: 'opens the toy box by itself',
