@@ -1718,4 +1718,3 @@ body.funOn #mpBtn, body.decorating #mpBtn { display: none; }
 .friendStat .ic { position: relative; }
 .friendStat .dotOn { position: absolute; right: -2px; bottom: -2px; width: 12px; height: 12px; border-radius: 50%; background: #b0b0b8; box-shadow: 0 0 0 2px #fff; }
 .friendStat.on .dotOn { background: #2ecc71; }
-.lg.online { background: #00b8d4; border-radius: 50%; box-shadow: 0 0 0 2px #fff; } .lg.friend { background: #2ecc71; border-radius: 50%; box-shadow: 0 0 0 2px #fff; }
