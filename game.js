@@ -405,6 +405,10 @@
   let place = 'home';      // 'home' | 'park'
   let mode = 'normal';     // 'normal' | 'decorate' | 'build'
   const dogs = [];
+  // dogs that aren't in the scene right now: at home while you're out, or with you at a player place
+  const restDogs = [];
+  let packOrder = [];
+  const allDogs = () => { const a = dogs.concat(restDogs); if (packOrder.length) a.sort((x, y) => packOrder.indexOf(x.id) - packOrder.indexOf(y.id)); return a; };
   let selected = null;
   let selectedInv = null;
   let decoTab = 'furn';
@@ -990,6 +994,7 @@
       furnMap.set(f.i + ',' + f.j, f);
       if (g.userData.content) g.userData.content.visible = !!f.filled;
       if (f.type === 'painting') applyPaintingTex(g, f.pid);
+      if (f.type === 'photostrip') applyPaintingTex(g, f.pid, state.strips);
     }
     rebuildHomeLights();
     if (!visit) mailFlags();
@@ -1255,9 +1260,12 @@
     sfx('fail');
     return false;
   }
+  // a library book you borrowed helps for a while (see the library in venues.js)
+  const bookOn = (k) => !!(state.book && state.book.k === k && Date.now() < state.book.until);
   function gainXP(n) {
     if (visit || !n) return;
     if (dogs.some((d) => d.hasBadge('champion'))) n *= 1.1;
+    if (bookOn('xp')) n *= 1.1;
     state.xp = (state.xp || 0) + Math.round(n);
     const r = rank();
     if (r > (state.rankSeen || 1)) {
@@ -1297,6 +1305,7 @@
     if (!D.LOCATIONS[l] || visit || !n) return;
     state.mastery = state.mastery || {};
     const before = starsOf(l);
+    if (bookOn('explore')) n *= 1.25;
     state.mastery[l] = (state.mastery[l] || 0) + n;
     const after = starsOf(l);
     for (let k = before + 1; k <= after; k++) starUp(l, k);
@@ -1769,6 +1778,7 @@
   }
 
   function addCoins(n, pos) {
+    if (place === 'park' && n > 0 && bookOn('coins')) n = Math.round(n * 1.15);
     state.coins += n;
     if (place === 'park') { walkEarn += n; progress('walkcoins', n); }
     if (pos) spawnEmoji('🪙', pos.clone().add(new V3(0, 1.2, 0)), { size: 0.45, vy: 1.1 });
@@ -2268,6 +2278,7 @@
         if (W.precip === 'rain' && this.flag('rainJoy') && isGardenTile(Math.floor(pos.x), Math.floor(pos.z))) decay -= 0.03;
         decay -= D.COMFORT_BONUS * (comfort.paws - 1);
         if (houseTier() >= 2) decay -= 0.02;
+        if (bookOn('cozy')) decay -= 0.03;
         if (nightLevel > 0.5 && litAt(pos.x, pos.z)) decay -= 0.02;
         if (musicOn()) decay -= 0.03;
         if (this.state === 'watch') decay -= 0.04 * (this.flag('lounges') ? 2 : 1);
@@ -3291,7 +3302,7 @@
         if (!['follow', 'roam'].includes(d.state) || d.returning) continue;
         for (const w of walkers) {
           const n = w.dog;
-          if (n.state !== 'follow' || !ready(d, n)) continue;
+          if (w.noDog || n.state !== 'follow' || !ready(d, n)) continue;
           const dist = d.root.position.distanceTo(n.root.position);
           if (dist < (d.offLeash ? 2.0 : 1.4) && Math.random() < (d.offLeash ? 0.6 : 0.35)) { startEncounter(d, n); return; }
         }
@@ -3384,6 +3395,10 @@
     // a neighbor who invited you here is always out
     const meet = meetupLive(), mo = meet && meet.loc === loc ? order.find((N) => N.owner === meet.owner) : null;
     if (mo) { order.splice(order.indexOf(mo), 1); order.unshift(mo); }
+    // the neighbor whose dog you're looking after: out of town means you won't see them at all,
+    // and if they're just busy they might be out and about, but never with the dog (the dog is with you)
+    const T = state.sitting;
+    if (T && sittingAway(T)) { const k = order.findIndex((N) => N.owner === T.owner); if (k >= 0) order.splice(k, 1); }
     for (const info of order.slice(0, Math.max(count, lead ? 1 : 0) + (mo ? 1 : 0))) {
       const parts = ART.buildPlayer({ shirt: info.shirt, hair: info.hair });
       parkRoot.add(parts.root);
@@ -3399,6 +3414,7 @@
       dog.setState('follow');
       parkRoot.add(dog.root);
       w.dog = dog;
+      if (T && T.owner === info.owner) { w.noDog = true; dog.root.visible = false; dog.leash.visible = false; }
       walkers.push(w);
     }
   }
@@ -3438,9 +3454,28 @@
       w.label.visible = pos.distanceTo(pp) < 9;
       // neighbors slow down for a moment when they pass you, so you can say hi
       if (terrainOn()) pos.y = layerH(pos.x, pos.z, pos.y);
+      if (w.noDog) { sitOwnerGreet(w); continue; }
       w.dog.update(dt);
       w.dog.updateLeash();
     }
+  }
+  // is the owner out of town? (old sittings without the note: they said so in the letter, so assume away)
+  const sittingAway = (T) => T.away !== false;
+  // a busy owner out on a walk spots their dog with you and says hello
+  function sitOwnerGreet(w) {
+    w.dog.root.visible = false;
+    w.dog.leash.visible = false;
+    w.dog.root.position.copy(w.parts.root.position);
+    if (w.greeted || !sitDog || place !== 'park') return;
+    const pos = w.parts.root.position, sp = sitDog.root.position;
+    if (flatDist(pos, sp) > 3.2 && flatDist(pos, player.root.position) > 2.6) return;
+    w.greeted = true;
+    w.pause = Math.max(w.pause, 3.5);
+    w.parts.root.rotation.y = Math.atan2(sp.x - pos.x, sp.z - pos.z);
+    sitDog.happy = Math.min(100, sitDog.happy + 12);
+    if (sitDog.setState) { sitDog.faceTo && sitDog.faceTo(pos); sitDog.setState('happy', 2); }
+    spawnEmoji('💕', sitDog.headWorld ? sitDog.headWorld(0.35) : sp.clone().add(new V3(0, 1, 0)), { size: 0.45, life: 1.6 });
+    toast(`${w.info.owner}: ${nfill(pick(D.SIT_GREET), w.info)}`);
   }
   function neighborGift(w) {
     const friends = dogs.some((d) => friendship(d.id, w.dog.id) >= D.FRIEND_LEVEL);
@@ -3728,7 +3763,7 @@
   function performTrick(d, id) {
     const T = ALL_TRICKS[id];
     const before = d.trickLvl(id);
-    d.tricks[id] = (d.tricks[id] || 0) + (d.flag('quick') ? 1.5 : 1) * d.learnMul();
+    d.tricks[id] = (d.tricks[id] || 0) + (d.flag('quick') ? 1.5 : 1) * d.learnMul() * (bookOn('tricks') ? 1.25 : 1);
     const after = d.trickLvl(id);
     addSpec(d, 'performer', 2);
     d.trickId = id;
@@ -6283,7 +6318,7 @@
     const spots = D.MEET_SPOTS[l].filter((sp) => !sp[3] || found(l, sp[3]));
     const N = pick(D.NEIGHBORS), sp = pick(spots);
     state.meetup = { owner: N.owner, loc: l, spot: sp.slice(0, 3), from: clockNow.gameDay, until: clockNow.gameDay + 4, met: false };
-    const line = pick(D.MEET_INVITES).replace(/\{ndog\}/g, N.dog.name).replace(/\{dog\}/g, pick(dogs).name).replace(/\{spot\}/g, sp[0]).replace(/\{place\}/g, D.LOCATIONS[l].name);
+    const line = pick(D.MEET_INVITES).replace(/\{ndog\}/g, N.dog.name).replace(/\{dog\}/g, (pick(allDogs()) || { name: 'your dog' }).name).replace(/\{spot\}/g, sp[0]).replace(/\{place\}/g, D.LOCATIONS[l].name);
     news({ title: `${N.owner} invites you`, text: `“${line}”`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
     save();
   }
@@ -6318,7 +6353,7 @@
     confetti(w.parts.root.position.clone().add(new V3(0, 1.4, 0)), 4);
     haptic();
     save();
-    return pick(D.MEET_LINES).replace(/\{ndog\}/g, N.dog.name).replace(/\{dog\}/g, pick(dogs).name);
+    return pick(D.MEET_LINES).replace(/\{ndog\}/g, N.dog.name).replace(/\{dog\}/g, (pick(allDogs()) || { name: 'your dog' }).name);
   }
 
   // =====================================================================
@@ -6471,6 +6506,7 @@
   // =====================================================================
   function whatNow() {
     const out = [];
+    if (!dogs.length) return out;
     const add = (ic, text, go, label = 'Go') => out.push({ ic, text, go, label });
     const home = place === 'home';
     const thirsty = dogs.filter((d) => d.thirst < 40 || d.hunger < 40);
@@ -6588,6 +6624,120 @@
     }
   }
 
+  // =====================================================================
+  // Who comes along: on the world map you pick the dogs for an outing (or go on your own).
+  // Dogs that stay home rest there; dogs that come to a player place wait with you there.
+  // =====================================================================
+  let parkedSit = null;
+  let VEN = null;   // the world map and the player places (venues.js)
+  function benchDog(d, where) {
+    d.restAt = where;
+    if (d.releaseClaim) d.releaseClaim();
+    if (d.dropSpot) d.dropSpot();
+    d.path = null; d.onArrive = null; d.partner = null; d.returning = false; d.offLeash = false;
+    d.root.visible = false;
+    if (d.leash) d.leash.visible = false;
+    if (d.ui) { d.ui.open = false; d.ui.el.classList.remove('open'); d.ui.el.style.display = 'none'; }
+  }
+  function parkSit() {
+    if (!sitDog) return;
+    parkedSit = sitDog; sitDog = null;
+    if (parkedSit.releaseClaim) parkedSit.releaseClaim();
+    parkedSit.root.visible = false;
+    if (parkedSit.leash) parkedSit.leash.visible = false;
+  }
+  function unparkSit() {
+    if (!parkedSit) return;
+    sitDog = parkedSit; parkedSit = null;
+    sitDog.root.visible = true;
+  }
+  function splitDogs(ids, where) {
+    packOrder = allDogs().map((d) => d.id);
+    for (const d of dogs.slice()) if (!ids.includes(d.id)) { dogs.splice(dogs.indexOf(d), 1); benchDog(d, where); restDogs.push(d); }
+    if (sitDog && !ids.includes('sit')) parkSit();
+    if (selected && !dogs.includes(selected)) selected = dogs[0] || null;
+  }
+  function rejoinDogs() {
+    for (const d of restDogs) { d.restAt = null; d.root.visible = true; if (d.ui) d.ui.el.style.display = ''; if (!dogs.includes(d)) dogs.push(d); }
+    restDogs.length = 0;
+    if (packOrder.length) dogs.sort((a, b) => packOrder.indexOf(a.id) - packOrder.indexOf(b.id));
+    unparkSit();
+    if (!selected || !dogs.includes(selected)) selected = dogs[0] || null;
+  }
+  // needs keep going while a dog is off-scene: napping at home, or out with you at a player place
+  function restTick(d, dt) {
+    const R = D.NEEDS.home;
+    d.hunger = clamp(d.hunger - R.hunger * 0.6 * dt, 0, 100);
+    d.thirst = clamp(d.thirst - R.thirst * 0.6 * dt, 0, 100);
+    if (d.restAt === 'home') {
+      d.energy = clamp(d.energy + R.loungeRegen * dt, 0, 100);
+      if (d.happy < 72) d.happy = Math.min(72, d.happy + 0.03 * dt);
+    } else {
+      d.energy = clamp(d.energy - R.energy * 0.4 * dt, 0, 100);
+      d.happy = clamp(d.happy + 0.05 * dt, 0, 100);
+    }
+  }
+  // dogs that stayed home are thrilled to see you again
+  let welcomeTok = 0;
+  function welcomeBack(list) {
+    const tok = ++welcomeTok;
+    setTimeout(() => {
+      if (place !== 'home' || tok !== welcomeTok) return;
+      for (const d of list) {
+        if (!dogs.includes(d)) continue;
+        d.happy = Math.min(100, d.happy + 6);
+        if (d.setState) d.setState('happy', 1.8);
+        spawnEmoji('💕', d.headWorld(0.35), { size: 0.45, life: 1.6 });
+      }
+      const why = list.find((d) => d.stayWhy);
+      if (why) { toast(`${why.name} ${why.stayWhy.back}`); list.forEach((d) => { d.stayWhy = null; }); }
+      else toast(`${nameList(list.map((d) => d.name))} ${list.length > 1 ? 'are' : 'is'} so happy you’re back! 🐾`);
+    }, 1300);
+  }
+  const nameList = (a) => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
+
+  // ----- player places (venues): a full-screen place of their own, not a walk -----
+  let venueId = null;
+  const venueCovers = () => !!(VEN && VEN.covers());
+  function enterVenue(id, withIds) {
+    if (!VEN || !VEN.VENUES[id]) return;
+    if (tm) exitTrickMode();
+    if (mode === 'decorate') exitDecorate();
+    if (mode === 'build') exitBuildMode();
+    if (place === 'park') goHome(); else rejoinDogs();
+    endFun('leave');
+    if (talk) endTalk(false);
+    packOrder = allDogs().map((d) => d.id);
+    const goers = dogs.filter((d) => withIds.includes(d.id));
+    for (const d of goers) { dogs.splice(dogs.indexOf(d), 1); benchDog(d, 'venue'); restDogs.push(d); }
+    const sitCame = !!(sitDog && withIds.includes('sit'));
+    if (sitCame) parkSit();
+    if (selected && !dogs.includes(selected)) selected = dogs[0] || null;
+    venueId = id;
+    player.moveTarget = null;
+    player.root.visible = false;
+    setCtx(null);
+    VEN.show(id, goers, sitCame ? parkedSit : null);
+    if (NET.ready) pushStatus();
+    earn('venue');
+    save();
+  }
+  function leaveVenue(silent) {
+    if (!venueId) return;
+    venueId = null;
+    if (VEN) VEN.hide();
+    const back = restDogs.slice();
+    rejoinDogs();
+    player.root.visible = true;
+    player.root.position.copy(freeNear(CHUNK / 2, CHUNK - 1.2));
+    player.root.rotation.y = player.face = Math.PI;
+    back.forEach((d, i) => { d.root.position.copy(freeNear(clamp(CHUNK / 2 - 0.5 + i * 0.5, 0.5, CHUNK - 0.5), CHUNK - 2)); d.idle(rand(1, 2)); d.addBond(1); });
+    if (sitDog) sitDog.root.position.copy(freeNear(CHUNK / 2 + 0.9, CHUNK - 2));
+    if (NET.ready) pushStatus();
+    if (!silent) { refreshUI(); updateCamera(0, true); arriveFade(); toast('Back home 🏠'); }
+    save();
+  }
+
   const SHAPE_TIPS = {
     park: 'There is more to explore now: a hill with a view, a sunken pond and a meadow to the east. Not every corner is easy to find.',
     beach: 'There is more to explore now: dunes, a boardwalk and a rocky headland with stairs up to the lighthouse. Some places only show at the right tide.',
@@ -6601,10 +6751,14 @@
     moon: 'The base has grown: a huge crater to the east and a mesa to the west. Low gravity makes the climbing easy.',
     grounds: 'Three agility rings, the stands in the east and the judges’ tent in the far corner.',
   };
-  function goWalk(id = 'park') {
-    if (!dogs.length) return;
+  function goWalk(id = 'park', withIds) {
+    if (!allDogs().length) return;
     if (!locUnlocked(id)) { toast('That place is still locked 🔒'); return; }
     if (!canVisitNow(id)) { toast(`${D.LOCATIONS[id].icon} ${D.LOCATIONS[id].name} is closed right now — it opens at ${D.LOCATIONS[id].hours[0]}:00`); return; }
+    if (venueId) leaveVenue(true);
+    // who comes along: the dogs you picked on the map (the rest stay home), or everyone
+    if (withIds) { rejoinDogs(); splitDogs(withIds, 'home'); }
+    else if (place === 'home') rejoinDogs();
     endFun('leave');
     clearPatches();
     useScene(id);
@@ -6676,6 +6830,9 @@
 
   function goHome() {
     if (tm) exitTrickMode();
+    if (venueId) { leaveVenue(); return; }
+    const stayed = place === 'park' ? restDogs.slice() : [];
+    rejoinDogs();
     endFun('leave');
     clearPatches();
     clearDucks();
@@ -6721,6 +6878,7 @@
     // a dog that got wet on the walk shakes off at the door, right next to you
     const wet = dogs.find((d) => d.wetT > 0);
     if (wet) setTimeout(() => { if (place === 'home') shakeOff(wet, 'walk'); }, 1400);
+    if (stayed.length) welcomeBack(stayed);
     refreshUI();
     applyEnvironment();
     updateCamera(0, true);
@@ -7075,8 +7233,8 @@
     progress('chat');
     $('talkPic').src = ART.personPortraitURL(w.info);
     $('talkName').textContent = w.info.owner;
-    $('talkSub').textContent = `with ${w.info.dog.name}`;
-    const meetLine = finishMeetup(w);
+    $('talkSub').textContent = w.noDog ? `${w.info.dog.name} is staying with you` : `with ${w.info.dog.name}`;
+    const meetLine = w.noDog ? (sitDog && place === 'park' ? nfill(pick(D.SIT_GREET), w.info) : nfill('Thanks again for looking after {ndog}, {you}. I’ll be by to pick {ndog} up later!', w.info)) : finishMeetup(w);
     const hello = youName() && Math.random() < 0.5 ? `${pick(['Hi', 'Hello', 'Oh, hi', 'Hey'])}, ${youName()}! ` : '';
     showTalkLine(meetLine || hello + chatLine(w, true));
     $('talk').classList.remove('hidden');
@@ -7938,9 +8096,12 @@
     parts.push(`Collectibles ${ids.filter((k) => state.finds[k]).length}/${ids.length}`);
     return parts.join(' · ');
   }
+  // ?oldmap keeps the old list of places (the older tests use it)
+  const OLDMAP = /[?&]oldmap\b/.test(location.search);
   function openMap() {
+    if (VEN && !OLDMAP) { openWorldMap(); return; }
     tutEvent('walk');
-    if (!dogs.length) return;
+    if (!allDogs().length) return;
     renderMap();
     $('map').classList.remove('hidden');
   }
@@ -8006,6 +8167,38 @@
     }
   }
   $('map').addEventListener('click', (e) => { if (e.target.id === 'map' || e.target.closest('[data-act="closeMap"]')) $('map').classList.add('hidden'); });
+
+  // ----- the world map and the player places live in venues.js; this is what they can use -----
+  function makeVenues() {
+    if (!window.PPVenues) return null;
+    const api = {
+      D, ART, THREE,
+      get state() { return state; }, get place() { return place; }, get loc() { return loc; }, get venueId() { return venueId; }, get clock() { return clockNow; },
+      get dogs() { return allDogs(); }, get sitter() { return sitDog || parkedSit; }, get sitting() { return state.sitting; }, get selected() { return selected; },
+      toast, news, tip, sfx, haptic, save, esc, plain, IC, TH, thumbOf, starsHTML, pick, rand, clamp, shuffle, hashStr, newId, weekKey, rank, unlockedFeat, needRank,
+      locUnlocked, locNext, reqsOf, reqProgress, reqText, starsOf, starProgress, canVisitNow, locNote, nameList,
+      earn, gainXP, progress, journalAdd, nfill, nfriend, addNFriend, knownNeighbors, youName, wearThumb, lookKey, applyPlayerLook, getOutfit, grantToy, applyCustom,
+      updateHud() { updateHud(); },
+      addCoins(n) { state.coins += n; updateHud(); },
+      spend(n) { if (state.coins < n) { toast('Not enough coins yet'); sfx('fail'); return false; } state.coins -= n; sfx('pay'); updateHud(); return true; },
+      spendTickets(n) { if (state.tickets < n) { toast('Not enough tickets yet'); sfx('fail'); return false; } state.tickets -= n; sfx('pay'); updateHud(); return true; },
+      addTickets(n) { state.tickets = (state.tickets || 0) + n; updateHud(); },
+      giveItem(type, n = 1) { state.inventory[type] = (state.inventory[type] || 0) + n; },
+      hasItem, petDog(d, n) { d.happy = clamp(d.happy + n, 0, 100); if (d.addBond) d.addBond(1); },
+      goWalk, goHome, enterVenue, leaveVenue, openPlace: (id) => (D.LOCATIONS[id] ? goWalk : enterVenue),
+      refreshCustomLooks() { ART.dropThumb && ['mybowl', 'paintedkennel'].forEach((k) => ART.dropThumb('item', k)); rebuildFurniture(); for (const d of allDogs()) if (d.acc && d.acc.neck === 'mybandana') d.applyAccessories(); },
+      dogPortrait: (d) => ART.portraitURL(d.breed, d.coat), personPortrait: (N) => ART.personPortraitURL(N),
+      walkCount: () => (state.stats && state.stats.walks) || 0,
+    };
+    try { return window.PPVenues(api); } catch (e) { console.error(e); return null; }
+  }
+  function openWorldMap() {
+    tutEvent('walk');
+    if (!allDogs().length) return;
+    if (VEN && !OLDMAP) { VEN.openMap(); return; }
+    renderMap();
+    $('map').classList.remove('hidden');
+  }
 
   // =====================================================================
   // Daily challenges (3 a day, new ones at Berlin midnight)
@@ -8669,6 +8862,7 @@
     if (bedAt(i, j)) { toast('There’s a garden bed there'); return; }
     let pid;
     if (selectedInv === 'painting') { const P = freePainting(); if (!P) { toast('All your paintings are up already'); return; } pid = P.id; }
+    if (selectedInv === 'photostrip') { const P = (state.strips || []).find((x) => !state.furniture.some((f) => f.pid === x.id)); if (!P) { toast('All your photo strips are up already'); return; } pid = P.id; }
     if (D.ITEMS[selectedInv].solid && Math.floor(player.root.position.x) === i && Math.floor(player.root.position.z) === j) {
       toast("You're standing there!");
       return;
@@ -10035,6 +10229,8 @@
   }
   function doAct(act, b) {
     if (act === 'ball' && ballHeld) { ballHeld = false; return; }
+    // out on your own: nobody to throw for or to train
+    if (!dogs.length && ['ball', 'tricks', 'leash', 'bowls', 'feed', 'water'].includes(act) && place === 'park') { toast('Just you today. Your dogs are napping at home 🏠'); return; }
     if (act === 'ball') tutEvent('throw');
     if (act === 'menu') openHub();
     else if (act === 'photo') { if (needRank('photo')) enterPhoto(); }
@@ -10094,7 +10290,7 @@
   const notes = new Set();
   function save() {
     if (noSave) return;
-    state.dogs = dogs.map((d) => d.serialize());
+    state.dogs = allDogs().map((d) => d.serialize());
     state.savedAt = Date.now();
     state.v = CONFIG.SAVE_VERSION;
     try { localStorage.setItem(CONFIG.SAVE_KEY, JSON.stringify(state)); } catch (_) { /* storage unavailable */ }
@@ -10285,8 +10481,16 @@
     }
     return s;
   }
+  // your own designs (workshop): the bandana is an accessory of its own, bowls and dog houses take your colors
+  function applyCustom(st) {
+    const C = st.custom = st.custom && typeof st.custom === 'object' ? st.custom : {};
+    if (C.bandana && Array.isArray(C.bandana.grid)) D.ACCESSORIES.mybandana = { name: C.bandana.name || 'My bandana', icon: '🎨', slot: 'neck', model: 'cbandana', color: C.bandana.grid[0] || '#e5484d', grid: C.bandana.grid.slice(0, 16), custom: true };
+    if (ART.setCustom) ART.setCustom(C);
+  }
   function normalize(s) {
     const st = Object.assign(defaultState(), s);
+    applyCustom(st);
+    if (!Array.isArray(st.strips)) st.strips = [];
     if (!st.inventory || typeof st.inventory !== 'object') st.inventory = {};
     for (const k of Object.keys(st.inventory)) if (!D.ITEMS[k]) delete st.inventory[k];
     if (!Array.isArray(st.furniture)) st.furniture = [];
@@ -10332,6 +10536,8 @@
     st.bouquets = Math.max(0, +st.bouquets || 0);
     st.paintings = Array.isArray(st.paintings) ? st.paintings.filter((p) => p && p.id && typeof p.url === 'string') : [];
     st.furniture = st.furniture.filter((f) => f.type !== 'painting' || st.paintings.some((p) => p.id === f.pid));
+    st.strips = st.strips.filter((p) => p && p.id && typeof p.url === 'string');
+    st.furniture = st.furniture.filter((f) => f.type !== 'photostrip' || st.strips.some((p) => p.id === f.pid));
     st.playerName = String(st.playerName || '').replace(/[<>{}]/g, '').trim().slice(0, 16);
     // round 3: treat tin, critters, snow figures, fish, rivals, the museum
     const obj3 = (o) => (o && typeof o === 'object' && !Array.isArray(o) ? o : {});
@@ -11504,6 +11710,7 @@
     cookTick(dt);
     for (const g of guests) g.update(dt);
     for (const d of dogs) d.update(dt);
+    for (const d of restDogs) restTick(d, dt);
     separateDogs();
     updateBall(dt);
     if (tm) updateTrickMode(dt);
@@ -11580,7 +11787,8 @@
     const dt = Math.min(clock.getDelta(), 0.05);
     // one bad frame must never freeze the picture: draw anyway, and report the problem once
     try { update(dt); } catch (e) { if (!loopErr++) { console.error(e); toast(`Something went wrong (${String(e && e.message || e).slice(0, 80)}). Please send a screenshot.`); } }
-    try { drawWorld(); } catch (e) { if (!loopErr++) console.error(e); }
+    // inside a player place the world is behind a full-screen picture: no need to draw it
+    try { if (!venueId || !venueCovers()) drawWorld(); } catch (e) { if (!loopErr++) console.error(e); }
   }
 
   // =====================================================================
@@ -11643,6 +11851,7 @@
       setTimeout(() => toast("That visit link seems broken — showing your own home"), 600);
     }
     const hadSave = load();
+    VEN = makeVenues();
     applyBigUI();
     {
       const q = new URLSearchParams(location.search);
@@ -11707,6 +11916,7 @@
     delete state.setsWelcome;
     if (dogs.length && state.tutorial === 'done' && !state.nameAsked && !youName() && (!/[?&]debug\b/.test(location.search) || /[?&]askname\b/.test(location.search))) setTimeout(() => { if (!modalOpen()) askName(); else state.nameAsked = false; }, 4500);
     if (dogs.length && state.tutorial === 'done') setTimeout(() => tip('pastimesNew', { title: 'New things to do together', text: 'Tap a dog’s bubble, then Play: hide and seek, brushing and letting your dog lead. You can also sit on sofas and benches, play the piano, rake leaves, skip stones and look at the stars.', icon: 'ball' }), 3000);
+    if (VEN && dogs.length && state.tutorial === 'done') setTimeout(() => tip('worldmapNew', { title: 'The world map', text: 'Tap Go out to open the world map. Round badges are walks, little signboards are places just for you, like the café upstairs or the mall. Tap a place to see its stars, tap it again to choose who comes along, or go on your own.', icon: 'map' }), 5200);
     if (notes.has('v13') && !notes.has('v12')) setTimeout(() => tip('seasonNew', { title: 'Something new every week and month', text: 'New: vendors have specials every week, each month hides four new things to find, collection sets give prizes, and there’s a critter guide. See Menu → Collectibles.', icon: 'book' }), 1200);
     if (notes.has('v12') && !notes.has('v11')) setTimeout(() => tip('houseNew', { title: 'Neighbors and your home', text: 'New: neighbors have stories to tell (Menu → Neighbors), your home can grow into a dream estate (Menu → Home), vendors have weekly specials, and your book has sets, monthly finds and a critter guide.', icon: 'home' }), 1200);
     if (notes.has('v11') && !notes.has('v10')) setTimeout(() => tip('bondNew', { title: 'Hearts, badges and specialties', text: 'New: each dog has bond hearts, exam badges and a specialty (tap the hearts in a dog’s bubble). Neighbors have stories to tell, and your home can be upgraded too: see the Menu.', icon: 'heart' }), 1200);
@@ -12076,7 +12286,7 @@
         w.parts.root.rotation.y = V.face;
         startTalk(w);
         if (talk && talk.w === w) {
-          showTalkLine(fill(pick(D.BENCH_LINES), { ndog: w.info.dog.name, dog: (fun.joined[0] || dogs[0]).name }));
+          showTalkLine(fill(pick(D.BENCH_LINES), { ndog: w.info.dog.name, dog: (fun.joined[0] || dogs[0] || allDogs()[0] || { name: 'your dog' }).name }));
           player.face = V.face;
           w.parts.root.rotation.y = V.face;
         }
@@ -13236,7 +13446,7 @@
         return best;
       }
       case 'vendor': { const v = (S.vendors || []).slice().sort((a, b) => flatDist(a.front, pos) - flatDist(b.front, pos))[0]; return v && far(v.front, 34) ? { kind, p: v.front.clone() } : null; }
-      case 'friend': { const w = walkers.filter((x) => !x.visit && !x.meet).sort((a, b) => flatDist(a.parts.root.position, pos) - flatDist(b.parts.root.position, pos))[0]; return w && far(w.parts.root.position, 30) ? { kind, w, p: w.parts.root.position.clone() } : null; }
+      case 'friend': { const w = walkers.filter((x) => !x.visit && !x.meet && !x.noDog).sort((a, b) => flatDist(a.parts.root.position, pos) - flatDist(b.parts.root.position, pos))[0]; return w && far(w.parts.root.position, 30) ? { kind, w, p: w.parts.root.position.clone() } : null; }
       case 'far': { const p = freePoint(pos.x, pos.z, 11, 18, (x, z) => Math.abs(groundAt(x, z) - groundAt(pos.x, pos.z)) < 1.2); return far(p, 30) ? { kind, p } : null; }
       case 'hunt': { const h = hunt.filter((x) => !x.e.task.night || isNight()).sort((a, b) => flatDist(a.pos, pos) - flatDist(b.pos, pos))[0]; return h && far(h.pos, 30) ? { kind, p: h.pos.clone() } : null; }
       default: return null;
@@ -14131,8 +14341,8 @@
   }
   // a painting on its stand shows the picture you painted
   const paintTex = new Map();
-  function applyPaintingTex(g, pid) {
-    const P = (state.paintings || []).find((p) => p.id === pid);
+  function applyPaintingTex(g, pid, list) {
+    const P = (list || state.paintings || []).find((p) => p.id === pid);
     const c = g.userData.canvas;
     if (!P || !c) return;
     let t = paintTex.get(pid);
@@ -14162,7 +14372,7 @@
   const addNFriend = (o, n) => { state.nfriend = state.nfriend || {}; state.nfriend[o] = clamp((state.nfriend[o] || 0) + n, 0, 100); };
   const unreadMail = () => mail().inbox.filter((m) => !m.read).length;
   const knownNeighbors = () => D.NEIGHBORS.filter((N) => (state.chats || {})[N.owner] || (state.nfriend || {})[N.owner] || storyOf(N.owner));
-  function nfill(t, N) { return fill(t, { ndog: N.dog.name, dog: (dogs[0] || { name: 'your dog' }).name, you: youName() || 'us', owner: N.owner }); }
+  function nfill(t, N) { return fill(t, { ndog: N.dog.name, dog: (allDogs()[0] || { name: 'your dog' }).name, you: youName() || 'us', owner: N.owner }); }
   // the mailbox flag goes up when a letter is waiting
   function mailFlags() {
     const up = unreadMail() > 0;
@@ -14235,7 +14445,7 @@
       const friends = knownNeighbors().filter((N) => nfriend(N.owner) >= 8);
       if (friends.length && Math.random() < 0.5) {
         const N = pick(friends);
-        if (unlockedFeat('sitting') && !state.sitting && Math.random() < 0.45) receive({ from: N.owner, ask: 'sit', text: `Dear ${youName() || 'neighbor'},\n${nfill(pick(D.SIT_ASK), N)}\n${N.owner}` });
+        if (unlockedFeat('sitting') && !state.sitting && Math.random() < 0.45) { const A = pick(D.SIT_ASK); receive({ from: N.owner, ask: 'sit', sitAway: !!A.away, text: `Dear ${youName() || 'neighbor'},\n${nfill(A.t, N)}\n${N.owner}` }); }
         else receive({ from: N.owner, text: `Dear ${youName() || 'neighbor'},\n${nfill(pick(D.LETTER_REPLIES.random), N)}\n${N.owner} & ${N.dog.name}`, gift: unlockedFeat('farming') ? seedGift(3) : { coins: 15 } });
       }
     }
@@ -14304,7 +14514,7 @@
       const m = M.inbox.find((x) => x.id === sit.dataset.m);
       if (!m) return;
       m.answered = true;
-      if (sit.dataset.sit === 'yes') { acceptSitting(m.from); $('mail').classList.add('hidden'); }
+      if (sit.dataset.sit === 'yes') { acceptSitting(m.from, m.sitAway !== undefined ? m.sitAway : /away|trip|out of town|travel/i.test(m.text || '')); $('mail').classList.add('hidden'); }
       else { addNFriend(m.from, -2); toast('Maybe next time'); renderMail(); }
       save();
       return;
@@ -14502,10 +14712,10 @@
     }
     addBond() { /* not yours to keep */ }
   }
-  function acceptSitting(owner) {
+  function acceptSitting(owner, away = true) {
     const N = D.NEIGHBORS.find((x) => x.owner === owner);
     if (!N || state.sitting) return;
-    state.sitting = { owner, pending: true, until: 0, walks: 0, petted: 0, data: null };
+    state.sitting = { owner, away: !!away, pending: true, until: 0, walks: 0, petted: 0, data: null };
     if (place === 'home') sitArrive();
     else toast(`${owner} will drop ${N.dog.name} off at your home`);
     save();
@@ -14513,7 +14723,7 @@
   function sitArrive() {
     const T = state.sitting;
     const N = T && D.NEIGHBORS.find((x) => x.owner === T.owner);
-    if (!N || sitDog) return;
+    if (!N || sitDog || parkedSit) return;
     if (T.pending) { T.pending = false; T.until = Date.now() + D.SIT.minutes * 60000; }
     sitDog = new SitDog(T.data || {}, N);
     sitDog.root.position.copy(freeNear(CHUNK / 2 + 0.6, CHUNK - 1.6));
@@ -14527,6 +14737,7 @@
     }
   }
   function sitLeave() {
+    unparkSit();
     if (sitDog) { world.remove(sitDog.root); world.remove(sitDog.leash); sitDog = null; }
     if (sitOwner) { sitOwner.root.parent && sitOwner.root.parent.remove(sitOwner.root); sitOwner = null; }
   }
@@ -14534,7 +14745,7 @@
   function sittingTick() {
     const T = state.sitting;
     if (!T) return;
-    if (T.pending) { if (place === 'home') sitArrive(); return; }
+    if (T.pending) { if (place === 'home' && !venueId) sitArrive(); return; }
     if (sitDog) T.data = { hunger: sitDog.hunger, thirst: sitDog.thirst, energy: sitDog.energy, happy: sitDog.happy, clean: sitDog.clean };
     if (Date.now() > T.until && !T.ready) {
       T.ready = true;
@@ -14542,8 +14753,8 @@
       news({ title: `${T.owner} is back`, text: `${T.owner} is waiting at your front door to pick up ${N.dog.name}.`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
     }
     // after a day the owner always takes their dog back: if nobody comes to the door, they let themselves in
-    if (T.ready && place === 'home' && !visit && Date.now() > T.until + D.SIT.grace * 60000) { finishSitting(true); return; }
-    if (T.ready && place === 'home' && !sitOwner) {
+    if (T.ready && place === 'home' && !visit && !venueId && Date.now() > T.until + D.SIT.grace * 60000) { finishSitting(true); return; }
+    if (T.ready && place === 'home' && !venueId && !sitOwner) {
       const N = D.NEIGHBORS.find((x) => x.owner === T.owner);
       sitOwner = ART.buildPlayer({ shirt: N.shirt, hair: N.hair });
       sitOwner.root.position.copy(freeNear(CHUNK / 2 - 0.8, CHUNK - 0.8));
@@ -15888,7 +16099,7 @@
   function rollFavor() {
     favorW = null;
     if (!unlockedFeat('favors') || !dogs.length || state.favorDay === clockNow.gameDay || Math.random() > D.FAVOR.chance) return;
-    const w = walkers.find((x) => !x.visit) || null;
+    const w = walkers.find((x) => !x.visit && !x.noDog) || null;
     if (!w) return;
     const kinds = Object.keys(D.FAVOR_KINDS);
     const kind = pick(kinds);
@@ -16339,8 +16550,8 @@
   function myProfile() {
     const lw = state.lastWeekScore || {};
     return {
-      name: safeName(youName() || (dogs[0] ? `${dogs[0].name}’s human` : 'Player')), code: onl().code,
-      dogs: dogs.slice(0, 6).map((d) => [d.name, d.breed, d.coat].map((x) => String(x).replace(/[|,]/g, '')).join(',')).join('|').slice(0, 300),
+      name: safeName(youName() || (allDogs()[0] ? `${allDogs()[0].name}’s human` : 'Player')), code: onl().code,
+      dogs: allDogs().slice(0, 6).map((d) => [d.name, d.breed, d.coat].map((x) => String(x).replace(/[|,]/g, '')).join(',')).join('|').slice(0, 300),
       rank: rank(), seen: TS(), wk: lw.k || 0, ws: lw.s || 0,
     };
   }
@@ -16640,12 +16851,12 @@
   }
   // what friends see when they visit (also used for visit links)
   function visitPayload() {
-    const name = dogs[0] ? dogs[0].name : 'A friend';
+    const pack = allDogs(), name = pack[0] ? pack[0].name : 'A friend';
     return {
-      k: 1, uid: state.uid, name: `${name}${dogs.length > 1 ? ' & friends' : ''}`,
+      k: 1, uid: state.uid, name: `${name}${pack.length > 1 ? ' & friends' : ''}`,
       chunks: state.chunks, gardens: Object.keys(state.gardens), rooms: state.rooms, walls: state.walls, stairs: state.stairs,
       f: state.furniture.map((f) => [f.type, f.i, f.j, f.rot || 0, f.on ? 1 : 0, f.gift || 0]),
-      dogs: dogs.map((d) => [d.name, d.breed, d.coat, d.acc]),
+      dogs: pack.map((d) => [d.name, d.breed, d.coat, d.acc]),
       ex: state.exhibits || {},
     };
   }
@@ -17020,10 +17231,10 @@
   // =====================================================================
   // Where you are, for your friends: online or not, and in which place
   // =====================================================================
-  const whereName = (w) => (w === 'home' ? 'Home' : w === 'visit' ? 'Visiting a friend' : D.LOCATIONS[w] ? D.LOCATIONS[w].name : '');
+  const whereName = (w) => (w === 'home' ? 'Home' : w === 'visit' ? 'Visiting a friend' : D.LOCATIONS[w] ? D.LOCATIONS[w].name : String(w || '').startsWith('v:') && VEN && VEN.VENUES[w.slice(2)] ? VEN.VENUES[w.slice(2)].name : '');
   function pushStatus() {
     if (!NET.ready) return;
-    const where = visit ? 'visit' : place === 'home' ? 'home' : loc;
+    const where = visit ? 'visit' : venueId ? 'v:' + venueId : place === 'home' ? 'home' : loc;
     if (where === LIVE.where && LIVE.statusRef) return;
     LIVE.where = where;
     LIVE.statusRef = ref(`status/${NET.uid}`);
@@ -17178,6 +17389,7 @@
       startFishing, fishTap, fishPick, startSnowman, snowStart, snowNext, renderSnow, meltSnowmen, snowOnGround, startFlakes, flakesTap, set lastTap(v) { lastTap = v; }, startDisc, discTap, disc, discCupToday,
       openSettings, LIVE, liveJoin, liveLeave, liveSay, liveSync, openRemote, setRoomPassword, hashRoom, pushStatus, watchFriends, friendStatusLine, renderMulti, setSettingsTab, exportSaveObject, mpMode,
       NET, onl, goOnline, goOffline, openFriends, renderFriends, addFriendByCode, acceptFriend, removeFriend, sendToFriend, visitFriend, leaveReaction, pushBackup, pushHome, fetchBackup, restoreBackup, linkEmail, signInEmail, safeName, refreshFriends, visitPayload, visitFromPayload, get friendView() { return friendView; },
+      get VEN() { return VEN; }, enterVenue, leaveVenue, get venueId() { return venueId; }, allDogs, get restDogs() { return restDogs; }, splitDogs, rejoinDogs, openWorldMap, get parkedSit() { return parkedSit; }, bookOn, sittingAway, applyCustom, sitArrive, get sitOwner() { return sitOwner; }, updateWalkers, welcomeBack,
       rollFavor, startFavor, get favorW() { return favorW; }, weekStat, rollWeek, deliverGazette, openGazette, addRivalry, rivalry, rivalOf, toyPals, round3Ctx, round3Action, nearPier, nearDiscMat, nearMuseum, nearMarket,
     };
   }
