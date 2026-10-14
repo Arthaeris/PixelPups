@@ -694,7 +694,7 @@ window.VP_DATA = (function () {
       loot: { coins: 62, find: 12, ingredient: 16, toy: 10 }, ingredients: ['berries', 'apple', 'honey', 'carrot'],
     },
     oldtown: {
-      name: 'Old Town', icon: '🏘️', desc: 'Cobblestones, a café and a plaza. Wait for green at the crosswalks — and show off tricks on the plaza for coins.',
+      name: 'Old Town', icon: '🏘️', desc: 'A walled town on a river: the market square with its town hall, Café Pfote and the tram. Wait for green at the crosswalks — and show off tricks on the square for coins.',
       unlock: { all: [{ kind: 'rank', n: 3 }, { kind: 'stars', loc: 'park', n: 2 }, { kind: 'obedience', n: 8 }] }, hint: '',
       dirt: { dry: 'grime', wet: 'grime', extra: 'icecream' }, walkers: [4, 6], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 55, find: 22, ingredient: 15, toy: 8 }, ingredients: ['pastry', 'egg', 'cheese', 'apple'],
@@ -1584,7 +1584,7 @@ window.VP_DATA = (function () {
   // ===================================================================
   const MEET_SPOTS = {
     park: [['the pavilion on the hill', 34.4, -13.6], ['the jetty', -16, -3.2], ['the fountain', 2.2, 15.4], ['the picnic tables', 33.6, 6.6], ['the rose garden', -29, -8.2, 'roses']],
-    oldtown: [['the fountain', 0, 7.6], ['the canal steps', 21, -13], ['the café tables', -11.8, 9.4], ['the courtyard', 9.6, -21.5, 'courtyard']],
+    oldtown: [['the fountain', 2.6, -1.8], ['the river quay', 20.2, -16], ['the café tables', -8.6, -4.6], ['the church square', -18.4, -23.6], ['the courtyard', 8.4, -26.6, 'courtyard']],
     forest: [['the west glade', -15.6, 2], ['the bench on the terrace', 24, -17.6], ['the pond', -5, -2.4], ['the hollow tree', -25.5, -1, 'hollowtree']],
     beach: [['the lighthouse', 28.5, -8], ['the boardwalk', 0, 9.2], ['the ice cream kiosk', -12, 5], ['the dunes', -8, 15.6]],
     alpine: [['the summit', -1.5, -24.6], ['the little lake', -5, -1.8], ['checkpoint 3', 12.2, 13.6], ['the secret meadow', -26, 10, 'meadow']],
