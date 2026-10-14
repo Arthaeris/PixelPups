@@ -149,6 +149,9 @@ window.VP_ART = (function () {
   // ===================================================================
   // Furniture (each fits one 1x1 tile, front faces +z)
   // ===================================================================
+  // your own designs from the workshop (set by the game from your save)
+  let CUSTOM = {};
+  function setCustom(c) { CUSTOM = c || {}; }
   const BUILDERS = {
     bed(g) {
       box(g, 0.86, 0.1, 0.86, '#7b5ea7', 0, 0.05, 0);
@@ -746,6 +749,182 @@ window.VP_ART = (function () {
       const c = box(g, 0.52, 0.52, 0.02, '#ffffff', 0, 0.82, -0.04);
       g.userData.canvas = c;
     },
+    // ----- made by you in the workshop: the colors come from your save (setCustom) -----
+    mybowl(g) {
+      const C = CUSTOM.bowl || {}, base = C.base || '#5aa9e6', rim = C.rim || '#ffffff', acc = C.accent || '#f5c542';
+      const h = C.shape === 'tall' ? 0.18 : C.shape === 'wide' ? 0.09 : 0.12, w = C.shape === 'wide' ? 0.5 : C.shape === 'tall' ? 0.36 : 0.42;
+      box(g, w, h, w, base, 0, h / 2, 0);
+      box(g, w + 0.02, 0.03, w + 0.02, rim, 0, h - 0.005, 0);
+      box(g, w - 0.12, 0.02, w - 0.12, shade(base, 0.6), 0, h + 0.005, 0);
+      const pat = C.pattern || 'plain';
+      if (pat === 'dots') for (const [x, y] of [[-0.12, 0.45], [0, 0.6], [0.12, 0.45]]) { box(g, 0.05, 0.04, 0.01, acc, x * (w / 0.42), h * y, w / 2 + 0.003); box(g, 0.01, 0.04, 0.05, acc, w / 2 + 0.003, h * y, x * (w / 0.42)); }
+      else if (pat === 'stripes') { box(g, w + 0.01, 0.025, w + 0.01, acc, 0, h * 0.35, 0); box(g, w + 0.01, 0.02, w + 0.01, acc, 0, h * 0.68, 0); }
+      else if (pat === 'paws') for (const sd of [1, -1]) { box(g, 0.06, 0.05, 0.01, acc, 0, h * 0.45, sd * (w / 2 + 0.003)); for (const x of [-0.04, 0, 0.04]) box(g, 0.02, 0.02, 0.01, acc, x, h * 0.78, sd * (w / 2 + 0.003)); }
+      const c = pivot(g);
+      box(c, w - 0.12, 0.05, w - 0.12, '#b0703a', 0, h + 0.01, 0);
+      box(c, 0.08, 0.05, 0.08, '#8f5428', 0.06, h + 0.045, -0.05);
+      box(c, 0.07, 0.05, 0.07, '#c98a4e', -0.07, h + 0.045, 0.06);
+      g.userData.content = c;
+    },
+    paintedkennel(g) {
+      const C = CUSTOM.kennel || {}, wall = C.wall || '#7fb3d5', roof = C.roof || '#f5c542', trim = C.trim || '#ffffff';
+      box(g, 0.92, 0.06, 0.92, '#8a6440', 0, 0.03, 0);
+      box(g, 0.8, 0.6, 0.08, wall, 0, 0.36, -0.36);
+      box(g, 0.08, 0.6, 0.72, wall, -0.36, 0.36, 0);
+      box(g, 0.08, 0.6, 0.72, wall, 0.36, 0.36, 0);
+      box(g, 0.22, 0.6, 0.08, wall, -0.29, 0.36, 0.36);
+      box(g, 0.22, 0.6, 0.08, wall, 0.29, 0.36, 0.36);
+      box(g, 0.36, 0.16, 0.08, wall, 0, 0.58, 0.36);
+      box(g, 0.64, 0.5, 0.02, '#3b2a1e', 0, 0.31, 0.3);
+      for (const x of [-0.4, 0.4]) box(g, 0.04, 0.6, 0.04, trim, x, 0.36, 0.4);
+      box(g, 0.98, 0.1, 0.98, roof, 0, 0.71, 0);
+      box(g, 0.74, 0.1, 0.98, roof, 0, 0.81, 0);
+      box(g, 0.5, 0.1, 0.98, shade(roof, 0.82), 0, 0.91, 0);
+      box(g, 0.26, 0.1, 0.98, roof, 0, 1.01, 0);
+      box(g, 0.3, 0.09, 0.02, trim, 0, 0.58, 0.405);
+      if (C.heart) box(g, 0.08, 0.07, 0.02, '#e5484d', 0, 0.58, 0.418);
+    },
+    photostrip(g) {
+      box(g, 0.34, 0.05, 0.22, '#6d4c41', 0, 0.025, 0);
+      box(g, 0.05, 0.5, 0.05, '#6d4c41', 0, 0.28, -0.04);
+      box(g, 0.32, 0.86, 0.05, '#fafafa', 0, 0.9, -0.05);
+      const c = box(g, 0.26, 0.8, 0.02, '#ffffff', 0, 0.9, -0.02);
+      g.userData.canvas = c;
+    },
+    lavalamp(g) {
+      box(g, 0.2, 0.12, 0.2, '#37474f', 0, 0.06, 0);
+      box(g, 0.16, 0.44, 0.16, new THREE.MeshBasicMaterial({ color: '#ff7aa8' }), 0, 0.34, 0);
+      box(g, 0.14, 0.1, 0.14, '#37474f', 0, 0.61, 0);
+      const blobs = [0, 1, 2].map((k) => box(g, 0.08, 0.08, 0.08, new THREE.MeshBasicMaterial({ color: '#ffd54f' }), 0, 0.2 + k * 0.12, 0.01));
+      g.userData.anim = (t) => blobs.forEach((b, k) => { b.position.y = 0.2 + ((t * 0.08 + k / 3) % 1) * 0.26; b.scale.setScalar(0.7 + 0.3 * Math.sin(t + k)); });
+    },
+    discoball(g) {
+      box(g, 0.24, 0.05, 0.24, '#37474f', 0, 0.025, 0);
+      box(g, 0.04, 1.1, 0.04, '#90a4ae', 0, 0.58, 0);
+      const ball = pivot(g, 0, 1.3, 0);
+      const mir = ['#e0e0e0', '#b0bec5', '#ffffff', '#cfd8dc'];
+      for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) for (let c = 0; c < 3; c++) if (a !== 1 || b !== 1 || c !== 1) box(ball, 0.1, 0.1, 0.1, mir[(a + b * 2 + c) % 4], (a - 1) * 0.1, (b - 1) * 0.1, (c - 1) * 0.1);
+      const glint = box(ball, 0.04, 0.04, 0.04, new THREE.MeshBasicMaterial({ color: '#ff8adf' }), 0.15, 0.05, 0.05);
+      g.userData.anim = (t) => { ball.rotation.y = t * 0.8; glint.visible = Math.sin(t * 6) > 0; };
+    },
+    neonpaw(g) {
+      box(g, 0.08, 0.6, 0.08, '#37474f', 0, 0.3, -0.05);
+      box(g, 0.62, 0.52, 0.06, '#26233a', 0, 0.86, -0.05);
+      const n = new THREE.MeshBasicMaterial({ color: '#ff5fa2' });
+      box(g, 0.2, 0.16, 0.04, n, 0, 0.78, 0);
+      for (const [x, y] of [[-0.14, 0.94], [-0.05, 1.0], [0.05, 1.0], [0.14, 0.94]]) box(g, 0.07, 0.07, 0.04, n, x, y, 0);
+    },
+    popcorn(g) {
+      box(g, 0.6, 0.36, 0.4, '#e53935', 0, 0.3, 0);
+      for (const x of [-0.24, 0.24]) box(g, 0.08, 0.1, 0.42, '#37474f', x, 0.06, 0);
+      box(g, 0.5, 0.4, 0.34, new THREE.MeshLambertMaterial({ color: '#fff8e1', transparent: true, opacity: 0.6 }), 0, 0.68, 0);
+      for (const [x, y, z] of [[-0.12, 0.56, 0.05], [0.08, 0.6, -0.06], [0, 0.66, 0.08], [0.14, 0.54, 0.08], [-0.08, 0.7, -0.08]]) box(g, 0.07, 0.07, 0.07, '#fff3c4', x, y, z);
+      box(g, 0.56, 0.08, 0.38, '#ffffff', 0, 0.92, 0);
+      for (let k = 0; k < 4; k++) box(g, 0.14, 0.04, 0.4, k % 2 ? '#ffffff' : '#e53935', -0.21 + k * 0.14, 0.98, 0);
+    },
+    gumball(g) {
+      box(g, 0.26, 0.4, 0.26, '#e53935', 0, 0.2, 0);
+      box(g, 0.34, 0.34, 0.34, new THREE.MeshLambertMaterial({ color: '#e3f2fd', transparent: true, opacity: 0.5 }), 0, 0.58, 0);
+      for (const [x, y, z, c] of [[-0.08, 0.5, 0.05, '#ffeb3b'], [0.07, 0.48, -0.06, '#42a5f5'], [0, 0.6, 0.02, '#66bb6a'], [-0.05, 0.62, -0.08, '#ec407a'], [0.08, 0.6, 0.08, '#ff7043']]) box(g, 0.08, 0.08, 0.08, c, x, y, z);
+      box(g, 0.2, 0.06, 0.2, '#e53935', 0, 0.78, 0);
+      box(g, 0.06, 0.06, 0.02, '#f5c542', 0, 0.26, 0.135);
+    },
+    arcadecab(g) {
+      box(g, 0.62, 1.4, 0.56, '#3f2a8a', 0, 0.7, 0);
+      box(g, 0.5, 0.36, 0.02, new THREE.MeshBasicMaterial({ color: '#5be0ff' }), 0, 1.02, 0.285);
+      for (const [x, y, c] of [[-0.12, 1.08, '#ff5fa2'], [0.1, 0.96, '#ffe24a'], [0, 1.1, '#7cff6b']]) box(g, 0.06, 0.06, 0.02, new THREE.MeshBasicMaterial({ color: c }), x, y, 0.29);
+      box(g, 0.62, 0.08, 0.3, '#2a1c60', 0, 0.74, 0.3);
+      box(g, 0.04, 0.1, 0.04, '#222', -0.14, 0.82, 0.32); box(g, 0.07, 0.07, 0.07, '#e53935', -0.14, 0.88, 0.32);
+      for (const x of [0.06, 0.16]) box(g, 0.06, 0.03, 0.06, '#ffca28', x, 0.79, 0.34);
+      box(g, 0.64, 0.14, 0.58, new THREE.MeshBasicMaterial({ color: '#ff5fa2' }), 0, 1.33, 0.01);
+    },
+    bigplush(g) {
+      const c = '#c99a6b', d = '#8d6239';
+      box(g, 0.56, 0.42, 0.5, c, 0, 0.21, 0);
+      box(g, 0.42, 0.38, 0.38, c, 0, 0.6, 0.04);
+      box(g, 0.2, 0.14, 0.12, '#f3dcc0', 0, 0.54, 0.27);
+      box(g, 0.07, 0.05, 0.03, '#2b1d14', 0, 0.6, 0.33);
+      for (const x of [-0.1, 0.1]) box(g, 0.05, 0.05, 0.02, '#2b1d14', x, 0.68, 0.24);
+      for (const x of [-0.22, 0.22]) box(g, 0.1, 0.22, 0.12, d, x, 0.68, 0.02);
+      for (const x of [-0.16, 0.16]) box(g, 0.14, 0.12, 0.18, d, x, 0.06, 0.28);
+      box(g, 0.2, 0.06, 0.04, '#e5484d', 0, 0.42, 0.24);
+    },
+    golftrophy(g) {
+      box(g, 0.36, 0.1, 0.3, '#5d4037', 0, 0.05, 0);
+      box(g, 0.32, 0.06, 0.26, '#4caf50', 0, 0.13, 0);
+      box(g, 0.03, 0.5, 0.03, '#eeeeee', 0.05, 0.41, 0);
+      box(g, 0.14, 0.1, 0.02, '#e53935', 0.12, 0.6, 0);
+      box(g, 0.07, 0.07, 0.07, '#ffffff', -0.08, 0.2, 0.05);
+      box(g, 0.06, 0.02, 0.06, '#222', 0.05, 0.165, 0);
+    },
+    swimtrophy(g) {
+      box(g, 0.34, 0.12, 0.3, '#37474f', 0, 0.06, 0);
+      box(g, 0.08, 0.32, 0.08, '#c9a227', 0, 0.28, 0);
+      box(g, 0.28, 0.16, 0.2, '#c9a227', 0, 0.52, 0);
+      for (const x of [-0.17, 0.17]) box(g, 0.05, 0.12, 0.04, '#c9a227', x, 0.54, 0);
+      box(g, 0.2, 0.04, 0.02, '#4fc3f7', 0, 0.5, 0.105);
+    },
+    gramophone(g) {
+      box(g, 0.44, 0.24, 0.44, '#6d4c41', 0, 0.12, 0);
+      box(g, 0.36, 0.02, 0.36, '#212121', 0, 0.25, 0);
+      box(g, 0.04, 0.3, 0.04, '#c9a227', 0.14, 0.4, -0.1);
+      const horn = pivot(g, 0.06, 0.62, 0.02);
+      horn.rotation.x = -0.5;
+      for (let k = 0; k < 4; k++) box(horn, 0.1 + k * 0.1, 0.1 + k * 0.1, 0.06, '#c9a227', 0, 0, k * 0.07);
+    },
+    grandclock(g) {
+      box(g, 0.46, 1.7, 0.3, '#5d3a22', 0, 0.85, 0);
+      box(g, 0.36, 0.36, 0.02, '#f5ecd9', 0, 1.42, 0.16);
+      box(g, 0.02, 0.14, 0.01, '#222', 0, 1.46, 0.172); box(g, 0.1, 0.02, 0.01, '#222', 0.04, 1.42, 0.172);
+      box(g, 0.24, 0.6, 0.02, '#3b2a1e', 0, 0.75, 0.16);
+      const pend = pivot(g, 0, 1.0, 0.18);
+      box(pend, 0.02, 0.4, 0.01, '#c9a227', 0, -0.2, 0); box(pend, 0.1, 0.1, 0.02, '#c9a227', 0, -0.42, 0);
+      box(g, 0.54, 0.1, 0.34, '#4e2e1a', 0, 1.72, 0);
+      g.userData.anim = (t) => { pend.rotation.z = Math.sin(t * 3) * 0.25; };
+    },
+    vtrunk(g) {
+      box(g, 0.8, 0.42, 0.48, '#8d5a34', 0, 0.21, 0);
+      box(g, 0.82, 0.1, 0.5, '#6d4126', 0, 0.44, 0);
+      for (const x of [-0.25, 0.25]) box(g, 0.06, 0.5, 0.5, '#c9a227', x, 0.25, 0);
+      box(g, 0.1, 0.08, 0.02, '#c9a227', 0, 0.36, 0.25);
+      box(g, 0.14, 0.1, 0.01, '#f5ecd9', -0.12, 0.2, 0.245); box(g, 0.12, 0.08, 0.01, '#90caf9', 0.14, 0.15, 0.245);
+    },
+    rocker(g) {
+      for (const x of [-0.24, 0.24]) { box(g, 0.05, 0.05, 0.7, '#8d5a34', x, 0.04, 0); box(g, 0.05, 0.36, 0.05, '#8d5a34', x, 0.25, 0.2); box(g, 0.05, 0.9, 0.05, '#8d5a34', x, 0.5, -0.2); }
+      box(g, 0.52, 0.06, 0.46, '#a5713f', 0, 0.42, 0);
+      box(g, 0.48, 0.05, 0.42, '#c0504d', 0, 0.47, 0.01);
+      for (let k = 0; k < 4; k++) box(g, 0.48, 0.05, 0.03, '#a5713f', 0, 0.6 + k * 0.1, -0.21);
+    },
+    brasslamp(g) {
+      box(g, 0.26, 0.05, 0.26, '#b8860b', 0, 0.025, 0);
+      box(g, 0.04, 1.1, 0.04, '#c9a227', 0, 0.58, 0);
+      box(g, 0.4, 0.26, 0.4, '#f3e2b3', 0, 1.2, 0);
+      box(g, 0.3, 0.06, 0.3, new THREE.MeshBasicMaterial({ color: '#fff3c4' }), 0, 1.06, 0);
+    },
+    vradio(g) {
+      box(g, 0.56, 0.4, 0.26, '#7b4a2a', 0, 0.2, 0);
+      box(g, 0.56, 0.12, 0.26, '#5d3a22', 0, 0.44, 0);
+      box(g, 0.3, 0.24, 0.02, '#e8d7b0', -0.08, 0.22, 0.135);
+      for (let k = 0; k < 4; k++) box(g, 0.3, 0.015, 0.01, '#8d6e4f', -0.08, 0.13 + k * 0.06, 0.147);
+      for (const y of [0.28, 0.15]) box(g, 0.07, 0.07, 0.03, '#c9a227', 0.18, y, 0.14);
+    },
+    globe(g) {
+      box(g, 0.3, 0.06, 0.3, '#5d3a22', 0, 0.03, 0);
+      box(g, 0.05, 0.5, 0.05, '#5d3a22', 0, 0.3, 0);
+      const s = pivot(g, 0, 0.74, 0);
+      box(s, 0.36, 0.36, 0.36, '#4f8fbf');
+      for (const [x, y, z, w, h] of [[0.08, 0.05, 0.181, 0.14, 0.12], [-0.1, -0.06, 0.181, 0.1, 0.1], [0.181, 0.08, -0.05, 0.01, 0.12]]) box(s, w || 0.01, h, w ? 0.01 : 0.14, '#a5c26b', x, y, z);
+      box(g, 0.04, 0.46, 0.04, '#c9a227', 0.22, 0.74, 0);
+      g.userData.anim = (t) => { s.rotation.y = t * 0.3; };
+    },
+    velvetchair(g) {
+      const c = '#7b2d5a';
+      box(g, 0.76, 0.3, 0.7, c, 0, 0.25, 0.02);
+      box(g, 0.76, 0.66, 0.16, c, 0, 0.66, -0.29);
+      for (const x of [-0.35, 0.35]) box(g, 0.12, 0.26, 0.62, shade(c, 0.85), x, 0.5, 0.02);
+      for (const [x, z] of [[-0.32, -0.28], [0.32, -0.28], [-0.32, 0.32], [0.32, 0.32]]) box(g, 0.06, 0.1, 0.06, '#c9a227', x, 0.05, z);
+      for (const x of [-0.2, 0, 0.2]) box(g, 0.04, 0.04, 0.02, '#c9a227', x, 0.8, -0.205);
+    },
     gardenbench(g) {
       box(g, 0.92, 0.07, 0.42, '#a0703f', 0, 0.42, 0.02);
       box(g, 0.92, 0.32, 0.07, '#a0703f', 0, 0.68, -0.2);
@@ -951,6 +1130,10 @@ window.VP_ART = (function () {
   // Toys (centered, long axis along x)
   // ===================================================================
   const TOY_BUILD = {
+    plushfox(g) { box(g, 0.26, 0.14, 0.14, '#ef7d32'); box(g, 0.12, 0.12, 0.12, '#ef7d32', 0.16, 0.03, 0); box(g, 0.06, 0.05, 0.06, '#ffffff', 0.23, 0.0, 0); for (const z of [-0.04, 0.04]) box(g, 0.04, 0.06, 0.03, '#ef7d32', 0.15, 0.11, z); box(g, 0.12, 0.08, 0.08, '#ffffff', -0.17, 0.02, 0); },
+    carrot(g) { box(g, 0.28, 0.09, 0.09, '#ff8a3d'); box(g, 0.08, 0.06, 0.06, '#ff8a3d', 0.16, 0, 0); for (const z of [-0.03, 0.03]) box(g, 0.08, 0.04, 0.03, '#43a047', -0.18, 0.02, z); },
+    tugring(g) { for (const [x, z, w, d] of [[0, -0.1, 0.24, 0.05], [0, 0.1, 0.24, 0.05], [-0.1, 0, 0.05, 0.24], [0.1, 0, 0.05, 0.24]]) box(g, w, 0.05, d, '#29b6f6', x, 0, z); },
+    burger(g) { box(g, 0.22, 0.06, 0.22, '#e0a050', 0, 0.06, 0); box(g, 0.23, 0.04, 0.23, '#6d3b1f', 0, 0.02, 0); box(g, 0.24, 0.02, 0.24, '#66bb6a', 0, -0.01, 0); box(g, 0.22, 0.05, 0.22, '#e0a050', 0, -0.05, 0); },
     tennis(g) { box(g, 0.2, 0.2, 0.2, '#c9e04a'); box(g, 0.21, 0.04, 0.21, '#f4f7e6'); },
     redball(g) { box(g, 0.22, 0.22, 0.22, '#e2453c'); box(g, 0.23, 0.05, 0.23, '#ffd54f'); },
     bouncy(g) { box(g, 0.2, 0.2, 0.2, '#9b59d0'); box(g, 0.21, 0.21, 0.06, '#f06292'); box(g, 0.06, 0.21, 0.21, '#64b5f6'); },
@@ -1211,6 +1394,15 @@ window.VP_ART = (function () {
     const cm = A.gold ? M.gold : c;
     const fz = tL / 2;
     switch (A.model) {
+      case 'cbandana': {
+        // your own design from the sewing table: a triangle of 16 patches (rows of 7, 5, 3, 1)
+        const G = A.grid || [];
+        box(onBody, tW * 0.92, 0.1, 0.14, G[0] || c, 0, collarY, fz - 0.04);
+        const rows = [7, 5, 3, 1], cw = 0.034;
+        let k = 0;
+        rows.forEach((n, r) => { for (let i = 0; i < n; i++) box(onBody, cw, 0.055, 0.03, G[k++] || c, (i - (n - 1) / 2) * cw, collarY - 0.04 - r * 0.055, fz + 0.045); });
+        break;
+      }
       case 'bandana':
         box(onBody, tW * 0.92, 0.1, 0.14, c, 0, collarY, fz - 0.04);
         box(onBody, 0.22, 0.13, 0.04, c, 0, collarY - 0.1, fz + 0.04);
@@ -4653,6 +4845,7 @@ window.VP_ART = (function () {
     return url;
   }
   const hasThumb = (kind, id) => thumbCache.has(kind + ':' + id);
+  const dropThumb = (kind, id) => thumbCache.delete(kind + ':' + id);
   function drawThumb(kind, id) {
     const g = new THREE.Group();
     switch (kind) {
@@ -4713,7 +4906,7 @@ window.VP_ART = (function () {
 
   return {
     mulberry32, geo, mat, box, pivot, blob, emojiTexture, emojiSprite, textSprite, setSpriteText, M,
-    buildItem, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, buildDuck, buildBottle, buildBed, buildPlant, coatOf, buildSnowman, buildCatchable, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
+    buildItem, setCustom, dropThumb, buildToy, buildDog, buildBench, buildPrints, buildPatch, buildPile, buildTool, buildDuck, buildBottle, buildBed, buildPlant, coatOf, buildSnowman, buildCatchable, portraitURL, personPortraitURL, buildPlayer, huntItem, eventProp, buildAccessory, gardenFloorMaterial, buildHole,
     wallMaterial, floorMaterial, swatchURL, buildPark, daylight, createWeatherFX,
     buildLocation, buildCritter, dirtMaterial,
     icon, thumbURL, hasThumb, scentFX, setScentGold,
