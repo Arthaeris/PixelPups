@@ -1708,3 +1708,14 @@ body.keysOn #tips { bottom: calc(var(--pad-b) + 160px); }
 .addRow .nameField:placeholder-shown { text-transform: none; letter-spacing: 0; }
 #visitBar { flex-wrap: wrap; }
 #visitReact { order: 3; flex: 1 0 100%; justify-content: center; margin-top: 6px; }
+
+/* ----- live walks and the Multiplayer tab ----- */
+#mpBtn { position: fixed; right: 14px; bottom: calc(var(--pad-b, 16px) + 92px); width: 50px; height: 50px; border-radius: 50%; font-size: 24px; border: none; z-index: 30; box-shadow: 0 6px 16px rgba(20, 12, 40, 0.2); }
+#mpBtn.hidden, #mpSay.hidden { display: none; }
+#mpSay { position: fixed; right: 12px; left: 12px; bottom: calc(var(--pad-b, 16px) + 150px); display: flex; flex-wrap: wrap; gap: 6px; padding: 10px; border-radius: 18px; z-index: 31; justify-content: center; }
+body.funOn #mpBtn, body.decorating #mpBtn { display: none; }
+.mpModes { margin: 4px 0 8px; }
+.friendStat .ic { position: relative; }
+.friendStat .dotOn { position: absolute; right: -2px; bottom: -2px; width: 12px; height: 12px; border-radius: 50%; background: #b0b0b8; box-shadow: 0 0 0 2px #fff; }
+.friendStat.on .dotOn { background: #2ecc71; }
+.lg.online { background: #00b8d4; border-radius: 50%; box-shadow: 0 0 0 2px #fff; } .lg.friend { background: #2ecc71; border-radius: 50%; box-shadow: 0 0 0 2px #fff; }
