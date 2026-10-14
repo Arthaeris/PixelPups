@@ -1511,10 +1511,12 @@
   // what kind of dirt a walk here gives right now
   function walkDirt() {
     const W = localWeather(), Dd = LOC().dirt;
+    if (!Dd || venueId) return null;
     if (W.precip === 'snow' && Dd.snow) return Dd.snow;
     return W.muddy ? Dd.wet : Dd.dry;
   }
   function addDirt(d, kind, n) {
+    if (!kind) return;
     d.clean = Math.max(0, d.clean - n);
     d.dirt[kind] = (d.dirt[kind] || 0) + n;
   }
@@ -1793,7 +1795,7 @@
     const nextH = (i, j, ni, nj) => (terrainOn() ? layerH(ni + 0.5, nj + 0.5, cellH(i, j)) : 0);
     const lvl = (x, z, y) => (two && onTopLevel(x, z, y) ? 1 : 0);
     const midOK = (si2, sj2, y) => { const x = (si2 + 1) / 2, z = (sj2 + 1) / 2, k = (si2 * 8192 + sj2) * 2 + lvl(x, z, y); let v = memoMid.get(k); if (v === undefined) { v = !isSolid(x, z, y); memoMid.set(k, v); } return v; };
-    const pass = atHome ? passable : (i, j, y) => { const k = (i * 4096 + j) * 2 + lvl(i + 0.5, j + 0.5, y); let v = memo.get(k); if (v === undefined) { v = !isSolid(i + 0.5, j + 0.5, y); memo.set(k, v); } return v; };
+    const pass = atHome ? passable : (i, j, y) => { const k = (i * 4096 + j) * 2 + lvl(i + 0.5, j + 0.5, y); let v = memo.get(k); if (v === undefined) { v = !isSolid(i + 0.5, j + 0.5, y) && (!venueId || [[0.27, 0], [-0.27, 0], [0, 0.27], [0, -0.27]].every(([a, b]) => !isSolid(i + 0.5 + a, j + 0.5 + b, y))); memo.set(k, v); } return v; };
     const tileIn = atHome ? isHomeTile : (i, j) => !S.inside || S.inside(i + 0.5, j + 0.5);
     const climbOK = (i, j, ni, nj) => !terrainOn() || Math.abs(nextH(i, j, ni, nj) - cellH(i, j)) <= climb + 0.01;
     // at home the stairs link the tile in front of them with the landing upstairs
@@ -2024,7 +2026,7 @@
     player.root.rotation.y = angleLerp(player.root.rotation.y, player.face, damp(0.0002, dt));
 
     if (terrainOn()) { const gy = layerH(pos.x, pos.z, pos.y); pos.y += (gy - pos.y) * Math.min(1, dt * 16); }
-    if (place === 'park') {
+    if (place === 'park' && !venueId) {
       walkDist += moved;
       walkTotal += moved;
       const step = 10 / specMult(null, 'athlete');
@@ -8281,6 +8283,44 @@
     towelTask = null;
     player.moveTarget = v.front.clone();
   }
+  // the stands in a player place: tap one and you walk over and start it
+  let stationTask = null;
+  function tapStation(ray, gp) {
+    if (!venueId || place !== 'park' || !S || !S.stations) return null;
+    const byAct = (a) => S.stations.find((s) => s.act === a) && nearestStation(a);
+    if (S.hits && S.hits.length) {
+      const hs = ray.intersectObjects(S.hits, false);
+      if (hs.length) return byAct(hs[0].object.userData.station);
+      if (gp) for (const m of S.hits) { const p = m.position, pa = m.geometry.parameters; if (Math.abs(gp.x - p.x) < pa.width / 2 + 0.3 && Math.abs(gp.z - p.z) < pa.depth / 2 + 0.3) return byAct(m.userData.station); }
+    }
+    if (!gp) return null;
+    return S.stations.find((s) => Math.hypot(s.x - gp.x, s.z - gp.z) < 0.9) || null;
+  }
+  // a stand can have several spots (the flea market's stalls): use the closest one
+  function nearestStation(act) {
+    const pp = player.root.position;
+    let best = null, bd = 1e9;
+    for (const s of S.stations) if (s.act === act) { const d = Math.hypot(s.x - pp.x, s.z - pp.z); if (d < bd) { bd = d; best = s; } }
+    return best;
+  }
+  function goStation(st) {
+    towelTask = null; useTask = null; vendorTask = null;
+    hideHint();
+    if (Math.hypot(st.x - player.root.position.x, st.z - player.root.position.z) < 1.8) { stationTask = null; player.moveTarget = null; VEN.runAct(st.act); return; }
+    stationTask = st;
+    player.moveTarget = new V3(st.x, 0, st.z);
+  }
+  function updateStationTask() {
+    if (!stationTask) return;
+    if (!venueId) { stationTask = null; return; }
+    const pp = player.root.position;
+    if (Math.hypot(stationTask.x - pp.x, stationTask.z - pp.z) < 1.3) {
+      const st = stationTask;
+      stationTask = null;
+      player.moveTarget = null;
+      VEN.runAct(st.act);
+    } else if (!player.moveTarget) stationTask = null;
+  }
   function updateVendorTask() {
     if (!vendorTask) return;
     const pp = player.root.position;
@@ -8973,7 +9013,9 @@
       while (o && !o.userData.dog) o = o.parent;
       if (o) { dog = o.userData.dog; break; }
     }
-    if (!dog && hitGround) {
+    // a tap right on a stand beats a dog standing near where you tapped
+    const stHit = !dog && venueId ? tapStation(raycaster, hitGround ? gp : null) : null;
+    if (!dog && hitGround && !stHit) {
       let best = 0.85;
       for (const d of sitDog ? dogs.concat(sitDog) : dogs) {
         if (!onView(d)) continue;
@@ -8983,6 +9025,13 @@
     }
     if (dog) { interactDog(dog); return; }
 
+    const stn = stHit;
+    if (stn) {
+      goStation(stn);
+      tapRing.position.set(stn.x, (stn.y || 0) + 0.06, stn.z);
+      tapT = 0.5;
+      return;
+    }
     const statue = tapStatue(hitGround ? gp : null);
     if (statue) {
       if (flatDist(player.root.position, statue.pos) < 2.4) turnStatue(statue);
@@ -9019,6 +9068,7 @@
       towelTask = null;
       useTask = null;
       vendorTask = null;
+      stationTask = null;
       const b = bounds();
       player.moveTarget = new V3(clamp(gp.x, b.x0, b.x1), 0, clamp(gp.z, b.z0, b.z1));
       tapRing.position.set(player.moveTarget.x, 0.06, player.moveTarget.z);
@@ -12062,6 +12112,7 @@
       updateTerrain(dt);
       if (unlockedFeat('calendar')) { updateHunts(dt); calNight(dt); updateSkyFX(dt); }
       updateVendorTask();
+      updateStationTask();
       if (S.anim) S.anim(animT);
       if (!tiredWarned && dogs.some((d) => d.energy < CRITICAL)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
     } else {
@@ -17721,7 +17772,7 @@
       openMeals, giveMeal, openWardrobe, checkUnlocks, makeVisitCode, visitLink, parseVisitCode, guests, get visit() { return visit; },
       doUse, startUse, startTidy, renderClutter, homeDig, pullToyOut, findRare, findIngredient, autoRefill, openGiftBox, takeForGift,
       setTime(h) { timeOverride = h; tickClock(); }, setWeather(w) { weatherOverride = w; tickClock(); },
-      get loc() { return loc; }, get S() { return S; }, get quirk() { return quirk; }, goWalk, goHome, openMap, renderMap, checkLocUnlocks, locProgress,
+      get loc() { return loc; }, get camera() { return camera; }, setZoom: (z) => { zoom = z; }, get stationTask() { return stationTask; }, get S() { return S; }, get quirk() { return quirk; }, goWalk, goHome, openMap, renderMap, checkLocUnlocks, locProgress,
       grantFind, rollFind, walkLoot, beachDig, askStay, tideLevel, setTide(v) { tideOverride = v; }, openShop, get shopVendor() { return shopVendor; },
       startVendor, tapVendor, ensureDaily, progress, openDaily, openAlbum, bookPage, get albumPage() { return albumPage; }, set albumPage(v) { albumPage = v; },
       noteSeen, mainDirt, addDirt, walkDirt, isSolid, quirkSolid, inPlaza, plazaPerformance, performTrick, spawnWalkers,
