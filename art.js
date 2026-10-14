@@ -20,6 +20,7 @@ window.VP_ART = (function () {
   // ===================================================================
   const geoCache = new Map();
   const matCache = new Map();
+  const plainMats = new WeakSet();
   function geo(w, h, d) {
     const k = w + '|' + h + '|' + d;
     let g = geoCache.get(k);
@@ -28,7 +29,7 @@ window.VP_ART = (function () {
   }
   function mat(color) {
     let m = matCache.get(color);
-    if (!m) { m = new THREE.MeshLambertMaterial({ color }); matCache.set(color, m); }
+    if (!m) { m = new THREE.MeshLambertMaterial({ color }); matCache.set(color, m); plainMats.add(m); }
     return m;
   }
   function box(parent, w, h, d, color, x = 0, y = 0, z = 0) {
@@ -2010,10 +2011,11 @@ window.VP_ART = (function () {
   const hash2 = (x, z) => { const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); };
   function terrain(def) {
     const cellIn = (x, z) => {
+      if (def.cellFn) return def.cellFn(Math.floor(x), Math.floor(z));
       const cx = Math.floor(x) + 0.5, cz = Math.floor(z) + 0.5;
       return def.walk.some((p) => inPoly(p, cx, cz)) && !inAny(def.blocks || [], cx, cz);
     };
-    const areaHas = (a, x, z) => (a.rect ? inRect(a.rect, x, z) : a.rects ? inAny(a.rects, x, z) : inPoly(a.poly, x, z));
+    const areaHas = (a, x, z) => (a.rect ? inRect(a.rect, x, z) : a.rects ? inAny(a.rects, x, z) : a.poly ? inPoly(a.poly, x, z) : true);
     // a hill: an irregular outline that rises in low voxel terraces from its edge, so you can walk up anywhere.
     // Edges listed in "steep" are rock faces instead: the ground stays high right up to them.
     const segDist = (px, pz, ax, az, bx, bz) => {
@@ -2044,9 +2046,10 @@ window.VP_ART = (function () {
       for (const a of def.areas || []) {
         if (upper && a.under) continue;
         // flat ground and hills go by whole cells (as they are drawn); ramps and stairs are smooth
-        const cell = a.kind === 'flat' || a.kind === 'hill';
+        const cell = a.kind === 'flat' || a.kind === 'hill' || a.kind === 'fn';
         if (!(cell ? areaHas(a, Math.floor(x) + 0.5, Math.floor(z) + 0.5) : areaHas(a, x, z))) continue;
-        if (a.kind === 'hill') h = hillH(a, x, z);
+        if (a.kind === 'fn') { const v = a.f(Math.floor(x), Math.floor(z)); if (v !== undefined) h = v; }
+        else if (a.kind === 'hill') h = hillH(a, x, z);
         else if (a.kind === 'flat') h = a.h;
         else {
           const r = a.rect;
@@ -2106,6 +2109,8 @@ window.VP_ART = (function () {
     for (let i = Math.floor(x0) - M0; i < Math.ceil(x1) + M0; i++) {
       for (let k = Math.floor(z0) - M0; k < Math.ceil(z1) + M0; k++) {
         const cx = i + 0.5, cz = k + 0.5;
+        const hole = st.hole ? st.hole(cx, cz) : null;
+        if (hole !== null && !T.inside(cx, cz)) continue;
         if (OUT && !T.inside(cx, cz)) {
           let lo = OUT.h;
           for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (T.inside(cx + dx, cz + dz)) lo = Math.min(lo, T.height(cx + dx, cz + dz));
@@ -2113,19 +2118,19 @@ window.VP_ART = (function () {
           if (lo < OUT.h - 0.05) bodies.push([cx, (lo + OUT.h - 0.12) / 2, cz, 1, OUT.h - 0.12 - lo, 1, OUT.rock || st.rock || st.side]);
           continue;
         }
-        if (!T.inside(cx, cz) || T.sloped(cx, cz)) continue;
+        if (!T.inside(cx, cz) || T.sloped(cx, cz) || (st.skip && st.skip(cx, cz))) continue;
         const h = T.height(cx, cz);
         let low = h;
         for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-          const nx = cx + dx, nz = cz + dz;
-          low = Math.min(low, T.inside(nx, nz) ? T.height(nx, nz) : bottom);
+          const nx = cx + dx, nz = cz + dz, nh = st.hole ? st.hole(nx, nz) : null;
+          low = Math.min(low, nh !== null && !T.inside(nx, nz) ? nh : T.inside(nx, nz) ? (st.skip && st.skip(nx, nz) ? (st.skipLow ?? h) : T.height(nx, nz)) : bottom);
         }
         const rf = roofs.find((r) => h >= (r.rf.minH ?? 1) && inAny(r.rf.zone, cx, cz));
         const capList = rf ? rf.caps : caps, bodyList = rf ? rf.bodies : bodies;
         capList.push([cx, h - 0.06, cz, 1, 0.12, 1, colorFor(cx, cz, h)]);
         if (low < h - 0.05) {
           const b = Math.min(low, h - 0.12);
-          bodyList.push([cx, (b + h - 0.12) / 2, cz, 1, h - 0.12 - b, 1, h > 0.9 && st.rock ? st.rock : st.side]);
+          bodyList.push([cx, (b + h - 0.12) / 2, cz, 1, h - 0.12 - b, 1, st.sideFor ? st.sideFor(h, low, cx, cz) : h > 0.9 && st.rock ? st.rock : st.side]);
         }
         // ground that hangs over a hollow (a cove, a grotto): its top, and rock down to the ceiling
         const up = T.upper(cx, cz);
@@ -2156,6 +2161,7 @@ window.VP_ART = (function () {
     const make = (list, mtl) => {
       if (!list.length) return null;
       const m = new THREE.InstancedMesh(geo(1, 1, 1), mtl || new THREE.MeshLambertMaterial({ color: '#ffffff' }), list.length);
+      m.frustumCulled = false;
       list.forEach(([x, y, z, w, h, d, col], n) => {
         m4b.compose(ptmp.set(x, y, z), qtmp.setFromAxisAngle(UPY, 0), stmp.set(w, Math.max(0.01, h), d));
         m.setMatrixAt(n, m4b);
@@ -2222,170 +2228,879 @@ window.VP_ART = (function () {
   const onGround = (T, g, x, z) => { g.position.y = T.height(x, z); return g; };
 
   // ===================================================================
-  // Park: a main lawn, a quieter east meadow with a lookout hill (and a tunnel through it),
-  // a sunken pond, and a rose garden hidden behind the west hedge
+  // Neighborhood Park. The whole place is worked out cell by cell (1 x 1) up front:
+  // where you can walk, how high the ground is, where water is and what each bit of ground is made of.
+  // South gate home at (0, 20); a fountain plaza; a loop path around the big lawn; a two-lobed pond fed by
+  // a woodland creek; a hill with a pavilion and a cliff (and a grotto in it) to the east; a meadow; a playground;
+  // and a rose garden hidden behind the west hedge.
   // ===================================================================
-  const POND = { x0: 3, x1: 9, z0: -7, z1: -2 };
-  function onPath(x, z) {
-    return (Math.abs(Math.abs(x) - 11) < 1.3 && Math.abs(z) < 12.3) ||
-           (Math.abs(Math.abs(z) - 11) < 1.3 && Math.abs(x) < 12.3) ||
-           (Math.abs(x) < 1.3 && z > 10) ||
-           (z > -6.8 && z < -5.2 && x > 10 && x < 26.8) ||
-           (x > 25.2 && x < 26.8 && z > -16 && z < -5.2) ||
-           (z > -15.9 && z < -14.5 && x > 26 && x < 31.5);
+  const PG = (() => {
+    const X0 = -36, X1 = 50, Z0 = -28, Z1 = 24;
+    const W = X1 - X0, Hh = Z1 - Z0;
+    const idx = (i, j) => (i - X0) * Hh + (j - Z0);
+    const okIJ = (i, j) => i >= X0 && i < X1 && j >= Z0 && j < Z1;
+    const OUTLINE = [[-2, 19], [-14, 19], [-20, 17.6], [-24, 13.6], [-25.6, 8], [-24.6, 4], [-33, 4], [-33, -15], [-24.6, -15], [-25.6, -19.2], [-20.6, -23.2],
+      [-10, -25], [4, -25.6], [16, -24.6], [24, -25.6], [33, -25.6], [40, -24.2], [44.2, -21], [46.6, -17], [46.6, -6], [45, 4], [40, 11], [32, 15], [22, 17.8], [14, 19], [2, 19], [2, 21.7], [-2, 21.7]];
+    // the lookout hill: walk up from the west and south-west; the east side is a cliff (steep edges)
+    const HILL = [[23.4, -13.4], [26, -19.2], [30.6, -23.2], [38, -23.8], [43, -20.6], [44, -16], [44, -10.6], [41, -6.4], [34, -5.6], [28, -7.4]];
+    const HILL_STEEP = [4, 5, 6];
+    const GROTTO = { x0: 40, x1: 44, z0: -16, z1: -13 };
+    const segDist = (px, pz, ax, az, bx, bz) => {
+      const dx = bx - ax, dz = bz - az, L = dx * dx + dz * dz;
+      const t = L ? clamp(((px - ax) * dx + (pz - az) * dz) / L, 0, 1) : 0;
+      return Math.hypot(px - ax - dx * t, pz - az - dz * t);
+    };
+    const polyDist = (P, x, z, closed = true, skip = []) => {
+      let d = Infinity;
+      const n = closed ? P.length : P.length - 1;
+      for (let k = 0; k < n; k++) { if (skip.includes(k)) continue; const [ax, az] = P[k], [bx, bz] = P[(k + 1) % P.length]; d = Math.min(d, segDist(x, z, ax, az, bx, bz)); }
+      return d;
+    };
+    // smooth closed / open curves through a few points (Catmull-Rom), sampled finely
+    const curve = (pts, closed, step = 0.35) => {
+      const out = [], n = pts.length, P = (k) => pts[closed ? (k + n) % n : clamp(k, 0, n - 1)];
+      for (let k = 0; k < (closed ? n : n - 1); k++) {
+        const p0 = P(k - 1), p1 = P(k), p2 = P(k + 1), p3 = P(k + 2);
+        const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]), m = Math.max(2, Math.ceil(len / step));
+        for (let s = 0; s < m; s++) {
+          const t = s / m, t2 = t * t, t3 = t2 * t;
+          const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+          out.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
+        }
+      }
+      if (!closed) out.push(pts[n - 1]);
+      return out;
+    };
+    const LOOP = curve([[0, 7.4], [8, 6.8], [13.6, 2.8], [15.6, -3.2], [12.6, -9.2], [4, -11.8], [-3, -11.4], [-6.8, -6.4], [-8.2, -0.6], [-6.4, 5]], true);
+    const TRAIL_W = curve([[4, -11.8], [3.6, -15], [-3, -17.2], [-10, -17.6], [-15, -17.6], [-19.4, -17.8], [-22.4, -20.2]], false);
+    const TRAIL_E = curve([[3.6, -15], [10, -17.4], [17, -16.6], [22.4, -13.8]], false);
+    const HILLPATH = curve([[22.4, -13.8], [26.4, -10.8], [31.6, -9.2], [37, -10.8], [38.8, -15], [36.6, -18.8], [33, -18.2], [33.6, -15.6]], false);
+    const MEADOW = curve([[15.6, -1.4], [21, -0.4], [27, 1.6], [32.6, 3.8]], false);
+    const JETTYPATH = curve([[-8.2, -0.6], [-12, 0.4], [-15.4, -0.8], [-16, -1.6]], false);
+    const PLAY = { x0: 7, x1: 16, z0: 10, z1: 17 };
+    const FLOWERS = { x0: -17, x1: -6, z0: 9.5, z1: 16.5 };
+    const PICNIC = { x: 35, z: 4.6, r: 3.2 };
+    const TOP = { x: 34.4, z: -15.2, r: 2.9 };
+    const PLAZA = { x: 0, z: 12, r: 4.5 };
+    const GARDEN = { x0: -33, x1: -25, z0: -15, z1: 4 };
+    // the two-lobed pond and the creek that feeds it from the woods
+    const lobes = [{ x: -16, z: -6, rx: 5.1, rz: 4.1, a: 0 }, { x: -10.4, z: -10.2, rx: 3.7, rz: 2.8, a: 2 }];
+    const inLobe = (L, x, z) => {
+      const th = Math.atan2(z - L.z, x - L.x), wob = 1 + 0.07 * Math.sin(3 * th + L.a) + 0.05 * Math.sin(5 * th + 1.3 * L.a);
+      return ((x - L.x) / L.rx) ** 2 + ((z - L.z) / L.rz) ** 2 < wob * wob;
+    };
+    const creekX = (z) => -15.6 + 1.3 * Math.sin((z + 24) * 0.45);
+    const inCreek = (x, z) => z > -22.2 && z < -8.6 && Math.abs(x - creekX(z)) < 0.98;
+    const JETTY = { x0: -17, x1: -15, z0: -6, z1: -2 };
+    const BRIDGE = { x0: -18, x1: -13, z0: -19.2, z1: -17.0 };
+    const DUCKS = [{ x0: -20.4, x1: -17.4, z0: -8.6, z1: -3.6 }, { x0: -12.6, x1: -8.6, z0: -11.4, z1: -9 }];
+
+    const A = (fill) => new Array(W * Hh).fill(fill);
+    const inside = A(false), water = A(null), deck = A(false), h = A(0), kind = A(null), zone = A(null);
+    const each = (fn) => { for (let i = X0; i < X1; i++) for (let j = Z0; j < Z1; j++) fn(i, j, i + 0.5, j + 0.5, idx(i, j)); };
+    // 1. where the park is, and the hedges inside it (the rose garden's walls, with one narrow gap)
+    each((i, j, x, z, k) => {
+      if (!inPoly(OUTLINE, x, z)) return;
+      inside[k] = true;
+      if (i === -25 && j >= -15 && j <= 3 && j !== -3) inside[k] = false;
+      if (x > GARDEN.x0 && x < GARDEN.x1 && z > GARDEN.z0 && z < GARDEN.z1) zone[k] = 'garden';
+    });
+    // 2. water
+    each((i, j, x, z, k) => {
+      if (!inside[k]) return;
+      if (lobes.some((L) => inLobe(L, x, z))) water[k] = -0.72;
+      else if (inCreek(x, z)) water[k] = 0;
+    });
+    const isWater = (i, j) => okIJ(i, j) && water[idx(i, j)] !== null;
+    // distance (in cells) to the nearest water, for the gentle slope down to the shore
+    const wd = A(99);
+    each((i, j, x, z, k) => { if (water[k] !== null) wd[k] = 0; });
+    for (let pass = 0; pass < 6; pass++) each((i, j, x, z, k) => {
+      if (wd[k] === 0) return;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) if (okIJ(i + di, j + dj)) wd[k] = Math.min(wd[k], wd[idx(i + di, j + dj)] + (di && dj ? 1.4 : 1));
+    });
+    // 3. heights
+    const bump = (x, z, cx, cz, r, H) => { const d = Math.hypot(x - cx, z - cz) / r; return d >= 1 ? 0 : H * (0.5 + 0.5 * Math.cos(Math.PI * d)); };
+    const q = (v, s = 0.25) => Math.round(v / s) * s;
+    const hillH = (x, z) => {
+      if (!inPoly(HILL, x, z)) return 0;
+      const d = polyDist(HILL, x, z, true, HILL_STEEP);
+      return Math.min(2.5, Math.ceil(d - 1e-6) * 0.25);
+    };
+    each((i, j, x, z, k) => {
+      if (!inside[k] || water[k] !== null) return;
+      let v = 0;
+      // the woods rise gently towards the north
+      if (x < 23) v = Math.max(v, 1.0 * clamp((-z - 15.2) / 7, 0, 1) + 0.25 * Math.sin(x * 0.35) * clamp((-z - 17) / 5, 0, 1));
+      v = Math.max(v, bump(x, z, 5.4, -1.8, 4.6, 0.62), bump(x, z, 29, 8.4, 4.4, 0.6), bump(x, z, -19.6, 9.6, 3.8, 0.55), bump(x, z, 19.4, 9.2, 3.2, 0.4));
+      v = Math.max(v, hillH(x, z));
+      // the rose garden sits a little lower, a sunken garden
+      if (zone[k] === 'garden') v = -0.25;
+      h[k] = q(v);
+    });
+    // flat bits: the plaza, the gate, the playground, the picnic spot and the top of the hill
+    each((i, j, x, z, k) => {
+      if (!inside[k] || water[k] !== null) return;
+      if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.r + 1.2 || (Math.abs(x) < 3 && z > 14)) h[k] = 0;
+      if (x > PLAY.x0 - 0.5 && x < PLAY.x1 + 0.5 && z > PLAY.z0 - 0.5 && z < PLAY.z1 + 0.5) h[k] = 0;
+      if (Math.hypot(x - PICNIC.x, z - PICNIC.z) < PICNIC.r) h[k] = 0;
+      if (Math.hypot(x - TOP.x, z - TOP.z) < TOP.r + 0.5) h[k] = 2.0;
+    });
+    // the ground slopes down to the water
+    each((i, j, x, z, k) => {
+      if (!inside[k] || water[k] !== null || zone[k] === 'garden') return;
+      const d = wd[k];
+      if (d > 4.5) return;
+      const nearPond = lobes.some((L) => Math.hypot((x - L.x) / (L.rx + 4), (z - L.z) / (L.rz + 4)) < 1);
+      if (nearPond) h[k] = Math.min(h[k], d <= 1.5 ? -0.5 : d <= 2.5 ? -0.25 : h[k]);
+    });
+    // no step anywhere is more than a quarter (except the cliff): lower whatever is too high
+    const HILLC = (i, j) => inPoly(HILL, i + 0.5, j + 0.5);
+    const cliffPair = (i, j, i2, j2) => HILLC(i, j) !== HILLC(i2, j2) && polyDist([HILL[4], HILL[5], HILL[6], HILL[7]], (i + i2) / 2 + 0.5, (j + j2) / 2 + 0.5, false) < 1.0;
+    const walkable = (i, j) => okIJ(i, j) && inside[idx(i, j)] && water[idx(i, j)] === null;
+    for (let pass = 0; pass < 40; pass++) {
+      let changed = 0;
+      each((i, j, x, z, k) => {
+        if (!walkable(i, j)) return;
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const i2 = i + di, j2 = j + dj;
+          if (!walkable(i2, j2) || cliffPair(i, j, i2, j2)) continue;
+          const o = h[idx(i2, j2)];
+          if (h[k] > o + 0.25 + 1e-6) { h[k] = q(o + 0.25, 0.05); changed++; }
+        }
+      });
+      if (!changed) break;
+    }
+    // the creek: its water runs a little below its banks, and only ever downhill (south, into the pond)
+    const creekCells = [];
+    each((i, j, x, z, k) => { if (water[k] === 0) creekCells.push([i, j]); });
+    creekCells.sort((a, b) => a[1] - b[1]);
+    let lvl = 1.4;
+    const rows = new Map();
+    for (const [i, j] of creekCells) {
+      let bank = Infinity;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0]]) if (walkable(i + di, j + dj)) bank = Math.min(bank, h[idx(i + di, j + dj)]);
+      if (bank === Infinity) bank = lvl + 0.3;
+      if (!rows.has(j)) rows.set(j, bank);
+      else rows.set(j, Math.min(rows.get(j), bank));
+    }
+    const rowLvl = new Map();
+    for (const j of [...rows.keys()].sort((a, b) => a - b)) { lvl = Math.min(lvl, q(rows.get(j) - 0.32, 0.05)); lvl = Math.max(lvl, -0.72); rowLvl.set(j, lvl); }
+    for (const [i, j] of creekCells) water[idx(i, j)] = rowLvl.get(j);
+    // decks: the jetty out into the pond and the footbridge over the creek
+    each((i, j, x, z, k) => {
+      if (!inside[k]) return;
+      const inJ = x > JETTY.x0 && x < JETTY.x1 && z > JETTY.z0 && z < JETTY.z1;
+      const inB = x > BRIDGE.x0 && x < BRIDGE.x1 && z > BRIDGE.z0 && z < BRIDGE.z1 && water[k] !== null;
+      if (inJ && water[k] !== null) { deck[k] = 'jetty'; h[k] = -0.4; }
+      if (inB) {
+        deck[k] = 'bridge';
+        let bank = -Infinity;
+        for (const di of [-3, -2, -1, 1, 2, 3]) if (walkable(i + di, j) && !isWater(i + di, j)) bank = Math.max(bank, h[idx(i + di, j)]);
+        h[k] = q((bank === -Infinity ? 0.5 : bank) + 0.2, 0.05);
+      }
+    });
+    // what the ground is made of (paths, plaza, sand...) for drawing and for onPath
+    const near = (pts, x, z, w) => { for (let k = 0; k < pts.length - 1; k++) if (segDist(x, z, pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1]) < w) return true; return false; };
+    const nearLoop = (x, z, w) => near(LOOP.concat([LOOP[0]]), x, z, w);
+    const groundKind = (x, z) => {
+      if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.r || (Math.abs(x) < 1.7 && z > 15)) return 'pave';
+      if (x > PLAY.x0 && x < PLAY.x1 && z > PLAY.z0 && z < PLAY.z1) return 'sand';
+      if (Math.hypot(x - TOP.x, z - TOP.z) < TOP.r - 0.4) return 'deckstone';
+      if (Math.hypot(x - PICNIC.x, z - PICNIC.z) < PICNIC.r - 0.2) return 'gravel';
+      if (nearLoop(x, z, 1.15)) return 'gravel';
+      if (near(MEADOW, x, z, 0.85) || near(HILLPATH, x, z, 0.8) || near(JETTYPATH, x, z, 0.75)) return 'gravel';
+      if (near(TRAIL_W, x, z, 0.75) || near(TRAIL_E, x, z, 0.75)) return 'dirt';
+      if (near([[4.4, 12], [7.2, 12.6]], x, z, 0.8) || near([[-4.4, 12], [-6.4, 12.6]], x, z, 0.8)) return 'gravel';
+      return null;
+    };
+    const edgeKind = (x, z) => {
+      if (nearLoop(x, z, 1.6) || near(MEADOW, x, z, 1.25) || near(HILLPATH, x, z, 1.2) || near(JETTYPATH, x, z, 1.15)) return 'gravelEdge';
+      if (near(TRAIL_W, x, z, 1.15) || near(TRAIL_E, x, z, 1.15)) return 'dirtEdge';
+      return null;
+    };
+    each((i, j, x, z, k) => {
+      if (!inside[k] || water[k] !== null) return;
+      if (zone[k] === 'garden') { kind[k] = (Math.abs(x + 29) < 1.1 || Math.abs(z + 5.5) < 1.1 || (j === -3 && x > -29)) ? 'white' : 'bed'; return; }
+      kind[k] = groundKind(x, z) || edgeKind(x, z);
+    });
+    const at = (arr, x, z) => { const i = Math.floor(x), j = Math.floor(z); return okIJ(i, j) ? arr[idx(i, j)] : null; };
+    return {
+      X0, X1, Z0, Z1, OUTLINE, HILL, HILL_STEEP, GROTTO, LOOP, TRAIL_W, TRAIL_E, HILLPATH, MEADOW, JETTYPATH, PLAY, FLOWERS, PICNIC, TOP, PLAZA, GARDEN, JETTY, BRIDGE, DUCKS, lobes, creekX,
+      inside: (x, z) => !!at(inside, x, z), height: (x, z) => at(h, x, z) || 0, water: (x, z) => at(water, x, z), deck: (x, z) => at(deck, x, z), kind: (x, z) => at(kind, x, z), zone: (x, z) => at(zone, x, z),
+      waterDist: (x, z) => { const v = at(wd, x, z); return v === null ? 99 : v; }, isWaterIJ: isWater, segDist, near, polyDist,
+      cells: (fn) => each((i, j, x, z, k) => fn(i, j, x, z)),
+    };
+  })();
+
+  // ----- drawing helpers for the park (and anything else that wants them) -----
+  const noCull = (m) => { m.frustumCulled = false; return m; };
+  // lots of plain axis-aligned boxes as one mesh: push [x, y, z, w, h, d, color]
+  function boxBatch(root, list, mtl) {
+    if (!list.length) return null;
+    const m = new THREE.InstancedMesh(geo(1, 1, 1), mtl || new THREE.MeshLambertMaterial({ color: '#ffffff' }), list.length);
+    const C = new THREE.Color();
+    list.forEach(([x, y, z, w, h, d, col], n) => {
+      m4b.compose(ptmp.set(x, y, z), qtmp.setFromAxisAngle(UPY, 0), stmp.set(w, Math.max(0.005, h), d));
+      m.setMatrixAt(n, m4b);
+      m.setColorAt(n, C.set(col));
+    });
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    root.add(noCull(m));
+    return m;
   }
-  // the lookout hill in the east meadow: terraced on three sides, a rock face to the east with a grotto in it
-  const PARK_HILL = [[29, -14], [31.5, -19], [37, -20], [41.5, -17.5], [42, -12], [39, -9.5], [33.5, -9.5], [30, -11]];
-  const PARK_GROTTO = { x0: 38.5, x1: 42, z0: -16, z1: -13.5 };
-  const inPond = (x, z, m = 0) => x > POND.x0 - m && x < POND.x1 + m && z > POND.z0 - m && z < POND.z1 + m;
-  const PARK_T = {
-    walk: [
-      [[-19.5, -15], [-15, -19.5], [15, -19.5], [19.5, -15], [19.5, 15], [15, 19.5], [1.6, 19.5], [1.6, 21], [-1.6, 21], [-1.6, 19.5], [-15, 19.5], [-19.5, 15]],
-      [[19, -9], [26, -9], [26, -3], [19, -3]],
-      [[24.5, -17], [31, -21.5], [39, -21.5], [44.5, -17], [45, -9], [42, -3], [38.5, 1], [31, 1.5], [24.5, -2]],
-      [[-28, -8], [-23, -10], [-19, -9], [-19, 4], [-23, 6], [-28, 3]],
-    ],
-    // the hedge between the lawn and the rose garden, with one narrow gap
-    blocks: [{ x0: -20, x1: -19, z0: -9.5, z1: -1.01 }, { x0: -20, x1: -19, z0: 0.01, z1: 4.5 }],
-    areas: [
-      { kind: 'flat', rect: { x0: 2, x1: 10, z0: -8.5, z1: -1 }, h: -0.5 },
-      { kind: 'stairs', rect: { x0: 0, x1: 2, z0: -5, z1: -3 }, axis: 'x', h0: 0, h1: -0.5, n: 2 },
-      { kind: 'hill', poly: PARK_HILL, h: 1.6, step: 0.4, ring: 1, steep: [2, 3, 4] },
-      { kind: 'flat', rect: PARK_GROTTO, h: 0, under: true },
-    ],
-    roofs: [{ id: 'underpass', zone: [{ x0: 37, x1: 43, z0: -17.5, z1: -12 }], under: [PARK_GROTTO], ceil: 1.3 }],
-  };
+  // after a place is built: every plain box (same shared material per color) becomes one instance of a single mesh.
+  // Phones draw a few meshes far faster than thousands. Groups marked noBake (moving things, sparkles) are left alone.
+  const BAKEMAT = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+  function bakeStatic(root) {
+    if (!THREE.Matrix4.prototype.invert || !THREE.InstancedMesh) return null;
+    root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+    const list = [];
+    const walk = (o) => {
+      if (o.userData && o.userData.noBake) return;
+      for (const c of o.children.slice()) walk(c);
+      if (o.isMesh && !o.isInstancedMesh && o.visible && plainMats.has(o.material) && o.geometry && o.geometry.type === 'BoxGeometry') list.push(o);
+    };
+    walk(root);
+    if (list.length < 2) return null;
+    const m = new THREE.InstancedMesh(geo(1, 1, 1), BAKEMAT, list.length);
+    const M4 = new THREE.Matrix4(), S4 = new THREE.Matrix4();
+    list.forEach((o, n) => {
+      const p = o.geometry.parameters;
+      S4.makeScale(p.width, p.height, p.depth);
+      M4.multiplyMatrices(inv, o.matrixWorld).multiply(S4);
+      m.setMatrixAt(n, M4);
+      m.setColorAt(n, o.material.color);
+      o.parent.remove(o);
+    });
+    m.instanceColor.needsUpdate = true;
+    root.add(noCull(m));
+    return m;
+  }
+
+  // ----- trees and shrubs -----
+  const GREENS = [['#4f9d47', '#5fae54', '#3f8a3a'], ['#5aa64a', '#6cb85a', '#478f3f'], ['#468f45', '#57a253', '#3a7c3a']];
+  function oakTree(root, x, y, z, r, s = 1, pal) {
+    const g = pivot(root, x, y, z);
+    g.rotation.y = Math.floor(r() * 4) * (Math.PI / 2);
+    const [a, b, c] = pal || GREENS[Math.floor(r() * GREENS.length)];
+    const th = (1.5 + r() * 0.4) * s;
+    box(g, 0.5 * s, th, 0.5 * s, '#6e4a2d', 0, th / 2, 0);
+    box(g, 0.8 * s, 0.25 * s, 0.8 * s, '#5d3e26', 0, 0.12 * s, 0);
+    box(g, 0.2 * s, 0.2 * s, 0.7 * s, '#6e4a2d', 0.3 * s, th * 0.75, 0.2 * s).rotation.x = 0.5;
+    box(g, 2.8 * s, 1.1 * s, 2.6 * s, c, 0, th + 0.35 * s, 0);
+    box(g, 2.4 * s, 1.0 * s, 2.4 * s, a, 0.1 * s, th + 1.1 * s, -0.1 * s);
+    box(g, 1.5 * s, 0.9 * s, 1.5 * s, b, -0.3 * s, th + 1.85 * s, 0.2 * s);
+    box(g, 1.2 * s, 0.8 * s, 1.1 * s, b, 1.25 * s, th + 0.95 * s, 0.6 * s);
+    box(g, 1.1 * s, 0.7 * s, 1.2 * s, a, -1.2 * s, th + 0.8 * s, -0.7 * s);
+    box(g, 0.9 * s, 0.6 * s, 0.9 * s, b, 0.6 * s, th + 1.6 * s, -0.8 * s);
+    return g;
+  }
+  function birchTree(root, x, y, z, r, s = 1) {
+    const g = pivot(root, x, y, z);
+    const th = (2.4 + r() * 0.7) * s;
+    box(g, 0.26 * s, th, 0.26 * s, '#f2efe8', 0, th / 2, 0);
+    for (let k = 0; k < 4; k++) box(g, 0.28 * s, 0.07 * s, 0.12 * s, '#3b3b3b', 0, (0.5 + k * 0.55 + r() * 0.2) * s, (r() < 0.5 ? -0.08 : 0.08) * s);
+    const [a, b] = r() < 0.5 ? ['#9ccc65', '#aed581'] : ['#8bc34a', '#a5d16b'];
+    box(g, 1.5 * s, 1.2 * s, 1.4 * s, a, 0, th + 0.2 * s, 0);
+    box(g, 1.0 * s, 0.9 * s, 1.0 * s, b, 0.2 * s, th + 1.05 * s, 0.1 * s);
+    box(g, 0.8 * s, 0.7 * s, 0.7 * s, b, -0.55 * s, th - 0.3 * s, 0.3 * s);
+    return g;
+  }
+  function pineTree(root, x, y, z, r, s = 1) {
+    const g = pivot(root, x, y, z);
+    const th = 0.9 * s;
+    box(g, 0.36 * s, th + 0.4 * s, 0.36 * s, '#5d4030', 0, (th + 0.4 * s) / 2, 0);
+    const cols = r() < 0.5 ? ['#2f6b3e', '#36784a', '#3f8656', '#4a9460'] : ['#2b6338', '#326f42', '#3b7c4c', '#468a57'];
+    [[2.2, 0.8], [1.7, 0.75], [1.2, 0.7], [0.7, 0.6]].forEach(([w, hh], k) => box(g, w * s, hh * s, w * s, cols[k], 0, th + (0.4 + k * 0.7) * s, 0));
+    box(g, 0.25 * s, 0.4 * s, 0.25 * s, cols[3], 0, th + 3.1 * s, 0);
+    return g;
+  }
+  function blossomTree(root, x, y, z, r, s = 1) {
+    return oakTree(root, x, y, z, r, s * 0.85, ['#f6b6cf', '#fbd3e2', '#ee9dbd']);
+  }
+  function appleTree(root, x, y, z, r, s = 1) {
+    const g = oakTree(root, x, y, z, r, s * 0.8, ['#5aa64a', '#6cb85a', '#478f3f']);
+    for (let k = 0; k < 9; k++) box(g, 0.18, 0.18, 0.18, '#e53935', (r() - 0.5) * 2.4 * s, (1.9 + r() * 1.3) * s, (r() - 0.5) * 2.3 * s);
+    return g;
+  }
+  function willowTree(root, x, y, z, r, s = 1) {
+    const g = oakTree(root, x, y, z, r, s * 0.95, ['#8cbf5e', '#9ccb6a', '#7fb456']);
+    const th = 1.7 * s;
+    const C = ['#8cbf5e', '#9ccb6a', '#7fb456', '#a6d173'];
+    for (let k = 0; k < 26; k++) {
+      const a = (k / 26) * Math.PI * 2 + r() * 0.12, rr = (1.35 + r() * 0.15) * s;
+      const len = (1.0 + r() * 0.7) * s;
+      box(g, 0.2 * s, len, 0.2 * s, C[k % 4], Math.cos(a) * rr, th + 0.45 * s - len / 2, Math.sin(a) * rr);
+    }
+    return g;
+  }
+
+  function shrub(root, x, y, z, r, s = 1, flowers) {
+    const g = pivot(root, x, y, z);
+    const [a, b] = r() < 0.5 ? ['#4f9a45', '#5fae54'] : ['#478f3f', '#58a34d'];
+    box(g, 0.9 * s, 0.6 * s, 0.9 * s, a, 0, 0.3 * s, 0);
+    box(g, 0.6 * s, 0.4 * s, 0.7 * s, b, 0.15 * s, 0.75 * s, -0.05 * s);
+    box(g, 0.5 * s, 0.35 * s, 0.4 * s, b, -0.3 * s, 0.55 * s, 0.25 * s);
+    if (flowers) for (let k = 0; k < 6; k++) box(g, 0.13, 0.13, 0.13, flowers[k % flowers.length], (r() - 0.5) * 0.85 * s, (0.45 + r() * 0.5) * s, (r() - 0.5) * 0.85 * s + 0.1);
+    return g;
+  }
+  function rock(root, x, y, z, r, s = 1, moss = true) {
+    const g = pivot(root, x, y, z);
+    g.rotation.y = r() * Math.PI;
+    const c = r() < 0.5 ? ['#9e978e', '#b3aca2'] : ['#8f8a84', '#a7a29b'];
+    box(g, 0.9 * s, 0.5 * s, 0.75 * s, c[0], 0, 0.25 * s, 0);
+    box(g, 0.6 * s, 0.35 * s, 0.55 * s, c[1], 0.12 * s, 0.6 * s, -0.05 * s);
+    if (moss) box(g, 0.4 * s, 0.06 * s, 0.35 * s, '#7cb342', -0.15 * s, 0.53 * s, 0.15 * s);
+    return g;
+  }
+  function parkLamp(root, x, y, z) {
+    const g = pivot(root, x, y, z);
+    box(g, 0.32, 0.18, 0.32, '#2f3b36', 0, 0.09, 0);
+    box(g, 0.13, 2.3, 0.13, '#2f3b36', 0, 1.25, 0);
+    box(g, 0.2, 0.1, 0.2, '#3d4d47', 0, 2.42, 0);
+    box(g, 0.34, 0.36, 0.34, M.lamp, 0, 2.65, 0);
+    box(g, 0.44, 0.08, 0.44, '#2f3b36', 0, 2.87, 0);
+    box(g, 0.2, 0.1, 0.2, '#2f3b36', 0, 2.96, 0);
+    return g;
+  }
+  function trashBin(root, x, y, z) {
+    const g = pivot(root, x, y, z);
+    box(g, 0.46, 0.7, 0.46, '#3e6b4f', 0, 0.35, 0);
+    box(g, 0.52, 0.08, 0.52, '#2f5240', 0, 0.72, 0);
+    for (const s of [-1, 1]) box(g, 0.04, 0.5, 0.48, '#4c7d5f', s * 0.23, 0.35, 0);
+    return g;
+  }
+
   function buildPark(parkRoot) {
-    const colliders = [], spots = [];
-    const T = terrain(PARK_T);
-    const water = { pos: new V3(-2.4, 0, 13.6), bowl: new V3(-2.4, 0, 14.25), taken: null };
-    const r = mulberry32(42);
+    const P = PG, colliders = [], spots = [];
+    const r = mulberry32(7);
+    let flagAnim = null;
+    const glassish = () => new THREE.MeshLambertMaterial({ color: '#9fd4f5', transparent: true, opacity: 0.5 });
+    const SB = [];                 // plain boxes, drawn as one mesh at the end
+    const sb = (x, y, z, w, hh, d, col) => SB.push([x, y, z, w, hh, d, col]);
+    const T = terrain({
+      walk: [P.OUTLINE],
+      cellFn: (i, j) => P.inside(i + 0.5, j + 0.5) && (P.water(i + 0.5, j + 0.5) === null || !!P.deck(i + 0.5, j + 0.5)),
+      areas: [{ kind: 'fn', f: (i, j) => P.height(i + 0.5, j + 0.5) }, { kind: 'flat', rect: P.GROTTO, h: 0, under: true }],
+      roofs: [{ id: 'underpass', zone: [{ x0: 39, x1: 45, z0: -17.5, z1: -11.5 }], under: [P.GROTTO], ceil: 1.3 }],
+    });
+    const gy = (x, z) => T.height(x, z);
+    const solid = (x0, z0, x1, z1, extra) => colliders.push(Object.assign({ x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1) }, extra || {}));
+    const round = (x, z, rr) => colliders.push({ x, z, r: rr });
+    // ---------- the ground ----------
+    const GR = ['#86c16a', '#7fbb63', '#8cc670'], WOOD = ['#74b05c', '#6ca756', '#7ab460'], MEAD = ['#93c76d', '#9bcc73', '#8cc268'];
+    const KC = {
+      pave: ['#cfc6b5', '#c6bcaa', '#d6cebf'], gravel: ['#dccba3', '#d4c39a', '#e1d1ab'], gravelEdge: ['#bccb8e', '#b2c587', '#c4cf96'],
+      dirt: ['#b0946e', '#a68a66', '#b89c77'], dirtEdge: ['#8fa66a', '#87a064', '#96ab70'], sand: ['#efdcab', '#e9d4a0', '#f3e3b6'],
+      deckstone: ['#d4cab9', '#cbc0ae', '#dcd3c4'], white: ['#e8e1d2', '#dfd7c7', '#ece6da'], bed: ['#7a5a44', '#71523e', '#80604a'],
+    };
+    const vnoise = (x, z) => {
+      const i = Math.floor(x), j = Math.floor(z), fx = x - i, fz = z - j, u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+      const a = hash2(i, j), b = hash2(i + 1, j), c = hash2(i, j + 1), d = hash2(i + 1, j + 1);
+      return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+    };
+    const mix = (c1, c2, t) => { const A = [1, 3, 5].map((k) => parseInt(c1.slice(k, k + 2), 16)), B = [1, 3, 5].map((k) => parseInt(c2.slice(k, k + 2), 16)); return '#' + A.map((v, k) => Math.round(v + (B[k] - v) * t).toString(16).padStart(2, '0')).join(''); };
+    const tone = (x, z, hh) => {
+      const j = hash2(x, z), k = P.kind(x, z), pick3 = (a) => a[j < 0.34 ? 0 : j < 0.67 ? 1 : 2];
+      if (k === 'pave') { const rr = Math.hypot(x - P.PLAZA.x, z - P.PLAZA.z); if (rr < P.PLAZA.r && Math.abs(rr - 3.2) < 0.55) return '#b6ab97'; return pick3(KC.pave); }
+      if (k) return pick3(KC[k]);
+      let base = z < -15.5 && x < 22 ? WOOD : x > 18 && z > -6 ? MEAD : GR;
+      if (P.zone(x, z) === 'garden') base = ['#7dbb64', '#76b45e', '#83c069'];
+      const nz = clamp(vnoise(x / 5.5, z / 5.5) * 0.75 + vnoise(x / 2.2 + 9, z / 2.2) * 0.25, 0, 1);
+      let c = mix(mix(base[1], base[2], nz), base[0], (j - 0.5) * 0.35 + 0.18);
+      // a touch lighter the higher you are, so the shape of the land reads
+      if (hh > 0.2) c = shade(c, 1 + Math.min(0.07, hh * 0.028));
+      if (hh < -0.2) c = shade(c, 0.95);
+      // soft darker patches (clover) here and there
+      return c;
+    };
     const roofs = drawTerrain(parkRoot, T, {
-      topA: '#8ccb72', topB: '#86c46c', topC: '#92d078', pathA: '#dcc694', pathB: '#d6bf8c', side: '#8a6a45', rock: '#a59a8a',
-      stair: '#cfc5b3', stairSide: '#b9ae9c', outside: '#6fa95a', path: onPath,
-      tone: (x, z, h) => (h > 1 ? (hash2(x, z) < 0.5 ? '#a3d47e' : '#9bcf77') : h < -0.1 ? '#7bb764' : x < -19 ? (hash2(x, z) < 0.5 ? '#7fbd67' : '#88c56e') : null),
+      topA: GR[0], topB: GR[1], topC: GR[2], side: '#6aa654', rock: '#a0968a', stair: '#cfc5b3', stairSide: '#b9ae9c', outside: '#5f9c4c',
+      outer: { h: 0, b: '#64a250', rock: '#8a6a48', margin: 14 }, tone,
+      skip: (x, z) => !!P.deck(x, z),
+      skipLow: -1.5,
+      hole: (x, z) => (P.water(x, z) !== null && !P.deck(x, z) ? -1.5 : null),
+      sideFor: (hh, low, x, z) => {
+        const drop = hh - low;
+        if (low < -1) return P.zone(x, z) ? '#8a6a48' : hh > -0.3 ? '#8d7254' : '#86694a';
+        if (drop > 0.6 && hh > 0.9) return hash2(x, z) < 0.5 ? '#a0968a' : '#958b80';
+        if (drop <= 0.3) return P.kind(x, z) ? shade(tone(x, z, hh), 0.86) : shade(tone(x, z, hh), 0.9);
+        return '#8a6a48';
+      },
     });
-    edgeWall(parkRoot, T, colliders, { h: 0.9, a: '#3f8a3a', b: '#4b9644', gaps: [{ x0: -2, x1: 2, z0: 19, z1: 22 }] });
-    // the sunken pond with stone edging
-    box(parkRoot, 6.6, 0.06, 5.6, '#cdb88d', 6, -0.48, -4.5);
-    box(parkRoot, 6, 0.07, 5, '#5aa7d6', 6, -0.47, -4.5);
-    box(parkRoot, 0.5, 0.08, 0.5, '#7fbf5a', 4.5, -0.43, -3.5);
-    box(parkRoot, 0.4, 0.08, 0.4, '#7fbf5a', 7.6, -0.43, -5.8);
-    colliders.push({ x0: POND.x0, x1: POND.x1, z0: POND.z0, z1: POND.z1 });
-    // the gate home
-    box(parkRoot, 0.3, 1.5, 0.3, '#a0703f', -1.6, 0.75, 20.6);
-    box(parkRoot, 0.3, 1.5, 0.3, '#a0703f', 1.6, 0.75, 20.6);
-    box(parkRoot, 3.5, 0.18, 0.18, '#a0703f', 0, 1.5, 20.6);
-    const sign = textSprite('🏠 Home', 0.7);
-    sign.position.set(0, 2.1, 20.6);
-    parkRoot.add(sign);
-    // dog water fountain near the gate
-    const wp = water.pos, wb = water.bowl;
-    box(parkRoot, 0.6, 0.5, 0.6, '#a7a39c', wp.x, 0.25, wp.z);
-    box(parkRoot, 0.7, 0.1, 0.7, '#8c8780', wp.x, 0.55, wp.z);
-    box(parkRoot, 0.5, 0.04, 0.5, M.water, wp.x, 0.61, wp.z);
-    box(parkRoot, 0.1, 0.5, 0.1, '#7d8a94', wp.x, 0.85, wp.z - 0.2);
-    box(parkRoot, 0.1, 0.08, 0.24, '#7d8a94', wp.x, 1.08, wp.z - 0.1);
-    box(parkRoot, 0.44, 0.1, 0.44, '#3d7fd6', wb.x, 0.05, wb.z);
-    box(parkRoot, 0.32, 0.03, 0.32, M.water, wb.x, 0.1, wb.z);
-    const drop = emojiSprite('💧', 0.45);
-    drop.position.set(wp.x, 1.55, wp.z);
-    parkRoot.add(drop);
-    colliders.push({ x: wp.x, z: wp.z, r: 0.4 });
-    // sniff spots: bushes and hydrants, a few more out in the east meadow and up on the hill
-    const spotPos = [[-12.6, -4], [-6, -12.6], [5, -9.6], [12.6, 3], [9.6, -10.2], [-9.4, 7], [6, 12.6], [-3, 9.4], [36.5, -3], [29.5, -17.6], [36.5, -13.5]];
-    spotPos.forEach(([x, z], i) => {
-      const s = addSpot(parkRoot, spots, colliders, x, z, undefined, i % 2 ? spotLooks.hydrant : spotLooks.bush);
-      onGround(T, s.group, x, z);
+    // ---------- water: the pond, the creek and its little falls ----------
+    const WMAT = new THREE.MeshLambertMaterial({ color: '#b4dcff', emissive: '#0b2a44', emissiveIntensity: 0.35 });
+    const WL = [], BED = [], FOAM = [];
+    const hx = (c) => [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16) / 255);
+    const wcol = (target) => { const c = hx(target), m = hx('#b4dcff'); return '#' + c.map((v, k) => Math.round(Math.min(1, v / m[k]) * 255).toString(16).padStart(2, '0')).join(''); };
+    const DEEP = wcol('#3f8ed0'), MID = wcol('#55a5dc'), SHALLOW = wcol('#7cc3ea'), CREEK = wcol('#6fbde8');
+    const pondCells = [], creekCells = [];
+    P.cells((i, j, x, z) => {
+      const w = P.water(x, z);
+      if (w === null) return;
+      const creek = w > -0.7 || (z < -12 && Math.abs(x - P.creekX(z)) < 1);
+      const nearShore = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([a, b]) => P.inside(x + a, z + b) && P.water(x + a, z + b) === null).length;
+      let shore = 9;
+      for (let rr = 1; rr <= 3 && shore === 9; rr++) for (let a = -rr; a <= rr; a++) for (const b of [-rr, rr]) if ((P.inside(x + a, z + b) && P.water(x + a, z + b) === null) || (P.inside(x + b, z + a) && P.water(x + b, z + a) === null)) shore = Math.min(shore, rr);
+      const col = creek ? CREEK : shore <= 1 ? SHALLOW : shore === 2 ? MID : DEEP;
+      WL.push([x, w - 0.05, z, 1, 0.1, 1, col]);
+      BED.push([x, -1.5, z, 1, 0.1, 1, hash2(x, z) < 0.5 ? '#6d6a4e' : '#5f5d45']);
+      (creek ? creekCells : pondCells).push([x, z, w, nearShore]);
+      // a little fall where the creek drops to the next pool (south)
+      const wn = P.water(x, z + 1);
+      if (wn !== null && wn < w - 0.05) { FOAM.push([x, (w + wn) / 2, z + 0.5, 1, w - wn, 0.12, '#dff3ff']); FOAM.push([x, wn + 0.03, z + 0.75, 0.9, 0.06, 0.4, '#f4fbff']); }
     });
-    // hidden places: the rose garden behind the west hedge, and the stone underpass through the hill
-    const rose = addSpot(parkRoot, spots, colliders, -25, -1.5, 'hidden:roses', spotLooks.bush);
-    const tun = addSpot(parkRoot, spots, colliders, 40.9, -14.3, 'hidden:underpass', spotLooks.stump, 0);
-    for (const [x, z] of [[-27, -6], [-26, 2], [-21.5, -7.5], [-21.5, 4], [-24.5, 4.5], [-27.2, -2]]) {
-      const g = pivot(parkRoot, x, 0, z);
-      box(g, 0.8, 0.55, 0.8, '#3f7f3a', 0, 0.27, 0);
-      for (const [dx, dz] of [[-0.25, 0.3], [0.3, 0.1], [0, -0.3], [-0.2, -0.1], [0.25, -0.25]]) box(g, 0.18, 0.18, 0.18, hash2(x + dx, z) < 0.5 ? '#e53950' : '#f48fb1', dx, 0.6, dz);
-      colliders.push({ x, z, r: 0.5 });
+    boxBatch(parkRoot, WL, WMAT);
+    boxBatch(parkRoot, BED);
+    boxBatch(parkRoot, FOAM);
+    // sparkles drifting on the falls
+    const fallFX = [];
+    { const g = pivot(parkRoot); g.userData.noBake = true; for (const f of FOAM.filter((_, k) => k % 2 === 0)) for (let k = 0; k < 3; k++) fallFX.push({ m: box(g, 0.1, 0.1, 0.1, '#ffffff', f[0], f[1], f[2]), x: f[0] + (r() - 0.5) * 0.7, y0: f[1] + f[4] / 2, h: f[4], z: f[2], o: r() }); }
+    // reeds, cattails and lily pads
+    const REED = [];
+    for (const [x, z, w, ns] of pondCells.concat(creekCells)) {
+      if (!ns) continue;
+      if (Math.abs(x + 16) < 1.6 && z > -6.5) continue;                    // keep the jetty clear
+      if (r() < 0.55) for (let k = 0; k < 4; k++) {
+        const rx = x + (r() - 0.5) * 0.8, rz = z + (r() - 0.5) * 0.8, rh = 0.5 + r() * 0.6;
+        REED.push([rx, w + rh / 2, rz, 0.07, rh, 0.07, r() < 0.5 ? '#5f9e45' : '#6fae52']);
+        if (r() < 0.35) REED.push([rx, w + rh + 0.08, rz, 0.1, 0.2, 0.1, '#7b5233']);
+      }
     }
-    { const g = pivot(parkRoot, -23.5, 0, -1.5); box(g, 0.5, 0.5, 0.5, '#b0aaa0', 0, 0.25, 0); box(g, 0.9, 0.12, 0.9, '#b0aaa0', 0, 0.56, 0); box(g, 0.7, 0.04, 0.7, M.water, 0, 0.62, 0); colliders.push({ x: -23.5, z: -1.5, r: 0.5 }); }
-    // a few petals on the lawn by the gap: a hint, if you notice
-    for (const [x, z] of [[-18.2, -0.6], [-17.4, -0.2], [-18.6, 0.4]]) box(parkRoot, 0.12, 0.02, 0.1, '#e53950', x, 0.02, z);
-    // the grotto in the hill's rock face: a lantern, and a cat asleep on a crate
-    box(parkRoot, 0.22, 0.22, 0.22, M.lamp, 39, 1.0, -15.7);
-    const cat = buildCritter('cat');
-    cat.position.set(39.4, 0.4, -14.2);
-    cat.rotation.y = 1.2;
-    parkRoot.add(cat);
-    box(parkRoot, 0.7, 0.4, 0.6, '#8d6e4c', 39.4, 0.2, -14.2);
-    colliders.push({ x: 39.4, z: -14.2, r: 0.45 });
-    for (const [x, z, w] of [[42.6, -16.6, 0.7], [42.9, -12.8, 0.5], [43.4, -17.4, 0.45]]) { box(parkRoot, w, w * 0.7, w, '#9e958a', x, w * 0.35, z); colliders.push({ x, z, r: w * 0.6 }); }
-    // the lookout: a bench, a lamp and a coin telescope on top of the hill
-    const top = (x, z) => T.height(x, z);
-    { const g = pivot(parkRoot, 35.6, top(35.6, -16.3), -16.3); g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2); box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0); box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0); colliders.push({ x: 35.6, z: -16.3, r: 0.8 }); }
-    { const g = pivot(parkRoot, 37.8, top(37.8, -12.6), -12.6); box(g, 0.12, 0.9, 0.12, '#455a64', 0, 0.45, 0); box(g, 0.5, 0.22, 0.22, '#455a64', 0.1, 0.95, 0); box(g, 0.1, 0.16, 0.16, '#90caf9', 0.38, 0.97, 0); colliders.push({ x: 37.8, z: -12.6, r: 0.35 }); }
-    box(parkRoot, 0.14, 2.2, 0.14, '#3d3a40', 33.6, top(33.6, -16.8) + 1.1, -16.8);
-    box(parkRoot, 0.36, 0.3, 0.36, M.lamp, 33.6, top(33.6, -16.8) + 2.3, -16.8);
-    colliders.push({ x: 33.6, z: -16.8, r: 0.2 });
-    // street lamps along the paths
-    const LAMPS = [[-12.4, -12.4], [12.4, -12.4], [-12.4, 12.4], [12.4, 12.4], [23, -7.6]];
-    for (const [x, z] of LAMPS) {
-      box(parkRoot, 0.14, 2.2, 0.14, '#3d3a40', x, 1.1, z);
-      box(parkRoot, 0.36, 0.3, 0.36, M.lamp, x, 2.3, z);
-      colliders.push({ x, z, r: 0.2 });
+    for (const [x, z, w] of pondCells) if (r() < 0.16) {
+      const lx = x + (r() - 0.5) * 0.5, lz = z + (r() - 0.5) * 0.5;
+      REED.push([lx, w + 0.01, lz, 0.55, 0.03, 0.5, r() < 0.5 ? '#4f9a45' : '#5fae54']);
+      if (r() < 0.35) REED.push([lx + 0.1, w + 0.07, lz, 0.14, 0.1, 0.14, r() < 0.5 ? '#f8bbd0' : '#ffffff']);
     }
-    // trees: the lawns, the meadow and a ring of big ones outside the hedge
-    const trees = [];
-    for (let tries = 0; tries < 900 && trees.length < 52; tries++) {
-      const x = -19 + r() * 62, z = -21 + r() * 40;
-      if (!T.inside(x, z) || onPath(x, z) || inPond(x, z, 2.5) || x < -19 || T.height(x, z) !== 0) continue;
-      if (Math.abs(x) < 3.5 && z > 12) continue;
-      if (spotPos.some(([sx, sz]) => Math.hypot(sx - x, sz - z) < 2.2)) continue;
-      if (LAMPS.some(([lx, lz]) => Math.hypot(lx - x, lz - z) < 3)) continue;
-      if (trees.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 2.6)) continue;
-      if (x > 40 && z > -19 && z < -11) continue;
-      if (x > -20 && x < -16 && z > -3 && z < 2) continue;
-      trees.push([x, z]);
-      voxelTree(parkRoot, x, 0, z, r);
-      colliders.push({ x, z, r: 0.45 });
+    // ---------- grass, flowers and leaf litter ----------
+    const TUFT = [];
+    P.cells((i, j, x, z) => {
+      if (!T.inside(x, z) || P.kind(x, z) || P.deck(x, z)) return;
+      const hh = gy(x, z), woods = z < -15.5 && x < 22, meadow = x > 18 && z > -6;
+      const n = woods ? 2 : meadow ? 3 : 1;
+      const patch = hash2(Math.floor(x / 4) * 1.7, Math.floor(z / 4) * 2.3) < 0.38;
+      for (let k = 0; k < n; k++) {
+        if (r() > (meadow ? 0.6 : 0.55)) continue;
+        const tx = i + 0.1 + r() * 0.8, tz = j + 0.1 + r() * 0.8, th = meadow ? 0.18 + r() * 0.2 : 0.12 + r() * 0.08;
+        TUFT.push([tx, hh + th / 2, tz, 0.1, th, 0.1, woods ? '#5b964a' : meadow ? (r() < 0.5 ? '#86b85a' : '#9cc463') : '#6ba95a']);
+        const fr = patch ? (meadow ? 0.5 : 0.14) : meadow ? 0.05 : woods ? 0.04 : 0.02;
+        if (r() < fr) TUFT.push([tx + 0.08, hh + th + 0.05, tz, 0.13, 0.11, 0.13, ['#f06292', '#ffd54f', '#ffffff', '#ba68c8', '#ff8a65', '#64b5f6'][Math.floor(r() * (meadow ? 6 : 3))]]);
+        if (woods && r() < 0.25) TUFT.push([tx, hh + 0.012, tz + 0.2, 0.3, 0.02, 0.22, ['#c58b3c', '#a86b32', '#d6a24a'][Math.floor(r() * 3)]]);
+      }
+    });
+    // ---------- the boundary: a clipped hedge all round, a stone wall with railings along the street ----------
+    const HEDGE = [];
+    const rim = (x, z) => { let hh = -Infinity; for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) if (T.inside(x + a, z + b)) hh = Math.max(hh, gy(x + a, z + b)); return hh; };
+    const isHole = (x, z) => P.water(x, z) !== null && !P.deck(x, z);
+    for (let i = P.X0; i < P.X1; i++) for (let j = P.Z0; j < P.Z1; j++) {
+      const x = i + 0.5, z = j + 0.5;
+      if (T.inside(x, z) || isHole(x, z)) continue;
+      const hh = rim(x, z);
+      if (hh === -Infinity) continue;
+      if (Math.abs(x) < 2.1 && z > 18) continue;
+      if (j === 19 && Math.abs(x) < 15) {
+        // the street side: a low stone wall with iron railings
+        sb(x, 0.25, z - 0.2, 1, 0.5, 0.6, hash2(x, z) < 0.5 ? '#b9b1a3' : '#c4bcae');
+        sb(x, 0.53, z - 0.2, 1.04, 0.07, 0.68, '#a39b8d');
+        for (const dx of [-0.25, 0.25]) sb(x + dx, 0.95, z - 0.2, 0.06, 0.8, 0.06, '#2f3b36');
+        sb(x, 1.32, z - 0.2, 1, 0.06, 0.06, '#2f3b36');
+        sb(x, 0.72, z - 0.2, 1, 0.05, 0.05, '#2f3b36');
+        continue;
+      }
+      const tall = i === -25 ? 1.55 : 1.2;
+      const shadeK = 0.92 + hash2(x * 1.3, z) * 0.14;
+      HEDGE.push([x, hh + tall / 2 - 0.02, z, 1, tall, 1, shade('#3f8a3a', shadeK)]);
+      HEDGE.push([x, hh + tall + 0.1, z, 0.86, 0.22, 0.86, shade('#4f9a46', shadeK)]);
+      if (hash2(x, z * 1.7) < 0.3) HEDGE.push([x + (hash2(z, x) - 0.5) * 0.4, hh + tall + 0.26, z, 0.4, 0.14, 0.4, shade('#5aa650', shadeK)]);
     }
-    for (const [x, z, sc] of [[31.4, -12.6, 0.8], [31.3, -17.4, 0.85], [40.3, -10.9, 0.75]]) { voxelTree(parkRoot, x, T.height(x, z), z, r, sc); colliders.push({ x, z, r: 0.4 }); }
-    voxelTree(parkRoot, -17.6, 0, 1.6, r, 1.1);
-    colliders.push({ x: -17.6, z: 1.6, r: 0.5 });
-    for (let k = 0; k < 70; k++) {
-      const a = r() * Math.PI * 2, d = 24 + r() * 14, x = 11 + Math.cos(a) * d * 1.3, z = Math.sin(a) * d;
-      if (T.inside(x, z) || T.inside(x + 1.5, z) || T.inside(x - 1.5, z) || T.inside(x, z + 1.5) || T.inside(x, z - 1.5)) continue;
-      voxelTree(parkRoot, x, -1.2, z, r, 1.5);
+    // the gate: stone pillars with lanterns, an iron arch with the park's name
+    for (const sx of [-1, 1]) {
+      const px = sx * 2.5, pz = 19.4;
+      sb(px, 1.05, pz, 0.9, 2.1, 0.9, '#c4bcae'); sb(px, 2.18, pz, 1.06, 0.16, 1.06, '#a39b8d'); sb(px, 0.15, pz, 1.04, 0.3, 1.04, '#a39b8d');
+      box(parkRoot, 0.36, 0.42, 0.36, M.lamp, px, 2.5, pz); sb(px, 2.76, pz, 0.48, 0.1, 0.48, '#2f3b36');
+      solid(px - 0.5, pz - 0.5, px + 0.5, pz + 0.5);
     }
-    for (const [x, z, ry] of [[-4, -12.6, 0], [3.5, 12.6, Math.PI], [12.6, -3, -Math.PI / 2]]) {
-      const g = pivot(parkRoot, x, 0, z);
-      g.rotation.y = ry;
+    sb(0, 3.05, 19.4, 4.2, 0.12, 0.12, '#2f3b36'); sb(0, 2.75, 19.4, 4.2, 0.06, 0.06, '#2f3b36');
+    for (let k = -3; k <= 3; k++) sb(k * 0.6, 2.9, 19.4, 0.05, 0.3, 0.05, '#2f3b36');
+    { const s = textSprite('🌳 Neighborhood Park', 0.42); s.position.set(0, 3.45, 19.4); parkRoot.add(s); }
+    { const s = textSprite('🏠 Home', 0.62); s.position.set(0, 1.9, 20.6); parkRoot.add(s); }
+    // the street outside the gate
+    sb(0, -0.02, 22.3, 140, 0.08, 1.6, '#cfcac0'); sb(0, -0.05, 25.6, 140, 0.06, 5, '#5f6368');
+    for (let k = -20; k <= 20; k++) sb(k * 3.4, -0.01, 25.6, 1.6, 0.02, 0.18, '#f4f1e8');
+    sb(0, -0.02, 28.9, 140, 0.08, 1.6, '#cfcac0');
+    // ---------- the entrance: a dog drinking fountain, the notice board, flower boxes ----------
+    const water = { pos: new V3(-3.6, 0, 16.4), bowl: new V3(-3.6, 0, 17.05), taken: null };
+    { const g = pivot(parkRoot, water.pos.x, 0, water.pos.z); box(g, 0.6, 0.6, 0.6, '#a7a39c', 0, 0.3, 0); box(g, 0.74, 0.1, 0.74, '#8c8780', 0, 0.65, 0); box(g, 0.52, 0.04, 0.52, M.water, 0, 0.71, 0); box(g, 0.1, 0.5, 0.1, '#7d8a94', 0, 0.95, -0.22); box(g, 0.1, 0.08, 0.26, '#7d8a94', 0, 1.18, -0.12); }
+    box(parkRoot, 0.46, 0.1, 0.46, '#3d7fd6', water.bowl.x, 0.05, water.bowl.z); box(parkRoot, 0.34, 0.03, 0.34, M.water, water.bowl.x, 0.1, water.bowl.z);
+    { const d = emojiSprite('💧', 0.42); d.position.set(water.pos.x, 1.6, water.pos.z); parkRoot.add(d); }
+    round(water.pos.x, water.pos.z, 0.42);
+    { const g = pivot(parkRoot, 3.8, 0, 16.8); g.rotation.y = -0.3; box(g, 0.12, 1.6, 0.12, '#6d4c41', -0.7, 0.8, 0); box(g, 0.12, 1.6, 0.12, '#6d4c41', 0.7, 0.8, 0); box(g, 1.6, 1.0, 0.1, '#8d6e4c', 0, 1.25, 0); box(g, 1.75, 0.12, 0.3, '#5d4037', 0, 1.82, 0);
+      [['#fff59d', -0.4, 1.35], ['#b3e5fc', 0.15, 1.4], ['#f8bbd0', 0.45, 1.15], ['#ffffff', -0.15, 1.05]].forEach(([c, px, py]) => box(g, 0.36, 0.42, 0.02, c, px, py, 0.06)); }
+    solid(2.9, 16.5, 4.7, 17.1);
+    trashBin(parkRoot, 4.4, 0, 14.6); round(4.4, 14.6, 0.32);
+    for (const sx of [-1, 1]) { const x = sx * 2.9, z = 18.2; sb(x, 0.25, z, 1.2, 0.5, 0.6, '#a1785a'); sb(x, 0.52, z, 1.1, 0.06, 0.5, '#5d4037'); for (let k = 0; k < 4; k++) sb(x - 0.4 + k * 0.27, 0.66, z + (k % 2 ? 0.1 : -0.1), 0.18, 0.18, 0.18, ['#f06292', '#ffd54f', '#ba68c8', '#ff8a65'][k]); solid(x - 0.6, z - 0.3, x + 0.6, z + 0.3); }
+    // ---------- the plaza and its fountain ----------
+    const FX = P.PLAZA.x, FZ = P.PLAZA.z;
+    sb(FX, 0.22, FZ, 4.4, 0.44, 3.2, '#bdb3a2'); sb(FX, 0.22, FZ, 3.2, 0.44, 4.4, '#bdb3a2');
+    sb(FX, 0.47, FZ, 4.5, 0.08, 3.3, '#a69c8c'); sb(FX, 0.47, FZ, 3.3, 0.08, 4.5, '#a69c8c');
+    const FW = new THREE.MeshLambertMaterial({ color: '#62b0e3', emissive: '#0b2a44', emissiveIntensity: 0.3 });
+    box(parkRoot, 3.9, 0.06, 2.7, FW, FX, 0.42, FZ); box(parkRoot, 2.7, 0.06, 3.9, FW, FX, 0.42, FZ);
+    sb(FX, 0.9, FZ, 0.7, 1.2, 0.7, '#b3a998'); sb(FX, 1.55, FZ, 1.9, 0.18, 1.9, '#a69c8c'); box(parkRoot, 1.6, 0.05, 1.6, FW, FX, 1.66, FZ);
+    sb(FX, 1.95, FZ, 0.4, 0.6, 0.4, '#b3a998'); sb(FX, 2.3, FZ, 0.8, 0.12, 0.8, '#a69c8c'); sb(FX, 2.45, FZ, 0.22, 0.2, 0.22, '#c9bfae');
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) box(parkRoot, dx ? 0.06 : 1.3, 0.75, dz ? 0.06 : 1.3, glassish(), FX + dx * 0.97, 1.2, FZ + dz * 0.97);
+    solid(FX - 2.25, FZ - 1.65, FX + 2.25, FZ + 1.65); solid(FX - 1.65, FZ - 2.25, FX + 1.65, FZ + 2.25);
+    const jets = [];
+    { const g = pivot(parkRoot); g.userData.noBake = true; for (let k = 0; k < 24; k++) jets.push(box(g, 0.12, 0.12, 0.12, k % 3 ? '#e3f4ff' : '#bfe6ff', FX, 2.5, FZ)); }
+    // benches facing the fountain, lamps between the paths, round flower beds
+    const bench = (x, z, rot, style = 'wood') => {
+      const g = buildBench(style);
+      g.position.set(x, gy(x, z), z);
+      g.rotation.y = rot;
       g.userData.seat = 1;
-      box(g, 1.6, 0.08, 0.45, '#a0703f', 0, 0.42, 0);
-      box(g, 1.6, 0.35, 0.08, '#a0703f', 0, 0.68, -0.2);
-      box(g, 0.1, 0.4, 0.4, '#555555', -0.65, 0.2, 0);
-      box(g, 0.1, 0.4, 0.4, '#555555', 0.65, 0.2, 0);
+      parkRoot.add(g);
+      const c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
+      if (c > 0.95 || s > 0.95) { const ax = c > 0.5 ? 0.82 : 0.3, az = c > 0.5 ? 0.3 : 0.82; solid(x - ax, z - az, x + ax, z + az, { seat: true }); }
+      else colliders.push({ x, z, r: 0.72, seat: true });
+      return g;
+    };
+    const faceTo = (x, z, tx, tz) => Math.atan2(tx - x, tz - z);
+    for (const a of [45, 135, 225, 315]) { const t = (a * Math.PI) / 180, x = FX + Math.sin(t) * 3.9, z = FZ + Math.cos(t) * 3.9; bench(x, z, faceTo(x, z, FX, FZ)); }
+    for (const a of [30, 330]) { const t = (a * Math.PI) / 180, x = FX + Math.sin(t) * 4.9, z = FZ + Math.cos(t) * 4.9; parkLamp(parkRoot, x, gy(x, z), z); round(x, z, 0.22); }
+    for (const a of [67, 113, 247, 293]) {
+      const t = (a * Math.PI) / 180, x = FX + Math.sin(t) * 5.6, z = FZ + Math.cos(t) * 5.6;
+      sb(x, 0.15, z, 1.4, 0.3, 1.4, '#a39b8d'); sb(x, 0.32, z, 1.2, 0.06, 1.2, '#5d4037');
+      for (let k = 0; k < 7; k++) sb(x + (r() - 0.5) * 0.9, 0.46, z + (r() - 0.5) * 0.9, 0.2, 0.2, 0.2, ['#f06292', '#ffd54f', '#ffffff', '#ba68c8'][k % 4]);
+      sb(x, 0.55, z, 0.4, 0.4, 0.4, '#5aa64a');
+      round(x, z, 0.8);
     }
-    const tuft = new THREE.InstancedMesh(geo(0.12, 0.16, 0.12), mat('#6ba95a'), 380);
-    const flower = new THREE.InstancedMesh(geo(0.12, 0.12, 0.12), new THREE.MeshLambertMaterial({ color: '#ffffff' }), 200);
-    const fcols = ['#f06292', '#ffd54f', '#ffffff', '#ba68c8', '#ff8a65'].map((c) => new THREE.Color(c));
-    const m4 = new THREE.Matrix4();
-    let ti = 0, fi = 0;
-    for (let k = 0; k < 20000 && (ti < 380 || fi < 200); k++) {
-      const x = -28 + r() * 71, z = -21.5 + r() * 43;
-      if (!T.inside(x, z) || T.sloped(x, z) || onPath(x, z) || inPond(x, z, 0.4)) continue;
-      m4.makeTranslation(x, T.height(x, z) + 0.07, z);
-      if (ti < 380) tuft.setMatrixAt(ti++, m4);
-      else { flower.setMatrixAt(fi, m4); flower.setColorAt(fi, fcols[fi % fcols.length]); fi++; }
+    // ---------- along the loop path: lamps, benches, bins ----------
+    const L = P.LOOP, nL = L.length;
+    const along = (t) => { const k = Math.floor(t * nL) % nL, a = L[k], b = L[(k + 1) % nL]; const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1; return { x: a[0], z: a[1], nx: dz / l, nz: -dx / l }; };
+    // the loop runs clockwise as seen from above (n points outward)
+    const out = (p, d) => [p.x + p.nx * d, p.z + p.nz * d];
+    const lampsAt = [0.06, 0.2, 0.33, 0.47, 0.6, 0.74, 0.87];
+    for (const t of lampsAt) { const p = along(t); const [x, z] = out(p, 1.75); if (!T.inside(x, z) || P.kind(x, z) === 'gravel') continue; parkLamp(parkRoot, x, gy(x, z), z); round(x, z, 0.22); }
+    const benchAt = [0.13, 0.4, 0.66, 0.8];
+    for (const t of benchAt) {
+      const p = along(t); const [x, z] = out(p, -1.9);
+      const rot = Math.round(Math.atan2(-p.nx, -p.nz) / (Math.PI / 2)) * (Math.PI / 2) + Math.PI;
+      if (!T.inside(x, z)) continue;
+      bench(x, z, rot);
+      const [bx2, bz2] = [x + Math.cos(rot) * 1.3, z - Math.sin(rot) * 1.3];
+      if (T.inside(bx2, bz2)) { trashBin(parkRoot, bx2, gy(bx2, bz2), bz2); round(bx2, bz2, 0.3); }
     }
-    parkRoot.add(tuft, flower);
+    // ---------- the big lawn: an old oak on its knoll, picnic blankets ----------
+    oakTree(parkRoot, 5.4, gy(5.4, -1.8), -1.8, r, 1.45); round(5.4, -1.8, 0.62);
+    for (const [x, z, c] of [[1.2, 1.6, '#e53935'], [9.6, -5.4, '#3d7fd6']]) {
+      const hh = gy(x, z);
+      for (let a = 0; a < 4; a++) for (let b = 0; b < 3; b++) sb(x - 0.75 + a * 0.5, hh + 0.02, z - 0.5 + b * 0.5, 0.5, 0.03, 0.5, (a + b) % 2 ? c : '#ffffff');
+      sb(x + 0.6, hh + 0.2, z + 0.3, 0.5, 0.32, 0.36, '#c8a165'); sb(x + 0.6, hh + 0.45, z + 0.3, 0.06, 0.2, 0.36, '#8d6e4c');
+      sb(x - 0.4, hh + 0.08, z - 0.1, 0.16, 0.1, 0.16, '#f44336'); sb(x - 0.2, hh + 0.09, z + 0.2, 0.18, 0.12, 0.14, '#fff59d');
+    }
+    for (const [x, z] of [[-3.6, -7.6], [12.2, 1.4], [8.4, -8.6], [-4.8, 2.6]]) { birchTree(parkRoot, x, gy(x, z), z, r, 1); round(x, z, 0.25); }
+    // ---------- the pond: a jetty, a willow, stones along the shore ----------
+    { const JT = P.JETTY, top = -0.4;
+      for (let z = JT.z0 + 0.15; z < JT.z1 + 0.6; z += 0.36) sb((JT.x0 + JT.x1) / 2, top - 0.05, z, JT.x1 - JT.x0, 0.08, 0.3, hash2(z, 1) < 0.5 ? '#a37a52' : '#98704a');
+      for (const x of [JT.x0 + 0.08, JT.x1 - 0.08]) sb(x, top - 0.04, (JT.z0 + JT.z1) / 2 + 0.3, 0.1, 0.1, JT.z1 - JT.z0 + 0.6, '#7a5a3c');
+      for (const [x, z] of [[JT.x0 + 0.1, JT.z0 + 0.1], [JT.x1 - 0.1, JT.z0 + 0.1], [JT.x0 + 0.1, JT.z0 + 2], [JT.x1 - 0.1, JT.z0 + 2]]) sb(x, -0.85, z, 0.18, 1.0, 0.18, '#6b4f36');
+      for (const x of [JT.x0 + 0.12, JT.x1 - 0.12]) { box(parkRoot, 0.1, 0.9, 0.1, '#5d4037', x, top + 0.45, JT.z0 + 0.15); box(parkRoot, 0.22, 0.24, 0.22, M.lamp, x, top + 0.98, JT.z0 + 0.15); }
+      sb((JT.x0 + JT.x1) / 2, top + 0.45, JT.z0 + 0.12, JT.x1 - JT.x0 - 0.2, 0.06, 0.06, '#5d4037');
+      solid(JT.x0 - 0.2, JT.z0 - 0.4, JT.x1 + 0.2, JT.z0 + 0.22);
+    }
+    willowTree(parkRoot, -21.8, gy(-21.8, -0.4), -0.4, r, 1); round(-21.8, -0.4, 0.4);
+    const shoreRocks = [];
+    P.cells((i, j, x, z) => {
+      if (!T.inside(x, z) || P.kind(x, z) || P.deck(x, z) || P.zone(x, z)) return;
+      if (P.waterDist(x, z) > 1.1 || r() > 0.11) return;
+      const rx = x + (r() - 0.5) * 0.3, rz = z + (r() - 0.5) * 0.3;
+      if (shoreRocks.some(([a, b]) => Math.hypot(a - rx, b - rz) < 2.2) || Math.abs(rx + 16) < 2.2 && rz > -4) return;
+      shoreRocks.push([rx, rz]);
+      rock(parkRoot, rx, gy(rx, rz), rz, r, 0.55 + r() * 0.3); round(rx, rz, 0.32);
+    });
+    // ---------- the creek: a spring in the rocks, a little wooden bridge ----------
+    { const sx = P.creekX(-22.6), sz = -22.9, hh = gy(sx + 2, sz);
+      for (const [dx, dz, s] of [[-1.5, 0.1, 1.2], [1.5, 0, 1.1], [-0.4, -0.7, 1.3], [0.7, -0.8, 1.0], [-2.6, -0.6, 0.9], [2.4, -0.7, 0.8]]) { rock(parkRoot, sx + dx, hh, sz + dz, r, s, true); round(sx + dx, sz + dz, 0.45 * s); }
+      const w0 = P.water(sx, -21.5);
+      const top = hh + 0.75, bot = (w0 === null ? hh : w0) + 0.02;
+      for (let k = 0; k < 3; k++) { const y1 = top - (top - bot) * (k / 3), y2 = top - (top - bot) * ((k + 1) / 3); sb(sx, (y1 + y2) / 2, sz + 0.25 + k * 0.28, 0.8 - k * 0.1, y1 - y2, 0.1, k % 2 ? '#cfeeff' : '#e6f7ff'); sb(sx, y2 + 0.02, sz + 0.38 + k * 0.28, 0.85, 0.04, 0.2, '#ffffff'); } }
+    { const B = P.BRIDGE; let deckCells = [];
+      P.cells((i, j, x, z) => { if (P.deck(x, z) === 'bridge') deckCells.push([x, z, gy(x, z)]); });
+      for (const [x, z, hh] of deckCells) {
+        for (let k = 0; k < 3; k++) sb(x - 0.33 + k * 0.33, hh - 0.04, z, 0.3, 0.08, 1, hash2(x + k, z) < 0.5 ? '#a37a52' : '#98704a');
+        sb(x, hh - 0.25, z, 1, 0.12, 0.9, '#6b4f36');
+      }
+      const xs = deckCells.map((c) => c[0]), x0 = Math.min(...xs) - 0.5, x1 = Math.max(...xs) + 0.5, top = Math.max(...deckCells.map((c) => c[2]));
+      for (const z of [B.z0 + 0.26, B.z1 - 0.06]) {
+        for (let x = x0; x <= x1 + 0.01; x += (x1 - x0) / 3) sb(x, top + 0.35, z, 0.12, 0.7, 0.12, '#6b4f36');
+        sb((x0 + x1) / 2, top + 0.68, z, x1 - x0 + 0.2, 0.1, 0.12, '#7a5a3c');
+        sb((x0 + x1) / 2, top + 0.38, z, x1 - x0, 0.06, 0.08, '#7a5a3c');
+      }
+    }
+    // ---------- the woods: oaks, pines and birches, a fallen log, stumps, mushrooms, ferns ----------
+    const trees = [];
+    const clearOf = (x, z, d) => !trees.some(([a, b]) => Math.hypot(a - x, b - z) < d);
+    const free = (x, z, m = 1.2) => {
+      for (const [a, b] of [[0, 0], [m, 0], [-m, 0], [0, m], [0, -m]]) { const px = x + a, pz = z + b; if (!T.inside(px, pz) || P.kind(px, pz) || P.deck(px, pz) || P.waterDist(px, pz) < 1.5) return false; }
+      return true;
+    };
+    for (let tries = 0; tries < 2400 && trees.length < 46; tries++) {
+      const x = -24 + r() * 47, z = -25 + r() * 10.5;
+      if (z > -15.2 || P.zone(x, z) || inPoly(P.HILL, x, z) || !free(x, z) || !clearOf(x, z, 2.5)) continue;
+      trees.push([x, z]);
+      const k = r(), y = gy(x, z);
+      if (k < 0.45) pineTree(parkRoot, x, y, z, r, 0.9 + r() * 0.35); else if (k < 0.75) oakTree(parkRoot, x, y, z, r, 0.8 + r() * 0.3); else birchTree(parkRoot, x, y, z, r, 0.9 + r() * 0.3);
+      round(x, z, k < 0.45 ? 0.3 : 0.38);
+    }
+    { const lx = -6.5, lz = -20.6, y = gy(lx, lz); const g = pivot(parkRoot, lx, y, lz); g.rotation.y = 0.35; box(g, 3.2, 0.5, 0.5, '#7b5a3c', 0, 0.25, 0); box(g, 0.04, 0.44, 0.44, '#cfae7e', 1.62, 0.25, 0); box(g, 0.6, 0.08, 0.4, '#7cb342', -0.6, 0.52, 0); box(g, 0.14, 0.16, 0.14, '#e53935', 0.8, 0.58, 0.1); box(g, 0.2, 0.05, 0.2, '#ffffff', 0.8, 0.66, 0.1);
+      const c = Math.cos(0.35), s = Math.sin(0.35); for (let t = -1.5; t <= 1.5; t += 0.5) round(lx + t * c, lz - t * s, 0.3); }
+    for (const [x, z] of [[9.6, -21], [-1.4, -23.2], [18.4, -20.6], [-20.6, -21.2]]) { if (!free(x, z, 0.4)) continue; const y = gy(x, z); sb(x, y + 0.18, z, 0.62, 0.36, 0.62, '#8d6e4c'); sb(x, y + 0.37, z, 0.54, 0.02, 0.54, '#d7b98c'); round(x, z, 0.35); }
+    for (let k = 0; k < 40; k++) {
+      const x = -24 + r() * 46, z = -25 + r() * 10;
+      if (z > -15.5 || !T.inside(x, z) || P.kind(x, z) || P.waterDist(x, z) < 1.2 || inPoly(P.HILL, x, z)) continue;
+      const y = gy(x, z);
+      if (k % 3 === 0) { sb(x, y + 0.07, z, 0.08, 0.14, 0.08, '#f5ecd9'); sb(x, y + 0.17, z, 0.2, 0.08, 0.2, k % 2 ? '#e53935' : '#a1785a'); }
+      else for (let f = 0; f < 4; f++) sb(x + (f % 2 ? 0.18 : -0.18), y + 0.18, z + (f < 2 ? 0.18 : -0.18), 0.12, 0.36, 0.3, f % 2 ? '#4f9a45' : '#5aa650');
+    }
+    // a little clearing at the end of the woodland trail: a ring of stones and a log seat
+    { const cx = -22.6, cz = -20.4, y = gy(cx, cz);
+      for (let k = 0; k < 7; k++) { const a = (k / 7) * Math.PI * 2, x = cx + Math.cos(a) * 1.8, z = cz + Math.sin(a) * 1.5; if (!T.inside(x, z)) continue; sb(x, gy(x, z) + 0.12, z, 0.4, 0.24, 0.36, '#a7a29b'); }
+      const g = buildBench('log'); g.position.set(cx + 0.4, y, cz - 2.1); g.userData.seat = 1; parkRoot.add(g); solid(cx - 0.35, cz - 2.35, cx + 1.15, cz - 1.85, { seat: true }); }
+    // a birdhouse on a post by the trail
+    { const x = 7.4, z = -16, y = gy(x, z); sb(x, y + 0.9, z, 0.1, 1.8, 0.1, '#7a5a3c'); sb(x, y + 1.95, z, 0.5, 0.45, 0.45, '#ef9a9a'); sb(x, y + 2.25, z, 0.62, 0.12, 0.58, '#8d5a34'); sb(x, y + 1.98, z + 0.23, 0.12, 0.12, 0.02, '#3b2a1e'); round(x, z, 0.2); }
+    // ---------- the hill: a pavilion on top, a telescope, the cliff with its grotto ----------
+    { const cx = P.TOP.x, cz = P.TOP.z, y = gy(cx, cz);
+      sb(cx, y + 0.06, cz, 4.4, 0.12, 4.4, '#cfc6b6'); sb(cx, y + 0.13, cz, 3.8, 0.04, 3.8, '#d9d1c2');
+      for (const [dx, dz] of [[-1.85, -1.85], [1.85, -1.85], [-1.85, 1.85], [1.85, 1.85]]) { sb(cx + dx, y + 1.25, cz + dz, 0.22, 2.3, 0.22, '#f4efe6'); round(cx + dx, cz + dz, 0.2); }
+      // an open roof of slats: you can see through it from above
+      for (const s2 of [-1, 1]) { sb(cx + s2 * 1.85, y + 2.45, cz, 0.2, 0.2, 4.1, '#f4efe6'); sb(cx, y + 2.45, cz + s2 * 1.85, 4.1, 0.2, 0.2, '#f4efe6'); }
+      for (let k = -4; k <= 4; k++) sb(cx + k * 0.46, y + 2.62, cz, 0.12, 0.14, 4.5, '#e9e1d2');
+      for (let k = 0; k < 26; k++) { const a = r() * Math.PI * 2, d = 1.6 + r() * 0.5; sb(cx + Math.cos(a) * d, y + 2.75 + r() * 0.1, cz + Math.sin(a) * d, 0.35, 0.18, 0.35, r() < 0.35 ? '#ce93d8' : r() < 0.5 ? '#5aa64a' : '#6cb85a'); }
+      for (const [dx, dz] of [[-1.85, -1.85], [1.85, 1.85]]) for (let k = 0; k < 6; k++) sb(cx + dx + (r() - 0.5) * 0.25, y + 0.3 + k * 0.38, cz + dz + (r() - 0.5) * 0.25, 0.2, 0.22, 0.2, k % 2 ? '#5aa64a' : '#ce93d8');
+      for (const [dx, dz] of [[-1.85, 0], [1.85, 0], [0, -1.85]]) sb(cx + dx, y + 0.6, cz + dz, dx ? 0.08 : 3.5, 0.08, dz ? 0.08 : 3.5, '#f4efe6');
+      box(parkRoot, 0.3, 0.35, 0.3, M.lamp, cx, y + 2.15, cz); sb(cx, y + 2.36, cz, 0.04, 0.12, 0.04, '#2f3b36');
+      const flag = pivot(parkRoot, cx + 1.85, y + 2.55, cz - 1.85); flag.userData.noBake = true; box(flag, 0.05, 0.9, 0.05, '#5d4037', 0, 0.45, 0); const cloth = pivot(flag, 0, 0.75, 0); box(cloth, 0.6, 0.32, 0.03, '#e53935', 0.32, 0, 0);
+      bench(cx, cz - 1.25, 0, 'wood');
+      // the coin telescope on the rim, looking out east
+      const tx = 38.4, tz = -17.8, ty = gy(tx, tz);
+      { const g = pivot(parkRoot, tx, ty, tz); g.rotation.y = -0.6; box(g, 0.14, 0.95, 0.14, '#455a64', 0, 0.48, 0); box(g, 0.56, 0.24, 0.24, '#546e7a', 0.12, 1.0, 0); box(g, 0.1, 0.18, 0.18, '#90caf9', 0.42, 1.02, 0); box(g, 0.36, 0.06, 0.36, '#37474f', 0, 0.03, 0); }
+      round(tx, tz, 0.35);
+      flagAnim = (t) => { cloth.rotation.y = Math.sin(t * 2.2) * 0.35; cloth.scale.x = 0.9 + Math.sin(t * 3.1) * 0.1; };
+    }
+    for (const [x, z, s] of [[27.2, -16.4, 0.9], [30.2, -8.6, 0.75], [40.4, -20.6, 0.8], [27.8, -21.6, 0.85]]) { if (!free(x, z, 0.5) && !inPoly(P.HILL, x, z)) continue; oakTree(parkRoot, x, gy(x, z), z, r, s); round(x, z, 0.32); }
+    for (const [x, z] of [[25.4, -13.8], [36.8, -21], [29.6, -19.6], [39.6, -9.4]]) { shrub(parkRoot, x, gy(x, z), z, r, 0.9, ['#ffd54f', '#ffffff']); round(x, z, 0.45); }
+    for (const [x, z] of [[24.6, -11.6], [30.6, -10.4], [37.2, -12.4]]) { parkLamp(parkRoot, x, gy(x, z), z); round(x, z, 0.22); }
+    { const x = 23.2, z = -12.2, y = gy(x, z); sb(x, y + 0.7, z, 0.1, 1.4, 0.1, '#7a5a3c'); const s2 = textSprite('⛰️ Lookout', 0.36); s2.position.set(x, y + 1.7, z); parkRoot.add(s2); round(x, z, 0.18); }
+    // rocks along the foot of the cliff, ivy on its face
+    for (let z = -20; z <= -7; z += 1.1) {
+      const x = z > -10.6 ? 44.4 - (z + 10.6) * 0.8 : 44.5;
+      if (z > -16.4 && z < -12.6) continue;                      // the grotto's mouth
+      if (r() < 0.6) { rock(parkRoot, x + 0.4, 0, z, r, 0.5 + r() * 0.4, false); round(x + 0.4, z, 0.3); }
+    }
+    P.cells((i, j, x, z) => {
+      if (!inPoly(P.HILL, x, z) || !T.inside(x + 1, z) || gy(x, z) - gy(x + 1, z) < 0.8 || P.GROTTO && x > P.GROTTO.x0 - 1 && z > P.GROTTO.z0 && z < P.GROTTO.z1) return;
+      for (let k = 0; k < 2; k++) if (r() < 0.6) { const yy = gy(x + 1, z) + 0.3 + r() * (gy(x, z) - gy(x + 1, z) - 0.4); sb(x + 0.52, yy, z + (r() - 0.5) * 0.7, 0.06, 0.3 + r() * 0.5, 0.25, r() < 0.5 ? '#5f9e45' : '#4f8f3c'); }
+    });
+    // the grotto: a lantern, an old crate and the cat that naps there
+    box(parkRoot, 0.22, 0.24, 0.22, M.lamp, 41.2, 1.0, -15.6);
+    sb(41.2, 0.82, -15.6, 0.06, 0.12, 0.06, '#2f3b36');
+    { const cat = buildCritter('cat'); cat.position.set(41.4, 0.4, -13.8); cat.rotation.y = 1.2; parkRoot.add(cat); }
+    sb(41.4, 0.2, -13.8, 0.7, 0.4, 0.6, '#8d6e4c'); round(41.4, -13.8, 0.45);
+    for (const [x, z] of [[40.5, -15.3], [40.4, -13.4]]) { rock(parkRoot, x, 0, z, r, 0.45, false); round(x, z, 0.28); }
+    // ---------- the east meadow: an apple tree on its knoll, picnic tables, beehives, birches ----------
+    appleTree(parkRoot, 29, gy(29, 8.4), 8.4, r, 1.2); round(29, 8.4, 0.45);
+    for (const [x, z] of [[29.8, 9.8], [28.1, 9.3], [30.4, 7.6]]) sb(x, gy(x, z) + 0.09, z, 0.18, 0.18, 0.18, '#d32f2f');
+    const picnicTable = (x, z, rot) => {
+      const g = pivot(parkRoot, x, gy(x, z), z); g.rotation.y = rot;
+      box(g, 2.0, 0.1, 0.9, '#a37a52', 0, 0.78, 0); for (const sz of [-0.75, 0.75]) box(g, 2.0, 0.08, 0.32, '#98704a', 0, 0.46, sz);
+      for (const sx of [-0.8, 0.8]) { box(g, 0.1, 0.8, 0.1, '#7a5a3c', sx, 0.4, -0.3); box(g, 0.1, 0.8, 0.1, '#7a5a3c', sx, 0.4, 0.3); box(g, 0.1, 0.1, 1.8, '#7a5a3c', sx, 0.38, 0); }
+      const along2 = Math.abs(Math.cos(rot)) > 0.5; solid(x - (along2 ? 1.05 : 0.95), z - (along2 ? 0.95 : 1.05), x + (along2 ? 1.05 : 0.95), z + (along2 ? 0.95 : 1.05));
+    };
+    picnicTable(P.PICNIC.x - 1.3, P.PICNIC.z - 0.4, 0); picnicTable(P.PICNIC.x + 1.4, P.PICNIC.z + 1.0, Math.PI / 2);
+    { const x = P.PICNIC.x + 0.8, z = P.PICNIC.z - 2.4, y = gy(x, z); sb(x, y + 0.4, z, 0.5, 0.8, 0.5, '#455a64'); sb(x, y + 0.85, z, 0.7, 0.12, 0.5, '#263238'); sb(x, y + 0.92, z, 0.6, 0.03, 0.4, '#9e9e9e'); round(x, z, 0.4); }
+    trashBin(parkRoot, P.PICNIC.x - 2.6, gy(P.PICNIC.x - 2.6, P.PICNIC.z + 1.6), P.PICNIC.z + 1.6); round(P.PICNIC.x - 2.6, P.PICNIC.z + 1.6, 0.3);
+    const bees = [];
+    for (const [x, z] of [[41.2, 4.2], [42.4, 2.8]]) {
+      const y = gy(x, z);
+      sb(x, y + 0.15, z, 0.8, 0.3, 0.8, '#8d6e4c'); sb(x, y + 0.45, z, 0.7, 0.3, 0.7, '#f5f0e1'); sb(x, y + 0.75, z, 0.7, 0.3, 0.7, '#ffe082'); sb(x, y + 0.97, z, 0.86, 0.12, 0.86, '#8d6e4c'); sb(x, y + 0.36, z + 0.36, 0.3, 0.06, 0.04, '#3b2a1e');
+      round(x, z, 0.5);
+      const g = pivot(parkRoot, x, y + 0.9, z); g.userData.noBake = true; for (let k = 0; k < 4; k++) bees.push({ m: box(g, 0.07, 0.06, 0.07, '#ffca28', 0, 0, 0), o: r() * 6, rr: 0.5 + r() * 0.5 });
+    }
+    for (const [x, z] of [[38.6, -2.6], [40.4, -1.2], [37.6, -0.4], [41.6, 0.4], [21.2, 11.8], [23.4, 13.4]]) { birchTree(parkRoot, x, gy(x, z), z, r, 1.05); round(x, z, 0.25); }
+    // an old stone wall, half fallen down, with flowers growing out of it
+    { const y = 0; for (let k = 0; k < 6; k++) { const x = 21.6 + k * 0.9, z = 5.4 + k * 0.25, hh = k === 2 ? 0.3 : 0.55 + hash2(k, 3) * 0.3; sb(x, gy(x, z) + hh / 2, z, 0.9, hh, 0.6, hash2(k, 1) < 0.5 ? '#a7a29b' : '#b3aca2'); if (k % 2) sb(x, gy(x, z) + hh + 0.07, z, 0.2, 0.14, 0.2, '#f06292'); solid(x - 0.45, z - 0.3, x + 0.45, z + 0.3); } void y; }
+    // ---------- the playground ----------
+    const PL = P.PLAY;
+    for (let x = PL.x0; x < PL.x1; x += 1) { if (x === PL.x0) continue; sb(x + 0.5, 0.08, PL.z0 + 0.1, 1, 0.16, 0.2, '#a37a52'); sb(x + 0.5, 0.08, PL.z1 - 0.1, 1, 0.16, 0.2, '#a37a52'); }
+    for (let z = PL.z0; z < PL.z1; z += 1) { sb(PL.x1 - 0.1, 0.08, z + 0.5, 0.2, 0.16, 1, '#a37a52'); if (Math.abs(z + 0.5 - 12.6) > 1.2) sb(PL.x0 + 0.1, 0.08, z + 0.5, 0.2, 0.16, 1, '#a37a52'); }
+    // swings
+    const swings = [];
+    { const x = 13.2, z = 12.2;
+      for (const sx of [-1.6, 1.6]) for (const sz of [-0.55, 0.55]) { const p = box(parkRoot, 0.12, 2.5, 0.12, '#e53935', x + sx, 1.2, z + sz); p.rotation.x = sz > 0 ? -0.2 : 0.2; }
+      sb(x, 2.42, z, 3.5, 0.14, 0.14, '#c62828');
+      for (const sx of [-0.7, 0.7]) { const g = pivot(parkRoot, x + sx, 2.38, z); g.userData.noBake = true; box(g, 0.03, 1.9, 0.03, '#9e9e9e', -0.22, -0.95, 0); box(g, 0.03, 1.9, 0.03, '#9e9e9e', 0.22, -0.95, 0); box(g, 0.6, 0.06, 0.32, '#3d7fd6', 0, -1.9, 0); swings.push(g); }
+      solid(x - 1.85, z - 1.3, x + 1.85, z + 1.3); }
+    // the slide: a tower with a ladder and a roof, and a yellow slide down
+    { const x = 9.4, z = 15.2;
+      for (const [dx, dz] of [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]]) sb(x + dx, 1.2, z + dz, 0.14, 2.4, 0.14, '#8d6e4c');
+      sb(x, 1.3, z, 1.4, 0.12, 1.4, '#a37a52'); sb(x, 2.5, z, 1.7, 0.16, 1.7, '#3d7fd6'); sb(x, 2.68, z, 1.1, 0.2, 1.1, '#3d7fd6');
+      for (let k = 0; k < 4; k++) sb(x - 0.85, 0.3 + k * 0.28, z, 0.08, 0.06, 0.6, '#8d6e4c');
+      const sl = box(parkRoot, 0.7, 0.08, 2.4, '#ffca28', x, 0.68, z - 1.6); sl.rotation.x = -0.5;
+      for (const sx of [-0.36, 0.36]) { const e = box(parkRoot, 0.06, 0.18, 2.4, '#ffb300', x + sx, 0.76, z - 1.6); e.rotation.x = -0.5; }
+      solid(x - 1.0, z - 2.7, x + 0.8, z + 0.8); }
+    // a seesaw (it tips now and then) and a little spring duck
+    const seesaw = pivot(parkRoot, 10.2, 0.42, 11.4); seesaw.userData.noBake = true;
+    box(parkRoot, 0.3, 0.42, 0.3, '#8d6e4c', 10.2, 0.21, 11.4);
+    box(seesaw, 2.8, 0.1, 0.3, '#ef6c00', 0, 0.05, 0); for (const sx of [-1.25, 1.25]) box(seesaw, 0.06, 0.3, 0.3, '#5d4037', sx, 0.2, 0);
+    solid(8.7, 11.1, 11.7, 11.7);
+    { const x = 14.6, z = 15.8; sb(x, 0.2, z, 0.1, 0.4, 0.1, '#9e9e9e'); sb(x, 0.6, z, 0.5, 0.4, 0.3, '#ffeb3b'); sb(x + 0.25, 0.9, z, 0.24, 0.28, 0.26, '#ffeb3b'); sb(x + 0.42, 0.88, z, 0.12, 0.06, 0.12, '#ff9800'); round(x, z, 0.4); }
+    // sandcastle with a bucket and spade
+    sb(11.6, 0.15, 13.9, 0.6, 0.3, 0.6, '#e2c48d'); sb(11.6, 0.4, 13.9, 0.3, 0.2, 0.3, '#e2c48d'); sb(11.6, 0.56, 13.9, 0.04, 0.14, 0.02, '#e53935'); sb(12.2, 0.12, 14.3, 0.22, 0.24, 0.22, '#e53935'); sb(12.5, 0.04, 14.1, 0.08, 0.04, 0.4, '#3d7fd6');
+    // ---------- the flower garden west of the plaza: raised beds, a pergola with a bench, a sundial ----------
+    const BEDC = [['#f06292', '#ec407a'], ['#ffd54f', '#ffca28'], ['#ba68c8', '#9575cd'], ['#ff8a65', '#ffffff']];
+    [[-14.4, 11], [-9.6, 11], [-14.4, 14.6], [-9.6, 14.6]].forEach(([x, z], k) => {
+      const w = 3.2, d = 1.4;
+      sb(x, 0.2, z, w, 0.4, d, '#a1785a'); sb(x, 0.41, z, w - 0.16, 0.04, d - 0.16, '#6d4c3a');
+      for (let a = 0; a < 7; a++) for (let b = 0; b < 2; b++) { const fx = x - w / 2 + 0.35 + a * 0.42, fz = z - 0.32 + b * 0.62; sb(fx, 0.55, fz, 0.07, 0.26, 0.07, '#558b2f'); sb(fx, 0.72, fz, 0.2, 0.16, 0.2, BEDC[k][(a + b) % 2]); }
+      solid(x - w / 2, z - d / 2, x + w / 2, z + d / 2);
+    });
+    { const x = -12, z = 12.8; sb(x, 0.45, z, 0.45, 0.9, 0.45, '#cfc7b8'); sb(x, 0.95, z, 0.75, 0.1, 0.75, '#b9b1a3'); const g = box(parkRoot, 0.04, 0.3, 0.4, '#8d6e4c', x, 1.12, z); g.rotation.z = 0.5; round(x, z, 0.4); }
+    { const x = -12, z = 16.9;
+      for (const sx of [-1.4, 1.4]) for (const sz of [-0.5, 0.5]) { sb(x + sx, 1.2, z + sz, 0.14, 2.4, 0.14, '#f4efe6'); round(x + sx, z + sz, 0.12); }
+      for (let k = 0; k < 6; k++) sb(x - 1.4 + k * 0.56, 2.45, z, 0.1, 0.1, 1.5, '#f4efe6');
+      sb(x, 2.38, z - 0.5, 3.1, 0.1, 0.1, '#f4efe6'); sb(x, 2.38, z + 0.5, 3.1, 0.1, 0.1, '#f4efe6');
+      for (let k = 0; k < 14; k++) sb(x - 1.5 + r() * 3, 2.5 + r() * 0.15, z + (r() - 0.5) * 1.3, 0.3, 0.2, 0.3, r() < 0.5 ? '#6fae52' : '#ce93d8');
+      for (const sx of [-1.4, 1.4]) for (let k = 0; k < 5; k++) sb(x + sx + (r() - 0.5) * 0.2, 0.4 + k * 0.42, z - 0.55, 0.22, 0.24, 0.1, k % 2 ? '#6fae52' : '#ce93d8');
+      bench(x, z, Math.PI, 'wood'); }
+    // ---------- the rose garden, behind the west hedge: rose beds, a birdbath, an arch over the gap ----------
+    const G = P.GARDEN, GY = -0.25;
+    const ROSE = ['#e53950', '#f48fb1', '#ffffff', '#ffd54f', '#c2185b'];
+    const roseBed = (x0, z0, x1, z1, k0) => {
+      sb((x0 + x1) / 2, GY + 0.15, (z0 + z1) / 2, x1 - x0, 0.3, z1 - z0, '#9e958a');
+      sb((x0 + x1) / 2, GY + 0.31, (z0 + z1) / 2, x1 - x0 - 0.2, 0.04, z1 - z0 - 0.2, '#6d4c3a');
+      let k = k0;
+      for (let x = x0 + 0.55; x < x1 - 0.3; x += 0.95) for (let z = z0 + 0.55; z < z1 - 0.3; z += 0.95) {
+        sb(x, GY + 0.62, z, 0.62, 0.55, 0.62, (k & 1) ? '#3f7f3a' : '#478a40');
+        for (const [dx, dz] of [[-0.2, 0.25], [0.25, 0.1], [0, -0.25], [-0.2, -0.05], [0.2, -0.22]]) sb(x + dx, GY + 0.95, z + dz, 0.16, 0.14, 0.16, ROSE[(k + Math.round(dx * 10)) % ROSE.length]);
+        k++;
+      }
+      solid(x0, z0, x1, z1);
+    };
+    roseBed(G.x0 + 0.4, G.z0 + 0.4, -30.3, -6.8, 0); roseBed(-27.7, G.z0 + 0.4, G.x1 - 0.4, -6.8, 1);
+    roseBed(G.x0 + 0.4, -4.2, -30.3, G.z1 - 0.4, 2); roseBed(-27.7, -4.2, G.x1 - 0.4, -3.15, 3);
+    roseBed(-27.7, -1.85, G.x1 - 0.4, G.z1 - 0.4, 4);
+    { const x = -29, z = -5.5; sb(x, GY + 0.35, z, 0.5, 0.7, 0.5, '#d8d0c2'); sb(x, GY + 0.8, z, 1.1, 0.16, 1.1, '#cfc7b8'); box(parkRoot, 0.9, 0.04, 0.9, WMAT, x, GY + 0.9, z); sb(x + 0.3, GY + 0.98, z - 0.2, 0.14, 0.12, 0.2, '#90a4ae'); round(x, z, 0.6); }
+    { const x = -24.5, z = -2.5;
+      for (const sz of [-0.62, 0.62]) sb(x, 1.15, z + sz, 0.2, 2.3, 0.2, '#f4efe6');
+      for (let k = 0; k < 5; k++) { const a = (k / 4) * Math.PI; sb(x, 2.3 + Math.sin(a) * 0.35, z + Math.cos(a) * 0.62, 0.24, 0.14, 0.3, '#f4efe6'); }
+      for (let k = 0; k < 12; k++) sb(x + (r() - 0.5) * 0.4, 0.6 + r() * 2.0, z + (r() < 0.5 ? -0.7 : 0.7), 0.18, 0.18, 0.18, k % 3 ? '#4f8f3c' : '#e53950'); }
+    bench(-29, G.z0 + 0.9, 0, 'stone');
+    for (const [x, z] of [[-32.2, -5.5], [-25.8, -5.5]]) { box(parkRoot, 0.1, 1.0, 0.1, '#2f3b36', x, GY + 0.5, z); box(parkRoot, 0.26, 0.3, 0.26, M.lamp, x, GY + 1.1, z); round(x, z, 0.15); }
+    // lilacs either side of the gap: from the lawn it just looks like the hedge goes on
+    for (const [x, z] of [[-23.2, -4.3], [-23.2, -0.7]]) { shrub(parkRoot, x, gy(x, z), z, r, 1.15, ['#b39ddb', '#9575cd', '#d1c4e9']); round(x, z, 0.55); }
+    for (const [x, z] of [[-22.2, -2.9], [-21.4, -2.1], [-22.6, -1.8]]) sb(x, gy(x, z) + 0.015, z, 0.12, 0.02, 0.1, '#e53950');
+    // ---------- trees around the lawns, shrubs and bushes ----------
+    blossomTree(parkRoot, -19.6, gy(-19.6, 9.6), 9.6, r, 1.2); round(-19.6, 9.6, 0.42);
+    for (const [x, z, k] of [[-21.4, 14.2, 'o'], [-15.4, 4.6, 'b'], [17.6, 7.6, 'o'], [19.4, -9.2, 'o'], [-2.2, -14.2, 'b'], [16.8, 16.2, 'o'], [-6.2, 18.2, 'b'], [-17.4, 18, 'o'], [24.2, -2.6, 'o'], [33.6, 11.6, 'o'], [43.2, 6.6, 'b'], [19.2, 14.6, 'b'], [-22.6, 6.4, 'b']]) {
+      if (!T.inside(x, z) || P.kind(x, z)) continue;
+      if (k === 'o') oakTree(parkRoot, x, gy(x, z), z, r, 0.9 + r() * 0.25); else birchTree(parkRoot, x, gy(x, z), z, r, 1);
+      round(x, z, k === 'o' ? 0.35 : 0.25);
+    }
+    for (const [x, z, f] of [[-6.6, 9.0, 1], [6.4, 9.2, 0], [17.4, -6.4, 1], [-11.2, 4.4, 0], [18.6, 1.8, 1], [-1.4, -12.8, 0], [12.4, -12.4, 1], [-20.4, 15.8, 1], [6.2, 17.8, 0], [26.6, 13.2, 1], [44.2, -2.2, 0], [-18.6, 3.2, 1]]) {
+      if (!T.inside(x, z) || P.kind(x, z)) continue;
+      shrub(parkRoot, x, gy(x, z), z, r, 0.85 + r() * 0.3, f ? ['#f48fb1', '#ffffff'] : null); round(x, z, 0.45);
+    }
+    // ---------- sniff spots (and the two hidden ones) ----------
+    const spotDefs = [[-6.2, 7.4, 'bush'], [17.0, 4.0, 'hydrant'], [0.4, -6.4, 'flowers'], [-5.8, -13.6, 'bush'], [-9.2, -21.2, 'stump'], [25.8, -17.4, 'boulder'],
+      [31.2, -11.4, 'flowers'], [24.8, 7.2, 'flowers'], [18.6, 12.6, 'hydrant'], [-14.2, 8.0, 'planter'], [13.6, -20.4, 'log'], [38.8, 7.2, 'bush'], [-22.2, 3.0, 'bush'], [-2.6, 4.4, 'hydrant']];
+    spotDefs.forEach(([x, z, look]) => { const s = addSpot(parkRoot, spots, colliders, x, z, undefined, spotLooks[look]); onGround(T, s.group, x, z); s.group.userData.noBake = true; });
+    { const s = addSpot(parkRoot, spots, colliders, -31.0, -5.5, 'hidden:roses', spotLooks.flowers); onGround(T, s.group, -31.0, -5.5); s.group.userData.noBake = true; }
+    { const s = addSpot(parkRoot, spots, colliders, 42.6, -14.6, 'hidden:underpass', spotLooks.stump, 0); s.group.userData.noBake = true; }
+    // ---------- the land around the park: woods all round, kept outside the hedge ----------
+    const OUTT = [];
+    const outside = (x, z, m) => { for (let a = -m; a <= m; a++) for (let b = -m; b <= m; b++) if (T.inside(x + a, z + b) || isHole(x + a, z + b)) return false; return true; };
+    for (let k = 0; k < 420 && OUTT.length < 120; k++) {
+      const x = P.X0 + 2 + r() * (P.X1 - P.X0 - 4), z = P.Z0 + r() * (19 - P.Z0);
+      if (z > 17.5 || !outside(x, z, 2) || OUTT.some(([a, b]) => Math.hypot(a - x, b - z) < 2.6)) continue;
+      OUTT.push([x, z]);
+      const k2 = r(); if (k2 < 0.4) pineTree(parkRoot, x, 0, z, r, 1.2 + r() * 0.4); else oakTree(parkRoot, x, 0, z, r, 1.1 + r() * 0.4);
+    }
+    for (let k = 0; k < 22; k++) { const x = -40 + k * 4 + r() * 1.5, z = 31.5 + r() * 1.5; oakTree(parkRoot, x, 0, z, r, 1.1 + r() * 0.3); }
+    // ---------- no little pockets you can never reach: they're closed off (so nothing turns up in them) ----------
+    {
+      const hitC = (x, z) => colliders.some((c) => (c.r !== undefined ? (x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r : x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1));
+      const open = (i, j) => T.inside(i + 0.5, j + 0.5) && !hitC(i + 0.5, j + 0.5);
+      const seen = new Set(), key = (i, j) => i * 4096 + j, q = [[0, 17]];
+      seen.add(key(0, 17));
+      while (q.length) {
+        const [i, j] = q.pop();
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ni = i + a, nj = j + b, k = key(ni, nj);
+          if (seen.has(k) || !open(ni, nj) || Math.abs(gy(ni + 0.5, nj + 0.5) - gy(i + 0.5, j + 0.5)) > 0.45) continue;
+          seen.add(k); q.push([ni, nj]);
+        }
+      }
+      for (let i = P.X0; i < P.X1; i++) for (let j = P.Z0; j < P.Z1; j++) if (open(i, j) && !seen.has(key(i, j))) solid(i, j, i + 1, j + 1);
+    }
+    // ---------- everything plain becomes one mesh ----------
+    boxBatch(parkRoot, SB);
+    boxBatch(parkRoot, HEDGE);
+    boxBatch(parkRoot, TUFT);
+    boxBatch(parkRoot, REED);
+    bakeStatic(parkRoot);
+    // butterflies over the meadow, the flower garden and the rose garden
+    const flies = [];
+    { const g = pivot(parkRoot); g.userData.noBake = true;
+      for (const [cx, cz, n] of [[30, 4, 4], [-11.5, 13, 3], [-29, -6, 3], [8, -3, 2], [35, -14, 2]]) for (let k = 0; k < n; k++) {
+        const b = pivot(g), col = ['#fff176', '#ffffff', '#ffb74d', '#ce93d8', '#81d4fa'][Math.floor(r() * 5)];
+        const L = box(b, 0.16, 0.02, 0.14, col, -0.08, 0, 0), R = box(b, 0.16, 0.02, 0.14, col, 0.08, 0, 0); box(b, 0.03, 0.03, 0.12, '#3b2a1e', 0, 0, 0);
+        flies.push({ b, L, R, cx, cz, o: r() * 10, s: 0.6 + r() * 0.5, rr: 1.5 + r() * 2.5, y: gy(cx, cz) });
+      } }
+    // ---------- what moves ----------
+    const anim = (t) => {
+      jets.forEach((j, k) => { const a = (k / jets.length) * Math.PI * 2, f = (t * 0.9 + (k % 4) * 0.25) % 1; const rr = 0.2 + f * 1.1; j.position.set(FX + Math.cos(a) * rr, 2.45 + Math.sin(f * Math.PI) * 0.55 - f * 1.4, FZ + Math.sin(a) * rr); });
+      fallFX.forEach((p) => { const f = (t * 1.2 + p.o) % 1; p.m.position.set(p.x, p.y0 - f * p.h, p.z + 0.1); });
+      swings.forEach((g, k) => { g.rotation.x = Math.sin(t * 1.7 + k * 1.3) * 0.45; });
+      seesaw.rotation.z = Math.sin(t * 0.9) * 0.18;
+      bees.forEach((b) => { const a = t * 2.4 + b.o; b.m.position.set(Math.cos(a) * b.rr, Math.sin(a * 2.3) * 0.2, Math.sin(a * 1.3) * b.rr); });
+      if (flagAnim) flagAnim(t);
+      for (const f of flies) {
+        const a = t * f.s + f.o, x = f.cx + Math.cos(a) * f.rr + Math.sin(a * 2.3) * 0.6, z = f.cz + Math.sin(a * 0.8) * f.rr;
+        f.b.position.set(x, f.y + 0.7 + Math.sin(a * 3.1) * 0.25, z);
+        f.b.rotation.y = -a;
+        const w = Math.sin(t * 18 + f.o) * 0.9; f.L.rotation.z = w; f.R.rotation.z = -w;
+      }
+    };
     const secrets = [
-      { id: 'roses', name: 'The rose garden', rects: [{ x0: -28, x1: -20, z0: -10, z1: 6 }], hint: 'Some mornings I smell roses by the west hedge. Funny, there aren’t any roses in the park.' },
-      { id: 'underpass', name: 'The hillside grotto', rects: [PARK_GROTTO], hint: 'My grandpa says there’s a little hollow somewhere in the east meadow, where the cats nap when it rains.' },
+      { id: 'roses', name: 'The rose garden', rects: [{ x0: G.x0, x1: G.x1, z0: G.z0, z1: G.z1 }], hint: 'Some mornings I smell roses by the west hedge, behind the lilacs. Funny, there aren’t any roses in the park.' },
+      { id: 'underpass', name: 'The hillside grotto', rects: [P.GROTTO], hint: 'My grandpa says there’s a little hollow in the cliff below the lookout, where the cats nap when it rains.' },
     ];
-    void rose; void tun;
-    return { colliders, spots, water, ponds: [POND], onPath, loop: { x: 11, z0: -11, z1: 11 }, vendors: [], q: {},
-      height: T.height, upper: T.upper, inside: T.inside, bbox: T.bbox, roofs, secrets, exit: { x: 0, z: 20.2 }, lookout: { x0: 32, x1: 40.5, z0: -18.5, z1: -11 } };
+    const LP = [];
+    for (let k = 0; k < P.LOOP.length; k += 2) LP.push(P.LOOP[k]);
+    const shoreList = [];
+    P.cells((i, j, x, z) => {
+      if (!T.inside(x, z) || P.deck(x, z) || P.zone(x, z)) return;
+      for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isHole(x + a, z + b) && P.water(x + a, z + b) < -0.6) { shoreList.push([x, z, x + a, z + b]); break; }
+    });
+    const shore = (pos) => {
+      let best = null, bd = Infinity;
+      for (const [x, z, wx, wz] of shoreList) { const d = Math.hypot(x - pos.x, z - pos.z); if (d < bd) { bd = d; best = [x, z, wx, wz]; } }
+      if (!best) return null;
+      const [x, z, wx, wz] = best;
+      const p = new V3(x + (wx - x) * 0.3, 0, z + (wz - z) * 0.3);
+      p.center = new V3(wx, 0, wz);
+      return p;
+    };
+    return {
+      colliders, spots, water, ponds: P.DUCKS, onPath: (x, z) => { const k = P.kind(x, z); return !!k && !/Edge$/.test(k) && k !== 'bed'; },
+      loop: { x: 11, z0: -11, z1: 11, pts: LP }, vendors: [], q: {}, noAutoSeats: true, clearance: true,
+      height: T.height, upper: T.upper, inside: T.inside, bbox: T.bbox, roofs, secrets, exit: { x: 0, z: 20.2 },
+      lookout: { x0: P.TOP.x - 3.6, x1: P.TOP.x + 4.2, z0: P.TOP.z - 3.6, z1: P.TOP.z + 3.6 },
+      isWater: (x, z) => isHole(x, z), shore, anim,
+    };
   }
+
 
 
   // ===================================================================
