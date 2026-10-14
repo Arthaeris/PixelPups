@@ -16559,7 +16559,9 @@
     if (!NET.ready || visit) return;
     if (!force && Date.now() - NET.profAt < 120000) return;
     NET.profAt = Date.now();
-    try { await ref(`users/${NET.uid}/profile`).set(myProfile()); } catch (e) { NET.err = niceErr(e); }
+    try { await ref(`users/${NET.uid}/profile`).set(myProfile()); } catch (e) { NET.err = niceErr(e); return; }
+    // how you look, for your friends' list (a separate write, so older database rules can't block the rest)
+    try { await ref(`users/${NET.uid}/profile/lk`).set(JSON.stringify(cleanLook(state.look)).slice(0, 300)); } catch (_) { /* older rules */ }
   }
   // your home, for friends to visit (only friends can read it)
   async function pushHome(force) {
@@ -16732,7 +16734,10 @@
       try {
         const p = (await ref(`users/${uid}/profile`).once('value')).val();
         if (!p) return;
-        Object.assign(O.friends[uid], { name: safeName(p.name), seen: p.seen || 0, dg: firstDogOf(p) || O.friends[uid].dg, rank: p.rank | 0, wk: p.wk | 0, ws: p.ws | 0 });
+        let lk = null;
+        try { lk = p.lk ? JSON.stringify(cleanLook(JSON.parse(p.lk))) : null; } catch (_) { lk = null; }
+        const dn = String(p.dogs || '').split('|')[0].split(',')[0].slice(0, 16);
+        Object.assign(O.friends[uid], { name: safeName(p.name), seen: p.seen || 0, dg: firstDogOf(p) || O.friends[uid].dg, dn: dn || O.friends[uid].dn || '', lk: lk || O.friends[uid].lk || null, rank: p.rank | 0, wk: p.wk | 0, ws: p.ws | 0 });
       } catch (_) { /* fine */ }
     }));
     renderFriendsIfOpen();
@@ -16899,6 +16904,20 @@
     return m < 5 ? 'online now' : m < 60 ? `seen ${m} min ago` : m < 1440 ? `seen ${Math.round(m / 60)} h ago` : `seen ${Math.round(m / 1440)} days ago`;
   };
   const fThumb = (dg) => (dg && /^[a-z]+\|[a-z]+$/.test(dg) ? TH('dog', dg) : IC('person'));
+  // a friend as they looked last time they were online, with their first dog at their side
+  function fAvatar(F) {
+    let look = null;
+    try { look = F.lk ? cleanLook(JSON.parse(F.lk)) : null; } catch (_) { look = null; }
+    const me = look ? TH('wear', lookKey(look)) : `<span class="fNoLook">${IC('person')}</span>`;
+    const dog = F.dg && /^[a-z]+\|[a-z]+$/.test(F.dg) ? `<span class="fDog">${TH('dog', F.dg)}</span>` : '';
+    return `<span class="fAv">${me}${dog}${F.online ? '<i class="fDot"></i>' : ''}</span>`;
+  }
+  function friendCard(uid, F) {
+    const where = F.online && whereName(F.where);
+    const meta = [F.rank ? `Rank ${F.rank}` : '', F.dn ? `with ${F.dn}` : ''].filter(Boolean).join(' · ');
+    return `<button class="fCard${F.online ? ' on' : ''}" data-fa="open" data-uid="${uid}">${fAvatar(F)}<span class="fTxt"><b>${esc(F.name)}</b>` +
+      `<small class="fStat">${F.online ? `<i class="fLive"></i>Online${where ? ` · ${esc(where)}` : ''}` : esc(friendStatusLine(F))}</small>${meta ? `<small class="fMeta">${esc(meta)}</small>` : ''}</span><span class="fGo">${IC('right')}</span></button>`;
+  }
   function renderFriends() {
     const B = $('friendsBody'), O = onl();
     updateFriendBadge();
@@ -16919,7 +16938,8 @@
       `<div class="addRow"><input id="friendCodeIn" class="nameField" maxlength="7" autocapitalize="characters" autocomplete="off" placeholder="A friend’s code"><button class="primary small" data-fa="add">Add</button></div>`;
     if (req.length) h += '<div class="section">Want to be friends</div>' + req.map(([uid, R]) => `<div class="row"><div class="ic">${fThumb(R.dg)}</div><div class="txt"><b>${esc(R.name)}</b><small>Code ${esc(R.code || '?')}</small></div><div class="btnCol"><button class="small primary" data-fa="accept" data-uid="${uid}">Yes</button><button class="small soft" data-fa="decline" data-uid="${uid}">No</button></div></div>`).join('');
     h += `<div class="section">Friends (${fr.length})</div>`;
-    h += fr.length ? fr.map(([uid, F]) => `<button class="row friendRow" data-fa="open" data-uid="${uid}"><div class="ic">${fThumb(F.dg)}</div><div class="txt"><b>${esc(F.name)}</b><small>${esc(friendStatusLine(F))}</small></div>${IC('right')}</button>`).join('')
+    fr.sort((a, b) => (b[1].online ? 1 : 0) - (a[1].online ? 1 : 0));
+    h += fr.length ? `<div class="fList">${fr.map(([uid, F]) => friendCard(uid, F)).join('')}</div>`
       : '<p class="sub">No friends yet. Share your code, or type in a friend’s code.</p>';
     if (sent.length) h += '<div class="section">Waiting for a yes</div>' + sent.map(([uid, F]) => `<div class="row"><div class="ic">${fThumb(F.dg)}</div><div class="txt"><b>${esc(F.name)}</b><small>Request sent</small></div><button class="small soft" data-fa="remove" data-uid="${uid}">Cancel</button></div>`).join('');
     const bl = Object.entries(O.blocked);
@@ -16950,10 +16970,10 @@
       B.innerHTML = `<p class="sub">What’s wrong with ${esc(F.name)}?</p><div class="mailKinds">${['A rude name', 'Too many messages', 'Something else'].map((r) => `<button class="soft" data-fa="sendreport" data-r="${r}">${r}</button>`).join('')}</div><p class="sub">You can also block them, so they can’t reach you anymore.</p><button class="soft small" data-fa="block">Block ${esc(F.name)}</button>` + back;
       return;
     }
-    B.innerHTML = `<div class="friendHead"><div class="ic">${fThumb(F.dg)}</div><div><b>${esc(F.name)}</b><small>${esc([`Code ${F.code}`, seenText(F.seen)].filter(Boolean).join(' · '))}</small></div></div>` +
-      `<button class="row playRow" data-fa="visit"><div class="ic">${IC('home')}</div><div class="txt"><b>Visit their home</b><small>Have a look round and leave a little something</small></div></button>` +
-      `<button class="row playRow" data-fa="letter"><div class="ic">${IC('chat')}</div><div class="txt"><b>Write a letter</b><small>They’ll find it in their mailbox</small></div></button>` +
-      `<button class="row playRow" data-fa="gift"><div class="ic">${IC('gift')}</div><div class="txt"><b>Send a present</b><small>From your inventory, treats or pantry</small></div></button>` +
+    B.innerHTML = `<div class="friendHead">${fAvatar(F)}<div><b>${esc(F.name)}</b><small>${F.online ? `Online${whereName(F.where) ? ` · ${esc(whereName(F.where))}` : ''}` : esc(friendStatusLine(F))}</small><small>${esc([`Code ${F.code}`, F.rank ? `Rank ${F.rank}` : '', F.dn ? `with ${F.dn}` : ''].filter(Boolean).join(' · '))}</small></div></div>` +
+      `<button class="fCard fAction" data-fa="visit"><span class="fIc">${IC('home')}</span><span class="fTxt"><b>Visit their home</b><small>Have a look round and leave a little something</small></span></button>` +
+      `<button class="fCard fAction" data-fa="letter"><span class="fIc">${IC('chat')}</span><span class="fTxt"><b>Write a letter</b><small>They’ll find it in their mailbox</small></span></button>` +
+      `<button class="fCard fAction" data-fa="gift"><span class="fIc">${IC('gift')}</span><span class="fTxt"><b>Send a present</b><small>From your inventory, treats or pantry</small></span></button>` +
       `<div class="btnRow"><button class="soft small" data-fa="remove">Remove friend</button><button class="soft small" data-fa="report">Report or block</button></div>` + back;
   }
   $('friends').addEventListener('click', async (e) => {
