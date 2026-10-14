@@ -1764,7 +1764,7 @@
   function lineClear(ax, az, bx, bz, ay) {
     const dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz);
     if (d < 1e-3) return true;
-    const px = (-dz / d) * 0.2, pz = (dx / d) * 0.2;
+    const side = S && S.clearance && place === 'park' ? 0.28 : 0.2, px = (-dz / d) * side, pz = (dx / d) * side;
     const n = Math.ceil(d / 0.2);
     let ph = groundAtY(ax, az, ay);
     for (let k = 1; k <= n; k++) {
@@ -1795,7 +1795,7 @@
     const nextH = (i, j, ni, nj) => (terrainOn() ? layerH(ni + 0.5, nj + 0.5, cellH(i, j)) : 0);
     const lvl = (x, z, y) => (two && onTopLevel(x, z, y) ? 1 : 0);
     const midOK = (si2, sj2, y) => { const x = (si2 + 1) / 2, z = (sj2 + 1) / 2, k = (si2 * 8192 + sj2) * 2 + lvl(x, z, y); let v = memoMid.get(k); if (v === undefined) { v = !isSolid(x, z, y); memoMid.set(k, v); } return v; };
-    const pass = atHome ? passable : (i, j, y) => { const k = (i * 4096 + j) * 2 + lvl(i + 0.5, j + 0.5, y); let v = memo.get(k); if (v === undefined) { v = !isSolid(i + 0.5, j + 0.5, y) && (!venueId || [[0.27, 0], [-0.27, 0], [0, 0.27], [0, -0.27]].every(([a, b]) => !isSolid(i + 0.5 + a, j + 0.5 + b, y))); memo.set(k, v); } return v; };
+    const pass = atHome ? passable : (i, j, y) => { const k = (i * 4096 + j) * 2 + lvl(i + 0.5, j + 0.5, y); let v = memo.get(k); if (v === undefined) { v = !isSolid(i + 0.5, j + 0.5, y) && (!(venueId || S.clearance) || [[0.27, 0], [-0.27, 0], [0, 0.27], [0, -0.27]].every(([a, b]) => !isSolid(i + 0.5 + a, j + 0.5 + b, y))); memo.set(k, v); } return v; };
     const tileIn = atHome ? isHomeTile : (i, j) => !S.inside || S.inside(i + 0.5, j + 0.5);
     const climbOK = (i, j, ni, nj) => !terrainOn() || Math.abs(nextH(i, j, ni, nj) - cellH(i, j)) <= climb + 0.01;
     // at home the stairs link the tile in front of them with the landing upstairs
@@ -3325,6 +3325,7 @@
   }
   // the closest point at the edge of any water to splash in (with .center = the water just beyond)
   function pondEdge(pos) {
+    if (S.shore) return S.shore(pos);
     let best = null, bd = Infinity;
     for (const P of S.ponds) {
       const ex = clamp(pos.x, P.x0, P.x1), ez = clamp(pos.z, P.z0, P.z1);
@@ -3520,7 +3521,26 @@
     }
   }
   // neighbors walk around the place's square path (S.loop: half width x, north z0, south z1)
+  // or, when the place gives one, along a closed winding path (S.loop.pts)
+  function loopPts() {
+    const Lp = S.loop;
+    if (!Lp.pts) return null;
+    if (!Lp.cum) {
+      Lp.cum = [0];
+      for (let k = 0; k < Lp.pts.length; k++) { const a = Lp.pts[k], b = Lp.pts[(k + 1) % Lp.pts.length]; Lp.cum.push(Lp.cum[k] + Math.hypot(b[0] - a[0], b[1] - a[1])); }
+    }
+    return Lp;
+  }
   function loopPoint(t) {
+    const LP = loopPts();
+    if (LP) {
+      const per = LP.cum[LP.cum.length - 1];
+      t = ((t % per) + per) % per;
+      let k = 0;
+      while (k < LP.pts.length - 1 && LP.cum[k + 1] < t) k++;
+      const a = LP.pts[k], b = LP.pts[(k + 1) % LP.pts.length], f = (t - LP.cum[k]) / ((LP.cum[k + 1] - LP.cum[k]) || 1);
+      return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+    }
     const Lp = S.loop, w = 2 * Lp.x, h = Lp.z1 - Lp.z0, per = 2 * (w + h);
     t = ((t % per) + per) % per;
     if (t < w) return [-Lp.x + t, Lp.z0];
@@ -3528,7 +3548,7 @@
     if (t < 2 * w + h) return [Lp.x - (t - w - h), Lp.z1];
     return [-Lp.x, Lp.z1 - (t - 2 * w - h)];
   }
-  const loopLength = () => 2 * (2 * S.loop.x + S.loop.z1 - S.loop.z0);
+  const loopLength = () => (loopPts() ? S.loop.cum[S.loop.cum.length - 1] : 2 * (2 * S.loop.x + S.loop.z1 - S.loop.z0));
   function clearWalkers() {
     if (talk) endTalk(false);
     for (const w of walkers) {
@@ -6386,8 +6406,14 @@
     if (!kinds.length || !S.loop) return;
     calDecor = new THREE.Group();
     const L = S.loop, pts = [];
-    for (let t = -L.x; t <= L.x; t += 5.5) pts.push([t, L.z0 - 2.1], [t, L.z1 + 2.1]);
-    for (let t = L.z0 + 3; t <= L.z1 - 3; t += 5.5) pts.push([-L.x - 2.1, t], [L.x + 2.1, t]);
+    if (loopPts()) {
+      // along a winding path: every few steps, on its outer side
+      const per = loopLength();
+      for (let t = 0; t < per; t += 5.5) { const [x, z] = loopPoint(t), [x2, z2] = loopPoint(t + 0.5), l = Math.hypot(x2 - x, z2 - z) || 1; pts.push([x - ((z2 - z) / l) * 2.2, z + ((x2 - x) / l) * 2.2]); }
+    } else {
+      for (let t = -L.x; t <= L.x; t += 5.5) pts.push([t, L.z0 - 2.1], [t, L.z1 + 2.1]);
+      for (let t = L.z0 + 3; t <= L.z1 - 3; t += 5.5) pts.push([-L.x - 2.1, t], [L.x + 2.1, t]);
+    }
     let k = 0;
     for (const [x, z] of pts) {
       if (isSolid(x, z) || inPond(x, z, 0.6) || (z > 15 && Math.abs(x) < 3)) continue;
@@ -7022,7 +7048,7 @@
   // leaving a player place: home, through the usual way
   function leaveVenue() { if (venueId) goHome(); }
   const SHAPE_TIPS = {
-    park: 'There is more to explore now: a hill with a view, a sunken pond and a meadow to the east. Not every corner is easy to find.',
+    park: 'There is more to explore now: a hill with a pavilion, a pond fed by a woodland creek and a meadow to the east. Not every corner is easy to find.',
     beach: 'There is more to explore now: dunes, a boardwalk and a rocky headland with stairs up to the lighthouse. Some places only show at the right tide.',
     oldtown: 'There is more to explore now: steps lead down to the old canal in the east. And not every door in town is what it seems.',
     forest: 'The forest has grown: a mossy dell lies past the west glade, and a rocky terrace rises in the north-east. Listen for water.',
@@ -7109,6 +7135,7 @@
     const first = intro && tip('visit:' + loc, { title: LOC().name, text: intro, th: TH('loc', loc) });
     if (!first) toast(intro || (parkLoot ? 'Walk time! Something is glinting in the grass… ✨' : W.muddy ? `Walk time! It's ${W.name.toLowerCase()} — expect muddy paws 🐾` : 'Walk time! Let your dog sniff the ✨ spots'));
     if (S.secrets && !first && SHAPE_TIPS[loc]) tip('shape:' + loc, { title: `${LOC().name} has grown`, text: SHAPE_TIPS[loc], icon: 'map' });
+    if (loc === 'park' && !first && (state.locWalks || {}).park) tip('park2', { title: 'The park got a makeover', text: 'Paths now wind around the big lawn, the pond has a jetty and a creek with a little bridge, and there’s a playground, a flower garden by the fountain and a pavilion on the hill. The rose garden and the grotto are still there, if you know where to look.', icon: 'map' });
     if (loc === 'park' && unlockedFeat('minimap')) tip('minimap', { title: 'The mini-map', text: 'The little map in the top right shows sniff spots, shops and the way home. Tap it to make it bigger.', icon: 'map' });
   }
 
@@ -11557,7 +11584,10 @@
     const roofTop = (wx, wz) => (roofs.some((rf) => rf.test.some((t) => inRectXZ(t, wx, wz))) ? 1 : null);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       const wx = V.x0 + (i + 0.5) * (V.span / N), wz = V.z0 + (j + 0.5) * (V.span / N);
-      if (shaped && !S.inside(wx, wz)) continue;
+      if (shaped && !S.inside(wx, wz)) {
+        if (S.isWater && S.isWater(wx, wz)) { x.fillStyle = col('water'); x.fillRect(i, j, 1, 1); }
+        continue;
+      }
       let k = 'ground';
       // what hangs over a cove or a tunnel is drawn as the ground on top: hidden spots stay hidden
       const over = shaped ? roofTop(wx, wz) : null;
@@ -12431,6 +12461,8 @@
       o.getWorldPosition(tmp);
       seats.push({ x: tmp.x, z: tmp.z, y: tmp.y, rot: o.rotation.y, two: true, style: 'old' });
     });
+    // a place that sets out its own benches doesn't get extra ones
+    if (sc.noAutoSeats) { sc.seats = seats; return; }
     // new ones: flat, open ground just outside the loop path, facing it
     const L = sc.loop || { x: 11, z0: -11, z1: 11 };
     const r = ART.mulberry32(hashStr('seats|' + sc.id));
@@ -13205,7 +13237,8 @@
     // a few clusters near the path, so they are easy to find
     const L = S.loop || { x: 11, z0: -11, z1: 11 };
     for (let c = 0; c < 4; c++) {
-      const cx = rand(-L.x, L.x), cz = rand(L.z0, L.z1);
+      let cx = rand(-L.x, L.x), cz = rand(L.z0, L.z1);
+      if (S.loop && S.loop.pts) { const [px, pz] = loopPoint(rand(0, loopLength())); cx = px + rand(-3, 3); cz = pz + rand(-3, 3); }
       for (let k = 0; k < 4; k++) {
         const x = cx + rand(-2.5, 2.5), z = cz + rand(-2.5, 2.5);
         if (isSolid(x, z) || inPond(x, z, 0.6) || (S.inside && !S.inside(x, z)) || patches.some((q) => Math.hypot(q.x - x, q.z - z) < 1)) continue;
@@ -13368,6 +13401,12 @@
     if (place !== 'park' || !S.ponds) return null;
     const e = pondEdge(pp);
     if (!e || flatDist(e, pp) > 1.9) return null;
+    if (S.isWater) {
+      // a pond of any shape: there must be open water ahead to skip across
+      const dx = e.center.x - e.x, dz = e.center.z - e.z, l = Math.hypot(dx, dz) || 1;
+      for (let t = 0.5; t <= 3; t += 0.5) if (!S.isWater(e.center.x + (dx / l) * t, e.center.z + (dz / l) * t)) return null;
+      return { edge: e, pond: null };
+    }
     const P = S.ponds.find((p) => e.center.x > p.x0 - 0.6 && e.center.x < p.x1 + 0.6 && e.center.z > p.z0 - 0.6 && e.center.z < p.z1 + 0.6);
     if (!P || Math.min(P.x1 - P.x0, P.z1 - P.z0) < 2.5) return null;
     return { edge: e, pond: P };
@@ -13376,6 +13415,7 @@
   function waterY(x, z) {
     try {
       skipRay.set(new V3(x, 20, z), new V3(0, -1, 0));
+      skipRay.camera = camera;
       const h = skipRay.intersectObjects(parkRoot.children, true).find((o) => o.object.material && o.object.material.color && o.object.material.color.b > o.object.material.color.r + 0.15);
       if (h) return h.point.y + 0.03;
     } catch (_) { /* fine */ }
@@ -13456,7 +13496,7 @@
     const pp = player.root.position, f = player.face;
     const dir = new V3(Math.sin(f), 0, Math.cos(f));
     const P = F.water.pond;
-    const inW = (x, z) => x > P.x0 && x < P.x1 && z > P.z0 && z < P.z1;
+    const inW = S.isWater ? (x, z) => S.isWater(x, z) : (x, z) => x > P.x0 && x < P.x1 && z > P.z0 && z < P.z1;
     const legs = [];
     const a = pp.clone().add(new V3(0, 1.1, 0));
     let cur = new V3(pp.x + dir.x * 1.2, 0, pp.z + dir.z * 1.2);
