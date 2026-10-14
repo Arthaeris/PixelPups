@@ -1688,7 +1688,7 @@ body.keysOn #tips { bottom: calc(var(--pad-b) + 160px); }
 .netList p { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; font-size: 14px; }
 .netList .i { flex: 0 0 auto; color: #12996a; margin-top: 2px; }
 .sub.warn { color: #c4416f; }
-.codeCard { text-align: center; background: rgba(255, 255, 255, 0.65); border-radius: 18px; padding: 12px; margin-bottom: 10px; }
+.codeCard { text-align: center; background: var(--g-card-hi); box-shadow: var(--inner), inset 0 0 0 1px var(--g-line); color: var(--ink); border-radius: 20px; padding: 12px; margin-bottom: 10px; }
 .codeCard small { display: block; opacity: 0.75; }
 .codeCard b { display: block; font-size: 34px; letter-spacing: 6px; font-family: "Courier New", ui-monospace, monospace; margin: 4px 0 8px; color: var(--accent-ink, #3b2fb0); }
 .codeCard .btnRow { justify-content: center; }
@@ -1924,3 +1924,31 @@ body.funOn #mpBtn, body.decorating #mpBtn { display: none; }
 #parkActions button { min-width: 46px; }
 @media (max-width: 400px) { #parkActions .dIc { font-size: 23px; } #parkActions button small { font-size: 10px; } }
 .vgRow > .bookSpine { flex: 0 0 18px; }
+
+/* Friends: a card per friend, with how they looked last time and their dog at their side */
+.fList { display: flex; flex-direction: column; gap: 8px; }
+.fCard { position: relative; width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 10px; border: none; border-radius: 22px; text-align: left; font: inherit; color: var(--ink); background: var(--g-card-hi); box-shadow: var(--inner), inset 0 0 0 1px var(--g-line), 0 6px 16px -12px rgba(24, 14, 60, 0.5); }
+.fCard:active { transform: scale(0.98); }
+.fCard.on { box-shadow: var(--inner), inset 0 0 0 2px rgba(63, 191, 127, 0.75), 0 6px 16px -12px rgba(24, 14, 60, 0.5); }
+.fAv { position: relative; flex: 0 0 auto; width: 64px; height: 64px; border-radius: 20px; background: linear-gradient(160deg, rgba(160, 140, 255, 0.35), rgba(120, 220, 200, 0.3)); display: grid; place-items: center; }
+.fAv > .th { width: 64px; height: 64px; }
+.fNoLook { font-size: 30px; color: var(--ink-3); display: grid; place-items: center; }
+.fDog { position: absolute; right: -8px; bottom: -6px; width: 34px; height: 34px; border-radius: 50%; background: var(--g-card-hi); box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 3px 8px rgba(24, 14, 60, 0.25); display: grid; place-items: center; overflow: hidden; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.fDog .th { width: 34px; height: 34px; }
+.fDot { position: absolute; left: -2px; top: -2px; width: 14px; height: 14px; border-radius: 50%; background: #3fbf7f; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9); }
+.fTxt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-left: 4px; }
+.fTxt b { font-size: 17px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fStat { font-size: 13px; font-weight: 700; color: var(--ink-2); display: flex; align-items: center; gap: 6px; white-space: normal; }
+.fCard.on .fStat { color: #16a06a; }
+body.dusk .fCard.on .fStat { color: #7ff0b8; }
+.fLive { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: herePulse2 1.6s ease-in-out infinite; }
+@keyframes herePulse2 { 50% { opacity: 0.35; } }
+.fMeta { font-size: 12px; color: var(--ink-3); font-weight: 700; }
+.fGo { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--g-card); color: var(--ink-2); }
+.friendHead .fAv { width: 76px; height: 76px; }
+.friendHead .fAv > .th { width: 76px; height: 76px; }
+.friendHead small { display: block; }
+.fAction { margin-bottom: 8px; padding: 12px; }
+.fAction .fIc { flex: 0 0 auto; width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; font-size: 22px; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.fAction .fTxt b { font-size: 16px; }
+.fAction .fTxt small { font-size: 12.5px; color: var(--ink-2); font-weight: 600; white-space: normal; }
