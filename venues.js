@@ -544,12 +544,12 @@ window.PPVenues = function (G) {
     buildVenueDom();
     cur = { id, dogs: dogs.slice(), sit, game: null };
     const v = $('venue');
-    v.className = 'vn-' + id;
+    v.className = 'hidden vn-' + id;
     $('vgame').className = 'hidden vn-' + id;
     $('vnName').textContent = VENUES[id].name;
-    drawScene(id);
     renderVenue();
-    G.tip('venue:' + id, { title: VENUES[id].name, text: `${VENUES[id].blurb} ${VENUES[id].dogs}`, icon: 'map' });
+    G.toast(`Welcome to the ${VENUES[id].short.toLowerCase()}! Walk up to a sign to start`);
+    G.tip('venue:' + id, { title: VENUES[id].name, text: `${VENUES[id].blurb} Walk up to the signs and tap the button that appears. ${VENUES[id].dogs}`, icon: 'map' });
     if (VENUES[id].dogsWait && dogs.length) setTimeout(() => G.toast(`${G.nameList(dogs.map((d) => d.name))} settle${dogs.length > 1 ? '' : 's'} down at the entrance with your towel 🐾`), 700);
     else if (dogs.length) setTimeout(() => G.toast(pick([`${dogs[0].name} sniffs around excitedly 🐾`, `${dogs[0].name} loves it here 🐾`, `${dogs[0].name} wags at everyone 🐾`])), 700);
   }
@@ -560,6 +560,20 @@ window.PPVenues = function (G) {
     cur = null;
   }
   const covers = () => !!cur && !$('venue').classList.contains('hidden');
+  // a station in the place: start its game
+  function runAct(act) {
+    if (!cur) return;
+    const A = (ACTS[cur.id] || []).find((x) => x.id === act);
+    if (!A || (cur.game && cur.game.alive)) return;
+    if (VENUES[cur.id].sunday && venueClosedNow(cur.id)) { G.toast(closedText(cur.id)); return; }
+    if (A.locked && A.locked()) { G.toast(A.locked()); G.sfx('fail'); return; }
+    G.sfx('tap');
+    A.run();
+  }
+  // labels for the buttons that appear by each station
+  const BTN = { latte: 'Latte', table: 'Sit', specials: 'Shop', clothes: 'Try on', showroom: 'Browse', toys: 'Shop', booth: 'Photo', food: 'Eat', quiz: 'Quiz', book: 'Read', borrow: 'Borrow',
+    claw: 'Play', mole: 'Play', beat: 'Play', prizes: 'Prizes', golf: 'Play', stalls: 'Browse', pottery: 'Make', sewing: 'Make', wood: 'Make', swim: 'Swim', dive: 'Dive' };
+  const ctxDefs = () => { const o = {}; for (const list of Object.values(ACTS)) for (const A of list) o['v:' + A.id] = [A.icon, BTN[A.id] || 'Play']; return o; };
   function renderVenue() {
     if (!cur) return;
     const id = cur.id;
@@ -2113,7 +2127,7 @@ window.PPVenues = function (G) {
   };
 
   return {
-    VENUES, SPOTS, openMap, closeMap, show, hide, covers, venueOpen, vstars, addVP, renderVenue,
+    VENUES, SPOTS, openMap, closeMap, show, hide, covers, runAct, ctxDefs, XI, venueOpen, vstars, addVP, renderVenue,
     get cur() { return cur; }, get mapSel() { return mapSel; }, tapPin, selectPin, openPack, go, stayReason, STAY, packPick: () => [...packPick],
     playLatte, playStories, playQuiz, openBook, playBooks, mallShop, mallClothes, mallShowroom, mallToys, mallBooth, mallFood,
     playClaw, playMole, playBeat, arcadePrizes, playPottery, playSewing, playWoodwork, playGolf, playFlea, playSwim, playDive, closeGame,
