@@ -33,6 +33,7 @@
           <div class="wRow glass" data-k="tickets"><i data-i="ticket" class="wIc"></i><b class="wNum">0</b><span class="wDelta"></span></div>
         </div>
         <button class="chip glass hidden" id="locChip" data-act="locinfo"></button>
+        <button class="chip glass hidden" id="turnBtn" data-act="turn" aria-label="Turn the view"><i data-i="turn"></i></button>
         <div class="chip glass hidden" id="buildPill"><i data-i="crane"></i><span id="buildTime">10:00</span></div>
         <div id="minimap" class="glass hidden" aria-label="Map of this place"><canvas id="mmCanvas"></canvas><div id="mmLegend"></div></div>
       </div>
@@ -175,26 +176,40 @@
       <div class="sheetHead"><h2 id="hubTitle">Menu</h2><button class="x" data-act="closeHub" aria-label="Close"><i data-i="x"></i></button></div>
       <div class="sheetBody">
         <div class="hubStats">
-          <div class="stat"><i data-i="coin"></i><b id="coinCount">0</b><small>Coins</small></div>
-          <div class="stat hidden" id="ticketStat"><i data-i="ticket"></i><b id="ticketCount">0</b><small>Tickets</small></div>
+          <div class="stat"><i data-i="coin"></i><b id="coinCount">0</b></div>
+          <div class="stat hidden" id="ticketStat"><i data-i="ticket"></i><b id="ticketCount">0</b></div>
           <button class="stat" id="clockChip" data-act="clock"><span id="clockIc"></span><b id="clockTime">12:00</b><small id="clockWx">Sunny</small></button>
-          <button class="stat" id="comfortChip" data-act="comfort"><span class="paws" id="comfortPawsMini"></span><b>Comfort</b><small id="comfortWord">Cozy</small></button>
+          <button class="stat" id="comfortChip" data-act="comfort"><span class="paws" id="comfortPawsMini"></span><small id="comfortWord">Cozy</small></button>
         </div>
         <button class="rankRow" id="rankRow" data-act="ranks" aria-label="Trainer rank"></button>
         <button class="eventRow hidden" id="eventRow" data-act="event"><span id="eventIc"></span><span class="evTxt"><b id="eventTitle"></b><small id="eventText"></small></span></button>
-        <div class="hubGrid">
-          <button class="tile" data-act="shop"><i data-i="shop"></i><b>Shop</b><small>Toys, furniture, styles</small></button>
-          <button class="tile" data-act="decorate" id="tileDecorate"><i data-i="brush"></i><b>Decorate</b><small>Move furniture, walls, floors</small></button>
-          <button class="tile" data-act="bag"><i data-i="bag"></i><b>Toy bag</b><small id="tileBagSub">Pick what to throw</small></button>
-          <button class="tile" data-act="album"><i data-i="book"></i><b>Collectibles</b><small id="tileAlbumSub">Your sticker book</small></button>
-          <button class="tile" data-act="daily"><i data-i="list"></i><b>Challenges</b><small id="tileDailySub">Today's goals</small><i class="badge hidden" id="dailyBadge">3</i></button>
-          <button class="tile" data-act="me"><i data-i="person"></i><b>You</b><small>Your look and clothes</small></button>
-          <button class="tile" data-act="house"><i data-i="home"></i><b>Home</b><small id="tileHouseSub">Upgrade your home</small></button>
-          <button class="tile" data-act="people"><i data-i="wave"></i><b>Neighbors</b><small id="tilePeopleSub">Their stories</small></button>
-          <button class="tile" data-act="friends"><i data-i="person"></i><b>Friends</b><small>Play with friends online</small><i class="badge hidden" id="friendBadge">0</i></button>
-          <button class="tile" data-act="photo"><i data-i="camera"></i><b>Photo</b><small>Snap a picture of your pack</small></button>
-          <button class="tile" data-act="settings"><i data-i="gear"></i><b>Settings</b><small>Sound, backups, sharing</small></button>
-          <button class="tile hidden" data-act="inbox" id="tileInbox"><i data-i="sparkle"></i><b>What’s new</b><small>News you missed</small><i class="badge" id="inboxBadge">0</i></button>
+        <div class="hubGroup g-home"><span class="hubLabel">Home</span>
+          <div class="hubGrid">
+            <button class="tile" data-act="decorate" id="tileDecorate"><span class="tIc"><i data-i="brush"></i></span><b>Decorate</b><small>Furniture</small></button>
+            <button class="tile" data-act="house"><span class="tIc"><i data-i="home"></i></span><b>Home</b><small id="tileHouseSub">Upgrade</small></button>
+            <button class="tile" data-act="shop"><span class="tIc"><i data-i="shop"></i></span><b>Shop</b><small>Buy things</small></button>
+          </div>
+        </div>
+        <div class="hubGroup g-pack"><span class="hubLabel">Your pack</span>
+          <div class="hubGrid">
+            <button class="tile" data-act="bag"><span class="tIc"><i data-i="bag"></i></span><b>Toy bag</b><small id="tileBagSub">Toys</small></button>
+            <button class="tile" data-act="album"><span class="tIc"><i data-i="book"></i></span><b>Collectibles</b><small id="tileAlbumSub">Sticker book</small></button>
+            <button class="tile" data-act="daily"><span class="tIc"><i data-i="list"></i></span><b>Challenges</b><small id="tileDailySub">Today</small><i class="badge hidden" id="dailyBadge">3</i></button>
+          </div>
+        </div>
+        <div class="hubGroup g-people"><span class="hubLabel">People</span>
+          <div class="hubGrid">
+            <button class="tile" data-act="people"><span class="tIc"><i data-i="wave"></i></span><b>Neighbors</b><small id="tilePeopleSub">Stories</small></button>
+            <button class="tile" data-act="friends"><span class="tIc"><i data-i="person"></i></span><b>Friends</b><small>Online</small><i class="badge hidden" id="friendBadge">0</i></button>
+            <button class="tile hidden" data-act="inbox" id="tileInbox"><span class="tIc"><i data-i="sparkle"></i></span><b>What’s new</b><small>All events</small><i class="badge" id="inboxBadge">0</i></button>
+          </div>
+        </div>
+        <div class="hubGroup g-you"><span class="hubLabel">You</span>
+          <div class="hubGrid">
+            <button class="tile" data-act="me"><span class="tIc"><i data-i="person"></i></span><b>You</b><small>Your look</small></button>
+            <button class="tile" data-act="photo"><span class="tIc"><i data-i="camera"></i></span><b>Photo</b><small>Snap one</small></button>
+            <button class="tile" data-act="settings"><span class="tIc"><i data-i="gear"></i></span><b>Settings</b><small>Sound &amp; more</small></button>
+          </div>
         </div>
       </div>
     </div>
