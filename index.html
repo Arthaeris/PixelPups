@@ -44,7 +44,7 @@
       <button data-act="ctx" id="ctxHome" class="ctx hidden"></button>
       <button data-act="bowls" aria-label="Fill food and water bowls"><i data-i="bowl" class="dIc"></i><small>Bowls</small></button>
       <button data-act="ball"><span class="dIc toyIcon"></span><small>Throw</small></button>
-      <button data-act="walk"><i data-i="walk" class="dIc"></i><small>Walk</small></button>
+      <button data-act="walk"><i data-i="map" class="dIc"></i><small>Go out</small></button>
       <button data-act="menu" class="menuBtn" aria-label="Menu"><i data-i="menu" class="dIc"></i><small>Menu</small><i class="dot hidden"></i></button>
     </nav>
 
@@ -53,6 +53,7 @@
       <button data-act="ball"><span class="dIc toyIcon"></span><small>Throw</small></button>
       <button data-act="tricks"><i data-i="cap" class="dIc"></i><small>Tricks</small></button>
       <button data-act="leash" id="leashBtn"></button>
+      <button data-act="walk" class="mapBtn"><i data-i="map" class="dIc"></i><small>Map</small></button>
       <button data-act="home"><i data-i="home" class="dIc"></i><small>Home</small></button>
       <button data-act="menu" class="menuBtn" aria-label="Menu"><i data-i="menu" class="dIc"></i><small>Menu</small><i class="dot hidden"></i></button>
     </nav>
@@ -718,7 +719,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
-    ['data.js', 'art.js', 'game.js'].forEach(function (f) { document.write('<script src="' + f + (window.PP_BUST || '') + '"><\/script>'); });
+    ['data.js', 'art.js', 'venues.js', 'game.js'].forEach(function (f) { document.write('<script src="' + f + (window.PP_BUST || '') + '"><\/script>'); });
   </script>
 </body>
 </html>
