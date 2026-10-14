@@ -3490,260 +3490,944 @@ window.VP_ART = (function () {
     return g;
   }
 
-  // ----- Old Town -----
-  function buildOldTown(root) {
-    const colliders = [], spots = [], ponds = [];
-    const L = { x: 11, z0: -11, z1: 11 };
-    const r = mulberry32(7);
-    const q = { crosswalks: [], cars: [], pigeons: [], puddles: null, cat: null, plaza: { x: 0, z: 3, r: 4.4 }, red: [], green: [] };
-    // the town square, a hidden courtyard behind the north houses, and steps down to the old canal basin in the east
-    const ALLEY = { x0: 7.6, x1: 10, z0: -19.6, z1: -14.5 };
-    const UNDER = { x0: 22.5, x1: 27, z0: -5.4, z1: -2.6 };
-    const COURT = [[4.5, -19.5], [4.5, -22.5], [6.5, -25.5], [11, -26.5], [14.5, -24], [15, -19.5]];
-    const { T, roofs } = shapedPlace(root, {
-      colliders,
-      walk: [coreSquare(), COURT, [[19.5, -14.5], [23, -14.5], [25, -16], [31, -16], [31, -1.2], [22.5, -1.2], [22.5, -5.3], [19.5, -5.3]]],
-      areas: [
-        { kind: 'flat', rect: { x0: 22.5, x1: 27, z0: -16, z1: -5.4 }, h: -1.8 },
-        { kind: 'flat', rect: UNDER, h: -1.8, under: true },
-        { kind: 'flat', rect: { x0: 22.5, x1: 27, z0: -2.6, z1: -1.2 }, h: -1.8 },
-        { kind: 'flat', rect: { x0: 27, x1: 31, z0: -16, z1: -1.2 }, h: -2.4 },
-        { kind: 'stairs', rect: { x0: 20, x1: 22, z0: -14, z1: -8 }, axis: 'z', h0: 0, h1: -1.8, n: 5 },
-      ],
-      roofs: [{ id: 'bridge', zone: [{ x0: 22, x1: 32, z0: -6, z1: -2 }], under: [UNDER], ceil: 1.3 }],
-      style: { topA: '#bfb29b', topB: '#b1a48d', topC: '#c4b8a0', pathA: '#d6c7aa', pathB: '#d0c1a3', side: '#9c8f7a', rock: '#8f8577', stair: '#bdb5a6', stairSide: '#a49c8e',
-        outside: '#a39887', outer: { h: 0, b: '#9c917f', margin: 10 }, path: loopOnPath(L, 1.5) },
-      wall: { h: 0.9, a: '#cfc5b3', b: '#bdb5a6' },
-      gate: { gate: '#8d6e63' },
+  // ===================================================================
+  // Old Town: a little walled town on a river.
+  // In through the gate tower onto the Gate Square (the maypole, the bakery), across the tram street,
+  // up onto the Market Square: the town hall with its clock tower, the fountain, Café Pfote's terrace,
+  // the boutique and the weekend market. Grand stairs climb to the upper town (the church, the museum,
+  // a lookout over the roofs); a cobbled lane winds up behind the houses. In the east a promenade
+  // runs along the river, with steps down to the quay and the old stone bridge.
+  // Through an archway in the north row lies a hidden courtyard.
+  // ===================================================================
+  const OT = {
+    GATE: { x0: -2, x1: 2, z0: 16, z1: 21.7 },
+    LOWER: { x0: -20, x1: 18, z0: 7, z1: 17 },
+    STREET: { x0: -33, x1: 18, z0: 2, z1: 8 },
+    ROAD: { z0: 3.5, z1: 7 },
+    SQUARE: { x0: -13, x1: 13, z0: -15, z1: 2 },
+    PROM: { x0: 13, x1: 18, z0: -27, z1: 2 },
+    QUAY: { x0: 18, x1: 21.5, z0: -29, z1: 7.5 },
+    LANE: { x0: -27, x1: -22, z0: -16, z1: 2 },
+    RAMP: { x0: -27, x1: -23, z0: -22, z1: -16 },
+    TERRACE: { x0: -33, x1: -8, z0: -27, z1: -17 },
+    STAIRS: { x0: -13, x1: -9, z0: -17, z1: -13 },
+    PASSAGE: { x0: 9, x1: 11, z0: -23.5, z1: -15 },
+    COURT: { x0: 5, x1: 11, z0: -33, z1: -23 },
+    UNDER: { x0: 18, x1: 21.5, z0: 3, z1: 7.5 },
+    RIVER_X: 21.5,
+    FOUNTAIN: { x: 0, z: -5.5 },
+    CROSS: [-6, 8],
+    UP: 1.5, QH: -1.8, WATER: -2.3, CH: -0.5,
+  };
+  // the buildings: footprints (cells nobody walks on), which way they face, and what they are
+  const OT_HOUSES = [
+    // the far west row along the lane, facing east
+    { x0: -33, x1: -27, z0: -16, z1: -10, face: 'e', floors: 3, k: 0 },
+    { x0: -33, x1: -27, z0: -10, z1: -4, face: 'e', floors: 2, k: 1, shop: { sign: '📚', awn: '#2e7d5b' } },
+    { x0: -33, x1: -27, z0: -4, z1: 2, face: 'e', floors: 3, k: 2 },
+    // the square's west row: the café in the middle, facing east onto the square
+    { x0: -22, x1: -13, z0: -17, z1: -10, face: 'e', floors: 3, k: 3 },
+    { x0: -22, x1: -13, z0: -10, z1: -3, face: 'e', floors: 2, k: 4, cafe: true },
+    { x0: -22, x1: -13, z0: -3, z1: 2, face: 'e', floors: 3, k: 5, shop: { sign: '💐', awn: '#c2185b' } },
+    // the north row of the square
+    { x0: -8, x1: -3, z0: -23, z1: -15, face: 's', floors: 3, k: 6, shop: { sign: '⚕️', awn: '#2e7d32' } },
+    { x0: -3, x1: 5, z0: -23, z1: -15, face: 's', townhall: true },
+    { x0: 5, x1: 8, z0: -23, z1: -15, face: 's', floors: 3, k: 7, boutique: true },
+    { x0: 8, x1: 12, z0: -23, z1: -15, face: 's', floors: 3, k: 8, arch: true },
+    // round the hidden courtyard: houses that face into it
+    { x0: 1, x1: 5, z0: -33, z1: -23, face: 'e', floors: 3, k: 11, timber: true },
+    { x0: 5, x1: 11, z0: -38, z1: -33, face: 's', floors: 3, k: 12, timber: true },
+    // behind the town hall
+    { x0: -8, x1: 1, z0: -31, z1: -23, face: 's', floors: 2, k: 13, back: true },
+    // the gate square: the bakery to the west, a tall house to the east
+    { x0: -20, x1: -12, z0: 10, z1: 17, face: 'e', floors: 2, k: 9, shop: { sign: '🥨', awn: '#b8860b' } },
+    { x0: 11, x1: 16, z0: 11, z1: 17, face: 'w', floors: 3, k: 10 },
+    { x0: -20, x1: -14, z0: 8, z1: 10, low: true },
+  ];
+  const OT_BIG = {
+    church: { x0: -31, x1: -19, z0: -40, z1: -27 },
+    museum: { x0: -17, x1: -9, z0: -36, z1: -27 },
+    tower: [{ x0: -4, x1: -2, z0: 16, z1: 22 }, { x0: 2, x1: 4, z0: 16, z1: 22 }],
+  };
+  const inR = (r, x, z) => x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1;
+  const otBlocked = (x, z) => OT_HOUSES.some((h) => inR(h, x, z) && !(h.arch && inR(OT.PASSAGE, x, z))) || inR(OT_BIG.church, x, z) || inR(OT_BIG.museum, x, z) || OT_BIG.tower.some((t) => inR(t, x, z));
+  const otWalk = (x, z) => {
+    if (otBlocked(x, z)) return false;
+    // the wall between the courtyard and the promenade
+    if (x > 11 && x < 13 && z < -15) return false;
+    return [OT.GATE, OT.LOWER, OT.STREET, OT.SQUARE, OT.PROM, OT.QUAY, OT.LANE, OT.RAMP, OT.TERRACE, OT.STAIRS, OT.PASSAGE, OT.COURT].some((r) => inR(r, x, z));
+  };
+  const otWater = (x, z) => (x > OT.RIVER_X && x < 33) || (x > 18 && x < 33 && z > 7.5);
+
+  // instanced copies of the window and lamp materials: one material must never be shared by instanced and plain meshes
+  // (three.js r128 can draw the plain ones with the instanced shader). They follow the originals every frame.
+  const IMAT = { win: M.window.clone(), lamp: M.lamp.clone(), bulbs: M.lamp.clone() };
+  IMAT.win.emissive = new THREE.Color('#ffb24d');
+  const syncIMats = () => { IMAT.win.color.copy(M.window.color); IMAT.win.emissiveIntensity = clamp((M.lamp.emissiveIntensity - 0.7) / 0.85, 0, 1) * 0.75; IMAT.lamp.emissiveIntensity = M.lamp.emissiveIntensity; IMAT.bulbs.emissiveIntensity = M.lamp.emissiveIntensity; };
+  // ----- bake a group's plain boxes into one mesh with its own material (so it can fade on its own) -----
+  function bakeGroup(group) {
+    if (!THREE.Matrix4.prototype.invert || !THREE.InstancedMesh) { group.userData.noBake = true; return { mats: fadeable(group), hide: [] }; }
+    group.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
+    const lists = { body: [], win: [], lamp: [] };
+    const all = [];
+    const walk = (o) => { if (o !== group && o.userData && o.userData.noBake) return; all.push(o); o.children.forEach(walk); };
+    walk(group);
+    all.forEach((o) => {
+      if (!o.isMesh || o.isInstancedMesh || !o.geometry || o.geometry.type !== 'BoxGeometry') return;
+      if (plainMats.has(o.material)) lists.body.push(o);
+      else if (o.material === M.window) lists.win.push(o);
+      else if (o.material === M.lamp) lists.lamp.push(o);
     });
-    // the street with two crosswalks where the promenade crosses it; in the east it crosses the canal on a little bridge
-    const sz0 = -5.2, sz1 = -2.8;
-    box(root, 58.5, 0.05, sz1 - sz0, '#5f6168', -6.75, 0.025, (sz0 + sz1) / 2);
-    box(root, 58.5, 0.1, 0.16, '#a7a7a7', -6.75, 0.05, sz0 - 0.08);
-    box(root, 58.5, 0.1, 0.16, '#a7a7a7', -6.75, 0.05, sz1 + 0.08);
-    box(root, 6, 0.05, sz1 - sz0, '#5f6168', 34, 0.025, (sz0 + sz1) / 2);
-    const bridge = pivot(root);
-    box(bridge, 8.5, 0.3, sz1 - sz0 + 0.4, '#9e958a', 26.75, -0.13, (sz0 + sz1) / 2);
-    box(bridge, 8.5, 0.05, sz1 - sz0, '#5f6168', 26.75, 0.025, (sz0 + sz1) / 2);
-    for (const z of [sz0 - 0.12, sz1 + 0.12]) { box(bridge, 8.5, 0.5, 0.16, '#bdb5a6', 26.75, 0.25, z); }
-    box(bridge, 0.6, 2.1, sz1 - sz0 + 0.4, '#9e958a', 27.3, -1.25, (sz0 + sz1) / 2);
-    for (let x = -19; x <= 19; x += 2.4) if (Math.abs(Math.abs(x) - 11) > 2) box(root, 1.1, 0.055, 0.1, '#f5f5f5', x, 0.03, -4);
-    for (const cx of [-11, 11]) {
-      for (let k = 0; k < 6; k++) box(root, 2.4, 0.06, 0.22, '#f5f5f5', cx, 0.032, sz0 + 0.25 + k * 0.4);
-      const cw = { x0: cx - 1.3, x1: cx + 1.3, z0: sz0, z1: sz1, cx, cz: (sz0 + sz1) / 2 };
-      q.crosswalks.push(cw);
-      for (const [px, pz] of [[cx - 1.55, sz1 + 0.35], [cx + 1.55, sz0 - 0.35]]) {
-        box(root, 0.12, 1.9, 0.12, '#37474f', px, 0.95, pz);
-        box(root, 0.3, 0.6, 0.24, '#263238', px, 1.95, pz);
-        q.red.push(box(root, 0.2, 0.2, 0.26, M.redOn, px, 2.08, pz));
-        q.green.push(box(root, 0.2, 0.2, 0.26, M.lightOff, px, 1.82, pz));
-        colliders.push({ x: px, z: pz, r: 0.15 });
+    const out = { mats: [], hide: [] };
+    const M4 = new THREE.Matrix4(), S4 = new THREE.Matrix4();
+    for (const [k, list] of Object.entries(lists)) {
+      if (!list.length) continue;
+      const mtl = k === 'body' ? new THREE.MeshLambertMaterial({ color: '#ffffff' }) : k === 'win' ? IMAT.win : IMAT.lamp;
+      const m = new THREE.InstancedMesh(geo(1, 1, 1), mtl, list.length);
+      list.forEach((o, n) => {
+        const p = o.geometry.parameters;
+        S4.makeScale(p.width, p.height, p.depth);
+        M4.multiplyMatrices(inv, o.matrixWorld).multiply(S4);
+        m.setMatrixAt(n, M4);
+        if (k === 'body') m.setColorAt(n, o.material.color);
+        o.parent.remove(o);
+      });
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      group.add(noCull(m));
+      if (k === 'body') out.mats.push(mtl); else out.hide.push(m);
+    }
+    group.traverse((o) => { if (o.isMesh && !o.isInstancedMesh && o.material && !o.material.isSpriteMaterial && o.material.transparent) out.mats.push(o.material); });
+    group.userData.noBake = true;
+    return out;
+  }
+
+  // ----- the town's buildings -----
+  const OT_WALLS = ['#f3dcb6', '#eab38c', '#f0c4bd', '#cfe0c3', '#bcd2e4', '#f4e3a1', '#e3d4ee', '#f4efe4', '#d8a58e', '#c7dcd2', '#f2d0a4', '#dfe7b8'];
+  const OT_ROOFS = ['#a24b35', '#b65b3f', '#8a3f2e', '#6f4a3c', '#5b6770', '#9a5a3a'];
+  const TIMBER = '#5a3a28';
+  // a townhouse; built facing +z (south) with its front width along x, then turned to face its street
+  function townHouse(root, h) {
+    const W0 = h.x1 - h.x0, D0 = h.z1 - h.z0;
+    const side = h.face === 'e' || h.face === 'w';
+    const W = (side ? D0 : W0) - 0.1, D = (side ? W0 : D0) - 0.1;
+    const g = pivot(root, (h.x0 + h.x1) / 2, h.y || 0, (h.z0 + h.z1) / 2);
+    g.rotation.y = { s: 0, e: Math.PI / 2, w: -Math.PI / 2, n: Math.PI }[h.face];
+    const r = mulberry32(31 + h.k * 17);
+    const wall = h.wall || OT_WALLS[h.k % OT_WALLS.length], roof = OT_ROOFS[(h.k * 5 + 1) % OT_ROOFS.length];
+    const F = h.floors || 2, GF = 1.5, FH = 1.25, H = GF + (F - 1) * FH;
+    const timber = h.timber !== undefined ? h.timber : (h.k % 3 === 1);
+    const fz = D / 2;
+    box(g, W + 0.1, 0.32, D + 0.1, '#a99f8f', 0, 0.16, 0);
+    box(g, W, H, D, wall, 0, H / 2, 0);
+    // cornices between the floors
+    for (let f = 1; f < F; f++) { box(g, W + 0.12, 0.1, 0.12, shade(wall, 0.82), 0, GF + (f - 1) * FH, fz + 0.04); }
+    box(g, W + 0.2, 0.16, D + 0.2, shade(wall, 0.78), 0, H, 0);
+    // windows on every floor, front and sides
+    const cols = Math.max(2, Math.round(W / 1.25)), step = W / cols;
+    const winAt = (x, y, z, rot, big) => {
+      const w = pivot(g, x, y, z); w.rotation.y = rot;
+      box(w, big ? 0.9 : 0.64, big ? 1.0 : 0.82, 0.06, '#f8f4ec', 0, 0, 0);
+      box(w, big ? 0.74 : 0.5, big ? 0.84 : 0.66, 0.07, M.window, 0, 0, 0.005);
+      box(w, 0.04, big ? 0.84 : 0.66, 0.08, '#f8f4ec', 0, 0, 0.01);
+      return w;
+    };
+    const shutter = OT_ROOFS[h.k % 3 === 0 ? 4 : 0] === '#5b6770' ? '#3f6f8f' : ['#3f6f5a', '#7a4b3a', '#3f6f8f', '#8a6d2f'][h.k % 4];
+    for (let f = 1; f < F; f++) {
+      const y = GF + (f - 1) * FH + FH * 0.55;
+      for (let c = 0; c < cols; c++) {
+        const x = -W / 2 + step * (c + 0.5);
+        winAt(x, y, fz + 0.03, 0);
+        if ((h.k + c) % 2 === 0) for (const s of [-1, 1]) box(g, 0.18, 0.78, 0.05, shutter, x + s * 0.43, y, fz + 0.05);
+        if ((f + c + h.k) % 3 === 0) { box(g, 0.66, 0.14, 0.2, '#7a5236', x, y - 0.48, fz + 0.12); for (let k = 0; k < 4; k++) box(g, 0.13, 0.13, 0.13, ['#e53950', '#f48fb1', '#ffffff', '#ffb74d', '#ba68c8'][(k + c + f) % 5], x - 0.22 + k * 0.15, y - 0.36, fz + 0.14); }
+      }
+      // sides
+      const sc = Math.max(1, Math.round(D / 1.8));
+      for (let c = 0; c < sc; c++) { const z = -D / 2 + (D / sc) * (c + 0.5); winAt(W / 2 + 0.03, y, z, Math.PI / 2); winAt(-W / 2 - 0.03, y, z, -Math.PI / 2); }
+      winAt(0, y, -fz - 0.03, Math.PI);
+    }
+    // half-timbering on the upper floors
+    if (timber && F > 1) {
+      const y0 = GF, y1 = H;
+      box(g, W + 0.04, 0.1, 0.06, TIMBER, 0, y0 + 0.05, fz + 0.06); box(g, W + 0.04, 0.1, 0.06, TIMBER, 0, y1 - 0.06, fz + 0.06);
+      for (let f = 1; f < F - 1; f++) box(g, W + 0.04, 0.08, 0.06, TIMBER, 0, GF + f * FH, fz + 0.06);
+      for (let c = 0; c <= cols; c++) { const x = -W / 2 + step * c; box(g, 0.1, y1 - y0, 0.06, TIMBER, clamp(x, -W / 2 + 0.05, W / 2 - 0.05), (y0 + y1) / 2, fz + 0.06); }
+      for (let f = 1; f < F; f++) for (let c = 0; c < cols; c++) if ((c + f) % 2 === 0) {
+        const x = -W / 2 + step * (c + 0.5), yb = GF + (f - 1) * FH;
+        for (const s of [-1, 1]) { const b = box(g, 0.07, 0.62, 0.05, TIMBER, x + s * 0.47 * step, yb + 0.32, fz + 0.065); b.rotation.z = s * 0.55; }
+      }
+      for (const sx of [-1, 1]) { box(g, 0.06, y1 - y0, 0.1, TIMBER, sx * (W / 2 + 0.03), (y0 + y1) / 2, 0); }
+    }
+    // the ground floor: a door, or a shop with a window and an awning
+    const doorX = h.shop || h.cafe || h.boutique ? W / 2 - 0.8 : (h.k % 2 ? -1 : 1) * (W / 2 - 0.9);
+    if (!h.arch) box(g, 0.9, 1.35, 0.08, ['#6d4c3a', '#3f5f4a', '#7a3b2e', '#40516b'][h.k % 4], doorX, 0.68 + 0.3, fz + 0.04);
+    if (!h.arch) {
+      box(g, 1.1, 0.12, 0.1, shade(wall, 0.8), doorX, 1.72, fz + 0.06);
+      box(g, 1.1, 0.12, 0.35, '#a99f8f', doorX, 0.36, fz + 0.18);
+      box(g, 0.08, 0.08, 0.06, '#d4af37', doorX + 0.28, 1.0, fz + 0.09);
+      box(g, 0.16, 0.22, 0.16, M.lamp, doorX + (doorX > 0 ? -0.62 : 0.62), 1.7, fz + 0.16);
+    }
+    if (h.shop || h.cafe || h.boutique) {
+      const sw = W - 2.0, sx = -0.7;
+      box(g, sw, 1.0, 0.08, '#4a3a2e', sx, 0.95, fz + 0.04);
+      box(g, sw - 0.2, 0.84, 0.09, M.window, sx, 0.95, fz + 0.05);
+      const awn = (h.shop && h.shop.awn) || (h.cafe ? '#2e7d32' : '#8e24aa');
+      const n = Math.max(3, Math.round(sw / 0.4));
+      for (let k = 0; k < n; k++) { const a = box(g, sw / n, 0.08, 0.9, k % 2 ? awn : '#fbf6ec', sx - sw / 2 + (k + 0.5) * (sw / n), 1.72, fz + 0.45); a.rotation.x = 0.28; }
+      box(g, sw + 0.1, 0.16, 0.06, awn, sx, 1.6, fz + 0.88);
+      if (h.shop && h.shop.sign) {
+        // a wrought-iron bracket with a hanging sign
+        box(g, 0.05, 0.05, 0.7, '#2f2f2f', W / 2 - 0.25, 2.5, fz + 0.35);
+        box(g, 0.5, 0.5, 0.05, '#e8d9b5', W / 2 - 0.25, 2.18, fz + 0.62);
+        const e = emojiSprite(h.shop.sign, 0.38); e.position.set(W / 2 - 0.25, 2.18, fz + 0.66); g.add(e);
+      }
+    } else if (!h.arch) {
+      for (const x of [-W / 2 + 0.8, W / 2 - 0.8]) if (Math.abs(x - doorX) > 0.9) winAt(x, 0.95, fz + 0.03, 0);
+    }
+    // the roof: a stepped gable towards the street (most houses), or eaves for the wide ones
+    const gable = W <= 5.6;
+    const lay = 0.3;
+    if (gable) {
+      const rise = Math.min(W * 0.6, 3.0), n = Math.max(3, Math.round(rise / lay));
+      for (let k = 0; k < n; k++) {
+        const t = k / n, w = (W + 0.5) * (1 - t);
+        box(g, w, lay, D + 0.5, k % 2 ? roof : shade(roof, 0.92), 0, H + 0.08 + k * lay + lay / 2, 0);
+        if (w - 0.6 > 0.2) for (const s of [-1, 1]) box(g, w - 0.6, lay, 0.06, wall, 0, H + 0.08 + k * lay + lay / 2, s * (D / 2 + 0.24));
+      }
+      winAt(0, H + rise * 0.3, D / 2 + 0.28, 0);
+      g.userData.rise = rise;
+      box(g, 0.4, 0.9, 0.4, '#8d6e63', W * 0.22, H + rise * 0.7, -D * 0.2);
+      box(g, 0.5, 0.12, 0.5, '#5d4037', W * 0.22, H + rise * 0.7 + 0.48, -D * 0.2);
+    } else {
+      const rise = Math.min(D * 0.5, 2.6), n = Math.max(3, Math.round(rise / lay));
+      g.userData.rise = rise;
+      for (let k = 0; k < n; k++) { const t = k / n, d = (D + 0.5) * (1 - t); box(g, W + 0.5, lay, d, k % 2 ? roof : shade(roof, 0.92), 0, H + 0.08 + k * lay + lay / 2, 0); }
+      for (let c = 0; c < Math.floor(W / 2.2); c++) { const x = -W / 2 + 1.1 + c * 2.2 + (W % 2.2) / 2; box(g, 0.9, 0.9, 0.9, wall, x, H + 0.6, D / 4); box(g, 1.1, 0.25, 1.1, roof, x, H + 1.12, D / 4); winAt(x, H + 0.55, D / 4 + 0.46, 0); }
+    }
+    // a lantern on a bracket by the corner
+    box(g, 0.05, 0.05, 0.45, '#2f2f2f', -W / 2 + 0.3, 2.6, fz + 0.22); box(g, 0.2, 0.26, 0.2, M.lamp, -W / 2 + 0.3, 2.45, fz + 0.45);
+    // ivy on some
+    if (h.k % 4 === 2) for (let k = 0; k < 18; k++) box(g, 0.3, 0.3, 0.06, r() < 0.5 ? '#4f8f3c' : '#5fa04a', W / 2 - 0.3 - r() * 1.2, 0.3 + r() * (H - 0.4), fz + 0.06);
+    return { g, H: H + g.userData.rise + 0.25, W, D };
+  }
+
+  // a shop counter under an awning, set into a building's ground floor (tap it to shop)
+  function shopCounter(root, colliders, id, x, z, rot, o) {
+    const V = D.VENDORS[id];
+    const g = pivot(root, x, 0, z);
+    g.rotation.y = rot;
+    box(g, 1.8, 0.95, 0.6, o.counter, 0, 0.47, 0.1); box(g, 1.95, 0.08, 0.72, o.top || '#efe6d8', 0, 0.98, 0.12);
+    for (let k = 0; k < 6; k++) { const a = box(g, 0.34, 0.07, 1.0, k % 2 ? o.awning : '#fbf6ec', -0.85 + k * 0.34, 2.15, -0.05); a.rotation.x = 0.25; }
+    const keeper = buildPlayer({ shirt: o.shirt || '#ef5350', hair: o.hair || '#4e342e' });
+    keeper.root.position.set(0, 0, -0.45);
+    g.add(keeper.root);
+    (o.goods || []).forEach((e, k) => { const sp = emojiSprite(e, 0.34); sp.position.set(-0.55 + k * 0.55, 1.2, 0.2); g.add(sp); });
+    const sign = textSprite(`${V.icon} ${V.name}`, 0.46);
+    sign.position.set(0, 2.75, 0.2);
+    g.add(sign);
+    g.userData.vendor = id;
+    const side = Math.abs(Math.sin(rot)) > 0.5;
+    const cx = x - Math.sin(rot) * 0.2, cz = z - Math.cos(rot) * 0.2;
+    const hw = side ? 0.65 : 1.0, hd = side ? 1.0 : 0.65;
+    colliders.push({ x0: cx - hw, x1: cx + hw, z0: cz - hd, z1: cz + hd });
+    return { id, group: g, front: new V3(x + Math.sin(rot) * 1.35, 0, z + Math.cos(rot) * 1.35) };
+  }
+  const curvePts = (pts, closed, step = 0.5) => {
+    const out = [], n = pts.length, P = (k) => pts[closed ? (k + n) % n : clamp(k, 0, n - 1)];
+    for (let k = 0; k < (closed ? n : n - 1); k++) {
+      const p0 = P(k - 1), p1 = P(k), p2 = P(k + 1), p3 = P(k + 2);
+      const m = Math.max(2, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / step));
+      for (let s = 0; s < m; s++) {
+        const t = s / m, t2 = t * t, t3 = t2 * t;
+        const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+        out.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
       }
     }
-    colliders.push({ x0: -30, x1: -12.3, z0: sz0, z1: sz1 }, { x0: -9.7, x1: 9.7, z0: sz0, z1: sz1 }, { x0: 12.3, x1: 22.5, z0: sz0, z1: sz1 });
-    q.street = { z0: sz0, z1: sz1 };
+    return out;
+  };
+  function buildOldTown(root) {
+    const colliders = [], spots = [], ponds = [];
+    const r = mulberry32(11);
+    const SB = [];
+    const sb = (x, y, z, w, hh, d, col) => SB.push([x, y, z, w, hh, d, col]);
+    const solid = (x0, z0, x1, z1, extra) => colliders.push(Object.assign({ x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1) }, extra || {}));
+    const round = (x, z, rr) => colliders.push({ x, z, r: rr });
+    const q = { crosswalks: [], cars: [], pigeons: [], puddles: null, cat: null, plaza: { x: OT.FOUNTAIN.x, z: OT.FOUNTAIN.z, r: 6.5 }, red: [], green: [] };
+    const roofs = [];
+    // ---------- the ground ----------
+    const T = terrain({
+      walk: [[[-34, -40], [36, -40], [36, 22], [-34, 22]]],
+      cellFn: (i, j) => otWalk(i + 0.5, j + 0.5),
+      areas: [
+        { kind: 'flat', rect: OT.QUAY, h: OT.QH },
+        { kind: 'flat', rect: OT.TERRACE, h: OT.UP },
+        { kind: 'flat', rect: OT.COURT, h: OT.CH },
+        { kind: 'ramp', rect: OT.RAMP, axis: 'z', h0: OT.UP, h1: 0 },
+        { kind: 'stairs', rect: OT.STAIRS, axis: 'z', h0: OT.UP, h1: 0, n: 8 },
+        { kind: 'stairs', rect: { x0: 14, x1: 19, z0: -13, z1: -10 }, axis: 'x', h0: 0, h1: OT.QH, n: 10 },
+        { kind: 'stairs', rect: { x0: 9, x1: 11, z0: -24.5, z1: -22.5 }, axis: 'z', h0: OT.CH, h1: 0, n: 2 },
+      ],
+      roofs: [],
+    });
+    curT = T;
+    const gy = (x, z) => T.height(x, z);
+    const roadAt = (x, z) => z > OT.ROAD.z0 && z < OT.ROAD.z1 && x < 18;
+    const kindAt = (x, z) => {
+      if (inR(OT.STREET, x, z)) return roadAt(x, z) ? 'road' : 'walk';
+      if (inR(OT.QUAY, x, z)) return 'quay';
+      if (inR(OT.PROM, x, z) && !inR(OT.SQUARE, x, z)) return 'slab';
+      if (inR(OT.COURT, x, z) || (inR(OT.PASSAGE, x, z) && z < -22.5)) return 'brick';
+      if (inR(OT.TERRACE, x, z) || inR(OT.RAMP, x, z)) return Math.abs(x + 25) < 1.6 || Math.abs(z + 21.5) < 1.2 || inR(OT.RAMP, x, z) || Math.hypot(x + 13, z + 24) < 2.2 ? 'cobbleDark' : 'gravel';
+      if (inR(OT.LANE, x, z) || inR(OT.PASSAGE, x, z)) return 'cobbleDark';
+      return 'cobble';
+    };
+    const PAL = {
+      cobble: ['#c9bba2', '#bfb197', '#d2c5ad'], cobbleDark: ['#a99c88', '#9f927e', '#b2a691'], walk: ['#cfcac0', '#c7c2b7', '#d6d1c7'],
+      road: ['#5d6066', '#585b61', '#62656b'], quay: ['#b3aa9b', '#aaa192', '#bab2a4'], slab: ['#d4ccbd', '#cbc3b3', '#dbd4c6'],
+      brick: ['#b9775a', '#b06f53', '#c07f62'], gravel: ['#d9cdb0', '#d2c6a8', '#e0d5ba'],
+    };
+    const tone = (x, z, hh) => {
+      const k = kindAt(x, z), A = PAL[k], j = hash2(x, z);
+      if (k === 'cobble' && inR(OT.SQUARE, x, z)) {
+        // rings of darker stone round the fountain, and a border round the square
+        const rr = Math.hypot(x - OT.FOUNTAIN.x, z - OT.FOUNTAIN.z);
+        if (Math.abs(rr - 4.6) < 0.5 || Math.abs(rr - 7.6) < 0.5) return '#a8987c';
+        if (x < OT.SQUARE.x0 + 1 || x > OT.SQUARE.x1 - 1 || z < OT.SQUARE.z0 + 1) return '#b0a48c';
+      }
+      if (k === 'brick') return ((Math.floor(x) + Math.floor(z)) & 1) ? A[0] : A[2];
+      return A[j < 0.34 ? 0 : j < 0.67 ? 1 : 2];
+    };
+    drawTerrain(root, T, {
+      topA: '#c9bba2', topB: '#bfb197', topC: '#d2c5ad', side: '#a89c86', rock: '#9c9080', stair: '#c4b9a6', stairSide: '#a99e8b',
+      outside: '#9fbf86', outer: { h: 0, b: '#97b97e', rock: '#9c9080', margin: 14 }, tone,
+      hole: (x, z) => (otWater(x, z) ? -3.0 : null),
+      sideFor: (hh, low, x, z) => (low < -2.5 ? (hash2(x, z) < 0.5 ? '#9a8f80' : '#91877a') : hash2(x, z * 1.3) < 0.5 ? '#b3a690' : '#a99c86'),
+    });
+    // cobblestones: little stones on every cobbled cell
+    const COB = [];
+    const pr = mulberry32(5);
+    for (let i = -34; i < 36; i++) for (let j = -40; j < 22; j++) {
+      const x = i + 0.5, z = j + 0.5;
+      if (!T.inside(x, z) || T.sloped(x, z)) continue;
+      const k = kindAt(x, z);
+      if (k !== 'cobble' && k !== 'cobbleDark' && k !== 'brick') continue;
+      const hh = gy(x, z), base = tone(x, z, hh);
+      for (const [dx, dz] of [[-0.25, -0.25], [0.25, -0.25], [-0.25, 0.25], [0.25, 0.25]]) {
+        const s = k === 'brick' ? [0.46, 0.2] : [0.42 + pr() * 0.04, 0.42 + pr() * 0.04];
+        COB.push([x + dx + (pr() - 0.5) * 0.04, hh + 0.012, z + dz + (pr() - 0.5) * 0.04, k === 'brick' ? ((Math.floor(z * 2) & 1) ? s[0] : s[1]) : s[0], 0.03, k === 'brick' ? ((Math.floor(z * 2) & 1) ? s[1] : s[0]) : s[1], shade(base, 0.94 + pr() * 0.14)]);
+      }
+    }
+    // ---------- the river ----------
+    const WMAT = new THREE.MeshLambertMaterial({ color: '#8fc4e6', emissive: '#0b2a44', emissiveIntensity: 0.3 });
+    const WL = [];
+    for (let i = 18; i < 34; i++) for (let j = -54; j < 36; j++) {
+      const x = i + 0.5, z = j + 0.5;
+      if (!otWater(x, z)) continue;
+      const edge = x < OT.RIVER_X + 1.2 || x > 31.8 || (z > 7.5 && x < 19.4);
+      WL.push([x, OT.WATER - 0.05, z, 1, 0.1, 1, edge ? '#b9dcf2' : hash2(x, z) < 0.5 ? '#ffffff' : '#eef6fb']);
+      sb(x, -3.0, z, 1, 0.1, 1, '#5f6a5c');
+    }
+    boxBatch(root, WL, WMAT);
+    // the far bank: a stone wall and a row of tall houses across the water
+    for (let j = -54; j < 36; j++) sb(33.5, -1.1, j + 0.5, 1, 2.4, 1, hash2(j, 3) < 0.5 ? '#a99e8b' : '#9f947f');
+    const farHouse = (z0, z1, k) => {
+      const h = { x0: 34, x1: 40, z0, z1, face: 'w', floors: 3 + (k % 2), k: k + 20 };
+      const B = townHouse(root, h);
+      bakeGroup(B.g);
+      return B;
+    };
+    for (let z = -46, k = 0; z < 30; z += 5 + (k % 2), k++) if (z > 9 || z < 1) farHouse(z, z + 4.6 + (k % 2), k);
+    // ---------- the street, the tram line, the crosswalks ----------
+    const RZ0 = OT.ROAD.z0, RZ1 = OT.ROAD.z1, RZ = (RZ0 + RZ1) / 2;
+    for (const z of [RZ0, RZ1]) sb(-7.5, 0.06, z, 51, 0.12, 0.14, '#9e9a92');
+    for (let x = -32.5; x < 18; x += 2.4) if (!OT.CROSS.some((c) => Math.abs(x - c) < 2)) sb(x, 0.025, RZ, 1.1, 0.03, 0.1, '#f2efe6');
+    for (const zl of [4.4 - 0.36, 4.4 + 0.36]) sb(-7.5, 0.03, zl, 51, 0.03, 0.06, '#8d9096');
+    for (const cx of OT.CROSS) {
+      for (let k = 0; k < 7; k++) sb(cx, 0.028, RZ0 + 0.28 + k * 0.5, 2.4, 0.03, 0.24, '#f5f3ec');
+      const cw = { x0: cx - 1.3, x1: cx + 1.3, z0: RZ0, z1: RZ1, cx, cz: RZ };
+      q.crosswalks.push(cw);
+      for (const [px, pz] of [[cx - 1.6, RZ1 + 0.4], [cx + 1.6, RZ0 - 0.4]]) {
+        sb(px, 1.0, pz, 0.12, 2.0, 0.12, '#37474f'); sb(px, 0.05, pz, 0.3, 0.1, 0.3, '#37474f');
+        sb(px, 2.0, pz, 0.32, 0.64, 0.26, '#263238');
+        q.red.push(box(root, 0.2, 0.2, 0.28, M.redOn, px, 2.14, pz));
+        q.green.push(box(root, 0.2, 0.2, 0.28, M.lightOff, px, 1.86, pz));
+        sb(px, 1.2, pz + (pz > RZ ? -0.1 : 0.1), 0.18, 0.24, 0.06, '#ffd54f');
+        round(px, pz, 0.18);
+      }
+      // little bollards either side of the crossing
+      for (const zz of [RZ0 - 0.35, RZ1 + 0.35]) for (const s of [-1, 1]) { sb(cx + s * 1.25, 0.3, zz, 0.16, 0.6, 0.16, '#3d4a52'); sb(cx + s * 1.25, 0.63, zz, 0.2, 0.06, 0.2, '#d4af37'); }
+    }
+    const xs = [-40].concat(OT.CROSS.flatMap((c) => [c - 1.3, c + 1.3])).concat([18]);
+    for (let k = 0; k < xs.length; k += 2) solid(xs[k], RZ0, xs[k + 1], RZ1);
+    q.street = { z0: RZ0, z1: RZ1 };
     q.setPed = (green) => {
       q.red.forEach((m) => { m.material = green ? M.lightOff : M.redOn; });
       q.green.forEach((m) => { m.material = green ? M.greenOn : M.lightOff; });
     };
+    // the road beyond the town: out through the west gate, and over the bridge to the far bank
+    sb(-48, 0.02, RZ, 30, 0.04, RZ1 - RZ0, '#5d6066'); sb(52, 0.02, RZ, 38, 0.04, RZ1 - RZ0, '#5d6066');
+    for (let x = -60; x < -34; x += 2.4) sb(x, 0.045, RZ, 1.1, 0.03, 0.1, '#f2efe6');
+    for (let x = 34; x < 70; x += 2.4) sb(x, 0.045, RZ, 1.1, 0.03, 0.1, '#f2efe6');
     ['#e53935', '#1e88e5', '#fdd835', '#43a047'].forEach((c, k) => {
       const car = buildCritter('car', c);
+      car.userData.noBake = true;
       const dir = k % 2 ? -1 : 1;
       car.rotation.y = dir > 0 ? 0 : Math.PI;
-      car.position.set(-18 + k * 11, 0, dir > 0 ? -4.6 : -3.4);
+      car.position.set(-20 + k * 12, 0, dir > 0 ? 4.4 : 6.1);
       root.add(car);
-      q.cars.push({ g: car, dir, speed: 3 + r() * 1.5 });
+      q.cars.push({ g: car, dir, speed: 2.8 + r() * 1.4 });
     });
-    // houses: a row along the north and one on each side, all facing the town
-    const pal = ['#f8bbd0', '#ffe0b2', '#c5e1a5', '#b3e5fc', '#fff59d', '#d1c4e9', '#ffccbc', '#e6ee9c', '#b2dfdb'];
-    const roofCols = ['#8d4b3a', '#5d4037', '#6d4c41', '#7b3f2f'];
-    function house(x, z, w, d, rot, k) {
-      const g = pivot(root, x, 0, z);
-      g.rotation.y = rot;
-      const floors = 2 + (k % 2);
-      const H = floors * 1.3 + 0.4;
-      box(g, w, H, d, pal[k % pal.length], 0, H / 2, 0);
-      box(g, w + 0.2, 0.3, d + 0.2, roofCols[k % roofCols.length], 0, H + 0.15, 0);
-      box(g, w * 0.7, 0.4, d * 0.6, roofCols[k % roofCols.length], 0, H + 0.5, 0);
-      box(g, w * 0.35, 0.35, d * 0.3, roofCols[k % roofCols.length], 0, H + 0.85, 0);
-      box(g, 0.8, 1.2, 0.08, '#6d4c41', w * 0.25 * (k % 2 ? 1 : -1), 0.6, d / 2 + 0.03);
-      box(g, 0.1, 0.1, 0.06, '#ffd54f', w * 0.25 * (k % 2 ? 1 : -1) + 0.25, 0.6, d / 2 + 0.08);
-      for (let f = 0; f < floors; f++) {
-        for (const wx of [-w * 0.28, w * 0.05, w * 0.32]) {
-          if (f === 0 && Math.abs(wx - w * 0.25 * (k % 2 ? 1 : -1)) < 0.6) continue;
-          box(g, 0.6, 0.65, 0.06, '#ffffff', wx, 1.0 + f * 1.3 + 0.2, d / 2 + 0.02);
-          box(g, 0.48, 0.52, 0.07, M.window, wx, 1.0 + f * 1.3 + 0.2, d / 2 + 0.03);
-          if ((f + k) % 3 === 0) box(g, 0.6, 0.12, 0.2, '#e57373', wx, 0.8 + f * 1.3, d / 2 + 0.1);
-        }
+    { // the tram: cream and red, with a pantograph
+      const g = pivot(root, 10, 0, 4.4); g.userData.noBake = true;
+      box(g, 4.4, 0.3, 1.0, '#3a3a3a', 0, 0.25, 0); box(g, 4.4, 1.0, 1.0, '#c62828', 0, 0.9, 0); box(g, 4.4, 0.55, 1.0, '#f3ead6', 0, 1.65, 0); box(g, 4.2, 0.12, 0.9, '#9e9e9e', 0, 2.0, 0);
+      for (let k = 0; k < 6; k++) box(g, 0.5, 0.4, 1.02, M.window, -1.75 + k * 0.7, 1.65, 0);
+      box(g, 0.06, 0.5, 0.86, M.window, 2.2, 1.6, 0); box(g, 0.06, 0.5, 0.86, M.window, -2.2, 1.6, 0);
+      box(g, 0.06, 0.12, 0.2, M.lamp, 2.22, 0.8, 0.3); box(g, 0.06, 0.12, 0.2, M.lamp, 2.22, 0.8, -0.3);
+      const pa = box(g, 0.05, 0.8, 0.05, '#424242', 0.4, 2.35, 0); pa.rotation.z = 0.6; const pb = box(g, 0.05, 0.8, 0.05, '#424242', 0.1, 2.35, 0); pb.rotation.z = -0.6;
+      box(g, 0.6, 0.04, 0.3, '#424242', 0.25, 2.68, 0);
+      const s = textSprite('🚋 4 Old Town', 0.28); s.position.set(1.6, 2.3, 0); g.add(s);
+      q.cars.push({ g, dir: 1, speed: 2.2, len: 2.3, tram: true });
+    }
+    // overhead wire for the tram
+    for (let x = -28; x < 18; x += 8) { sb(x, 1.8, RZ0 - 0.5, 0.1, 3.6, 0.1, '#4a4a4a'); sb(x, 3.55, (RZ0 - 0.5 + 4.4) / 2, 0.06, 0.06, 4.4 - RZ0 + 0.5, '#4a4a4a'); round(x, RZ0 - 0.5, 0.12); }
+    sb(-7.5, 3.5, 4.4, 51, 0.03, 0.03, '#3a3a3a');
+    // ---------- the old stone bridge ----------
+    const bridge = pivot(root);
+    { const z0 = 3.0, z1 = 7.6, zc = (z0 + z1) / 2;
+      box(bridge, 15.5, 0.5, z1 - z0, '#b1a690', 25.75, -0.25, zc);
+      box(bridge, 15.5, 0.05, RZ1 - RZ0, '#5d6066', 25.75, 0.026, RZ);
+      for (const z of [z0 + 0.15, z1 - 0.15]) { box(bridge, 15.5, 0.75, 0.3, '#c4b9a3', 25.75, 0.37, z); box(bridge, 15.6, 0.1, 0.38, '#a99e8b', 25.75, 0.78, z); }
+      // the arches down into the water
+      for (const x of [21.6, 27.6, 33]) box(bridge, 1.2, 2.6, z1 - z0, '#a99e8b', x, -1.6, zc);
+      for (const [x0, x1] of [[22.2, 27], [28.2, 32.4]]) { const w = x1 - x0; for (let k = 0; k < 4; k++) box(bridge, w * (1 - k * 0.22), 0.3, z1 - z0, '#b8ad97', (x0 + x1) / 2, -0.6 - k * 0.3, zc); }
+      for (const x of [20.5, 25.5, 30.5]) { box(bridge, 0.14, 1.6, 0.14, '#2f3b36', x, 1.2, z0 + 0.15); box(bridge, 0.3, 0.34, 0.3, M.lamp, x, 2.1, z0 + 0.15); box(bridge, 0.14, 1.6, 0.14, '#2f3b36', x, 1.2, z1 - 0.15); box(bridge, 0.3, 0.34, 0.3, M.lamp, x, 2.1, z1 - 0.15); }
+    }
+    roofs.push({ id: 'bridge', test: [OT.UNDER], mats: fadeable(bridge) });
+    // ---------- the river wall, the promenade railing, the quay ----------
+    for (let z = -27; z < 2; z += 0.6) if (!(z > -13.2 && z < -9.8)) sb(18.0, 0.45, z, 0.08, 0.9, 0.08, '#2f3b36');
+    for (const [z0, z1] of [[-27, -13.1], [-9.9, 2]]) { sb(18, 0.92, (z0 + z1) / 2, 0.1, 0.06, z1 - z0, '#2f3b36'); sb(18, 0.5, (z0 + z1) / 2, 0.06, 0.05, z1 - z0, '#2f3b36'); solid(17.7, z0, 18.0, z1); }
+    for (let z = 8; z < 17; z += 0.6) sb(18.0, 0.45, z, 0.08, 0.9, 0.08, '#2f3b36');
+    sb(18, 0.92, 12.5, 0.1, 0.06, 9, '#2f3b36'); solid(17.7, 7.8, 18.0, 17);
+    for (const z of [2.6, 7.4]) { sb(18, 0.45, z, 0.1, 0.9, 0.1, '#2f3b36'); }
+    // bollards and rings along the quay edge, a ladder, boats tied up
+    for (let z = -27; z < 2; z += 4.5) { sb(21.1, OT.QH + 0.25, z, 0.32, 0.5, 0.32, '#3d4a52'); sb(21.1, OT.QH + 0.52, z, 0.38, 0.06, 0.38, '#2f3b36'); round(21.1, z, 0.22); }
+    for (let k = 0; k < 6; k++) sb(21.55, OT.QH - 0.1 - k * 0.12, -6.4, 0.06, 0.06, 0.5, '#7a7a7a');
+    const boats = [];
+    for (const [z, c] of [[-20, '#2e6b8f'], [-12.5, '#a33b2f'], [-3.4, '#3f7f4a']]) {
+      const b = pivot(root, 23.0, OT.WATER, z); b.userData.noBake = true;
+      box(b, 1.1, 0.35, 2.8, c, 0, 0.12, 0); box(b, 0.9, 0.08, 2.5, '#a1785a', 0, 0.3, 0); box(b, 0.9, 0.1, 0.25, '#7a5a3c', 0, 0.36, 0.5); box(b, 0.9, 0.1, 0.25, '#7a5a3c', 0, 0.36, -0.6); box(b, 0.5, 0.3, 0.3, c, 0, 0.18, 1.45);
+      const oar = box(b, 1.6, 0.05, 0.08, '#c8a165', 0.3, 0.42, 0.1); oar.rotation.y = 0.4;
+      sb(21.4, OT.QH + 0.1, z, 0.6, 0.03, 0.03, '#d7ccc8');
+      boats.push(b);
+    }
+    // crates, nets and a lantern on the quay; the nook under the bridge
+    for (const [x, z] of [[19.0, -24.5], [19.0, -23.7], [19.6, -24.1]]) { sb(x, OT.QH + 0.25, z, 0.55, 0.5, 0.55, '#a1785a'); sb(x, OT.QH + 0.26, z, 0.57, 0.06, 0.57, '#7a5a3c'); }
+    solid(18.6, -25, 20, -23.3);
+    sb(18.4, OT.QH + 0.3, -17.5, 0.5, 0.6, 1.2, '#6d6e5c'); solid(18, -18.2, 18.8, -16.8);
+    for (const z of [-21, -6, 1.4]) { sb(18.06, OT.QH + 1.35, z, 0.12, 0.08, 0.3, '#2f3b36'); box(root, 0.26, 0.3, 0.26, M.lamp, 18.25, OT.QH + 1.15, z); }
+    for (const [x, z] of [[19.0, 6.2], [19.6, 6.8], [19.0, 6.9]]) { sb(x, OT.QH + 0.22, z, 0.5, 0.44, 0.5, '#8d6e4c'); }
+    solid(18.6, 5.8, 20, 7.3);
+    sb(20.8, OT.QH + 0.1, 5.6, 0.7, 0.04, 0.5, '#7b8a6a');
+    box(root, 0.22, 0.25, 0.22, M.lamp, 20.4, -0.5, 3.4);
+    // ---------- buildings ----------
+    const CD = new V3(0.42, 1.15, 1).normalize();
+    const hides = (x0, x1, z0, z1, top) => {
+      const out = [];
+      for (let x = Math.floor(x0 - 0.37 * top) - 1.5; x < x1 + 1; x += 1) for (let z = Math.floor(z0 - 0.9 * top) - 1.5; z < z0 + 1; z += 1) {
+        if (!T.inside(x, z)) continue;
+        let px = x, py = gy(x, z) + 0.9, pz = z, hit = false;
+        for (let t = 0; t < 24 && !hit; t += 0.25) { px = x + CD.x * t; py = gy(x, z) + 0.9 + CD.y * t; pz = z + CD.z * t; if (py > top) break; if (px > x0 && px < x1 && pz > z0 && pz < z1) hit = true; }
+        if (hit) out.push({ x0: x - 0.5, x1: x + 0.5, z0: z - 0.5, z1: z + 0.5 });
       }
-      return g;
+      return out;
+    };
+    // a building that hides you from the camera folds down to its ground floor while you're behind it
+    const occ = (B, x0, x1, z0, z1, H, y0 = 0, extra = []) => {
+      const res = bakeGroup(B);
+      const test = hides(x0, x1, z0, z1, y0 + H).concat(extra);
+      const sprites = []; B.traverse((o) => { if (o.isSprite) sprites.push(o); });
+      if (test.length) roofs.push({ id: 'occ', occ: true, squash: B, fadeTo: 0, test, mats: [], hide: res.hide.concat(sprites) });
+    };
+    let cafeV = null, boutiqueV = null;
+    for (const h of OT_HOUSES) {
+      if (h.townhall || h.low) continue;
+      h.y = gy((h.x0 + h.x1) / 2, (h.z0 + h.z1) / 2) || 0;
+      if (h.x0 >= 1 && h.z1 <= -23) h.y = OT.CH;
+      const B = townHouse(root, h);
+      if (h.cafe) {
+        // Café Pfote: the counter is the shop window, with the terrace in front
+        const fx = h.x1 + 0.1, fz = (h.z0 + h.z1) / 2;
+        cafeV = shopCounter(root, colliders, 'cafe', fx + 0.75, fz, Math.PI / 2, { counter: '#6d4c3a', top: '#f3ead9', awning: '#2e7d32', shirt: '#fafafa', hair: '#3e2723', goods: ['☕', '🥐', '🥛'] });
+      }
+      if (h.boutique) {
+        boutiqueV = shopCounter(root, colliders, 'boutique', (h.x0 + h.x1) / 2, h.z1 + 0.75, 0, { counter: '#f8bbd0', top: '#fff0f6', awning: '#8e24aa', shirt: '#8e24aa', hair: '#ffcc80', goods: ['🎀', '🎨', '🍋'] });
+      }
+      if (h.arch) {
+        // the house over the archway: a dark tunnel through the ground floor, with a lantern inside
+        const P = OT.PASSAGE, ar = pivot(B.g, -B.g.position.x, -B.g.position.y, -B.g.position.z);
+        box(ar, P.x1 - P.x0 - 0.1, 2.6, 0.12, '#3b302a', (P.x0 + P.x1) / 2, 1.4, h.z1 + 0.04);
+        box(ar, 0.4, 0.3, 0.14, '#3b302a', P.x0 + 0.15, 2.75, h.z1 + 0.04); box(ar, 0.4, 0.3, 0.14, '#3b302a', P.x1 - 0.15, 2.75, h.z1 + 0.04);
+        box(ar, 0.22, 0.26, 0.22, M.lamp, (P.x0 + P.x1) / 2, 2.35, h.z1 + 0.3);
+        for (let k = 0; k < 5; k++) box(ar, 0.25, 0.25, 0.04, '#e8d9b5', P.x0 + 0.3 + k * 0.35, 3.0, h.z1 + 0.08);
+      }
+      occ(B.g, h.x0, h.x1, h.z0, h.z1, B.H, h.y, h.arch ? [{ x0: OT.PASSAGE.x0 - 0.6, x1: OT.PASSAGE.x1 + 0.6, z0: OT.PASSAGE.z0, z1: OT.PASSAGE.z1 + 0.4 }] : []);
     }
-    for (let k = 0; k < 9; k++) if (k !== 6 && k !== 4) house(-17.6 + k * 4.4, -17.05, 4.3, 5, 0, k);
-    // the town museum: columns, steps and a banner with this week's exhibitions
-    { const g = pivot(root, 0, 0, -17.05);
-      box(g, 4.3, 3.6, 5, '#efe7d6', 0, 1.8, 0);
-      box(g, 4.7, 0.35, 5.3, '#d8ccb4', 0, 3.75, 0);
-      for (let k = 0; k < 3; k++) box(g, 4.7 - k * 1.3, 0.35, 0.7, '#e6dcc6', 0, 4.1 + k * 0.35, 2.3 - k * 0.15);
-      for (let k = 0; k < 3; k++) box(g, 4.5 - k * 0.3, 0.12, 0.45, '#d6cbb5', 0, 0.06 + k * 0.12, 2.75 + (2 - k) * 0.25);
-      for (const x of [-1.7, -0.6, 0.6, 1.7]) { box(g, 0.34, 2.9, 0.34, '#fbf7ee', x, 1.75, 2.62); box(g, 0.46, 0.14, 0.46, '#e6dcc6', x, 3.27, 2.62); box(g, 0.46, 0.14, 0.46, '#e6dcc6', x, 0.31, 2.62); }
-      box(g, 4.5, 0.25, 0.6, '#e6dcc6', 0, 3.38, 2.62);
-      box(g, 1.1, 1.8, 0.08, '#6d4c41', 0, 0.9 + 0.36, 2.52);
-      box(g, 0.08, 0.08, 0.05, '#ffd54f', 0.35, 1.3, 2.57);
-      for (const x of [-1.15, 1.15]) { box(g, 0.7, 1.1, 0.06, '#c0392b', x, 2.05, 2.82); box(g, 0.5, 0.06, 0.07, '#f1c40f', x, 2.45, 2.86); }
-      const sign = textSprite('🏛️ Museum', 0.55); sign.position.set(0, 4.9, 2.4); g.add(sign);
-      q.museum = { g, front: new V3(0, 0, -13.6) };
+    // ----- the town hall: an arcade below, a stepped gable, a clock tower -----
+    let clockHands = null;
+    { const h = OT_HOUSES.find((x) => x.townhall), W = h.x1 - h.x0 - 0.1, D = h.z1 - h.z0 - 0.1, cx = (h.x0 + h.x1) / 2, cz = (h.z0 + h.z1) / 2;
+      const g = pivot(root, cx, 0, cz), fz = D / 2;
+      const ST = '#cbbfa8', WL2 = '#f1e2c4', RF = '#9c4a35';
+      box(g, W + 0.2, 0.35, D + 0.2, '#a99f8f', 0, 0.17, 0);
+      box(g, W, 2.4, D, ST, 0, 1.2, 0);
+      box(g, W, 3.0, D, WL2, 0, 3.9, 0);
+      box(g, W + 0.25, 0.2, D + 0.25, '#b9ab93', 0, 2.45, 0); box(g, W + 0.3, 0.22, D + 0.3, '#b9ab93', 0, 5.45, 0);
+      // the arcade: four arches on the front
+      for (let k = 0; k < 4; k++) {
+        const x = -W / 2 + W / 8 + k * (W / 4);
+        box(g, 1.3, 1.6, 0.1, '#4d4238', x, 0.95, fz + 0.01); box(g, 1.0, 0.25, 0.1, '#4d4238', x, 1.85, fz + 0.01); box(g, 0.6, 0.18, 0.1, '#4d4238', x, 2.02, fz + 0.01);
+        box(g, 1.1, 0.06, 0.12, '#b9ab93', x, 2.16, fz + 0.03);
+      }
+      box(g, 1.0, 1.4, 0.12, '#6b3f2a', W / 8 - W / 4 * 0 - 0.0, 0.9, fz - 0.4);
+      // tall windows with red shutters
+      for (let f = 0; f < 2; f++) for (let k = 0; k < 5; k++) {
+        const x = -W / 2 + W / 10 + k * (W / 5), y = 3.05 + f * 1.4;
+        box(g, 0.7, 1.05, 0.06, '#fbf7ee', x, y, fz + 0.03); box(g, 0.56, 0.9, 0.07, M.window, x, y, fz + 0.035);
+        for (const s of [-1, 1]) box(g, 0.2, 0.95, 0.05, '#a3352a', x + s * 0.47, y, fz + 0.05);
+      }
+      // a balcony with flags over the middle
+      box(g, 3.2, 0.12, 0.8, '#b9ab93', 0, 2.62, fz + 0.4); for (let k = 0; k < 9; k++) box(g, 0.08, 0.5, 0.08, '#b9ab93', -1.5 + k * 0.375, 2.92, fz + 0.75); box(g, 3.2, 0.08, 0.1, '#b9ab93', 0, 3.2, fz + 0.75);
+      const flags = [];
+      for (const s of [-1, 1]) { const fp = pivot(g, s * 1.4, 3.2, fz + 0.8); fp.rotation.x = 0.5; fp.userData.noBake = true; box(fp, 0.05, 1.6, 0.05, '#5d4037', 0, 0.8, 0); const cl = pivot(fp, 0, 1.4, 0); box(cl, 0.04, 0.5, 0.8, s < 0 ? '#c62828' : '#f3ead6', 0, 0, 0.4); flags.push(cl); }
+      // the stepped gable to the square
+      const steps = [[W + 0.1, 0.9], [W - 1.6, 0.9], [W - 3.2, 0.9], [W - 4.8, 0.9], [W - 6.4, 0.9]];
+      let y = 5.55;
+      for (const [w, hh] of steps) { box(g, w, hh, 0.5, WL2, 0, y + hh / 2, fz - 0.25); box(g, w + 0.15, 0.12, 0.62, '#b9ab93', 0, y + hh + 0.06, fz - 0.25); y += hh; }
+      box(g, 1.1, 1.1, 0.08, '#d9cdb4', 0, 7.3, fz + 0.02); box(g, 0.7, 0.8, 0.09, '#c62828', 0, 7.3, fz + 0.03); box(g, 0.4, 0.4, 0.1, '#f1c40f', 0, 7.35, fz + 0.04);
+      // the roof behind it
+      const n = 12;
+      for (let k = 0; k < n; k++) box(g, (W + 0.3) * (1 - k / n), 0.38, D - 0.4, k % 2 ? RF : shade(RF, 0.9), 0, 5.65 + k * 0.38, -0.25);
+      // the clock tower
+      const tz = -1.2, ty = 5.5, TH = 6.2;
+      box(g, 2.4, TH, 2.4, WL2, 0, ty + TH / 2, tz); box(g, 2.6, 0.2, 2.6, '#b9ab93', 0, ty + TH - 1.9, tz); box(g, 2.6, 0.25, 2.6, '#b9ab93', 0, ty + TH, tz);
+      for (const s of [-1, 1]) box(g, 0.5, 1.1, 2.42, '#3f362e', s * 0.6, ty + TH - 0.8, tz);
+      box(g, 2.42, 1.1, 0.5, '#3f362e', 0, ty + TH - 0.8, tz + 0.6); box(g, 2.42, 1.1, 0.5, '#3f362e', 0, ty + TH - 0.8, tz - 0.6);
+      box(g, 0.7, 0.6, 0.7, '#c9a227', 0, ty + TH - 0.9, tz);
+      // the clock face, and its hands
+      const fzc = tz + 1.22, fy = ty + TH - 2.9;
+      box(g, 1.5, 1.5, 0.06, '#f8f4e8', 0, fy, fzc); box(g, 1.7, 1.1, 0.05, '#c9a227', 0, fy, fzc - 0.01); box(g, 1.1, 1.7, 0.05, '#c9a227', 0, fy, fzc - 0.01);
+      for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; box(g, 0.08, 0.08, 0.07, '#3a3a3a', Math.sin(a) * 0.6, fy + Math.cos(a) * 0.6, fzc + 0.01); }
+      const hands = pivot(g, 0, fy, fzc + 0.05); hands.userData.noBake = true;
+      const hh1 = pivot(hands), hh2 = pivot(hands);
+      box(hh1, 0.07, 0.42, 0.03, '#2a2a2a', 0, 0.21, 0); box(hh2, 0.05, 0.58, 0.03, '#2a2a2a', 0, 0.29, 0);
+      clockHands = [hh1, hh2];
+      // the spire: copper green, with a golden ball
+      const sp = [[2.6, 0.5], [2.2, 0.5], [1.7, 0.5], [1.2, 0.6], [0.8, 0.6], [0.45, 0.6], [0.25, 0.5]];
+      let yy = ty + TH + 0.12;
+      for (const [w, hh] of sp) { box(g, w, hh, w, '#5f9e8a', 0, yy + hh / 2, tz); yy += hh; }
+      box(g, 0.3, 0.3, 0.3, '#f1c40f', 0, yy + 0.15, tz); box(g, 0.05, 0.6, 0.05, '#3a3a3a', 0, yy + 0.6, tz);
+      const sign = textSprite('🏛️ Town Hall', 0.42); sign.position.set(0, 2.8, fz + 0.9); g.add(sign);
+      occ(g, h.x0, h.x1, h.z0, h.z1, 9);
+      q.hallFlags = flags;
     }
-    // the weekend market: your stall in the middle, two neighbors' either side
-    { const M = pivot(root), stalls = [];
+    // ----- the church on the upper town: a tower with a spire, a rose window, tall coloured windows -----
+    { const C = OT_BIG.church, cx = (C.x0 + C.x1) / 2, y0 = OT.UP;
+      const g = pivot(root, cx, y0, (C.z0 + C.z1) / 2), D = C.z1 - C.z0, fz = D / 2;
+      const ST = '#e3d6bd', ST2 = '#cdbfa4', RF = '#566470';
+      box(g, 8.6, 6.4, D - 2.6, ST, 0, 3.2, -1.3);
+      box(g, 11.4, 3.6, D - 4.6, ST2, 0, 1.8, -2.3);
+      for (let k = 0; k < 9; k++) box(g, 9.2 * (1 - k / 9), 0.45, D - 2.2, k % 2 ? RF : shade(RF, 0.9), 0, 6.55 + k * 0.45, -1.3);
+      for (let k = 0; k < 4; k++) for (const s of [-1, 1]) box(g, 1.6 * (1 - k / 4), 0.35, D - 4.2, RF, s * 4.95, 3.75 + k * 0.35, -2.3);
+      // tall coloured windows along the sides
+      for (let k = 0; k < 4; k++) for (const s of [-1, 1]) { const z = fz - 4.6 - k * 2.1; box(g, 0.06, 2.1, 0.8, '#efe6d2', s * 4.32, 4.4, z); box(g, 0.07, 1.9, 0.6, ['#4f7fc0', '#c0574f', '#d9b648', '#5e9e6a'][(k + (s > 0 ? 1 : 0)) % 4], s * 4.33, 4.4, z); box(g, 0.08, 0.06, 0.62, '#efe6d2', s * 4.34, 4.6, z); }
+      // the tower at the front
+      const TW = 3.4, TH = 11.5, tzc = fz - 1.6;
+      box(g, TW, TH, 3.2, ST, 0, TH / 2, tzc);
+      for (const yy of [3.6, 7.2, TH]) box(g, TW + 0.2, 0.2, 3.4, ST2, 0, yy, tzc);
+      box(g, 1.6, 2.4, 0.12, '#5b3a26', 0, 1.2, tzc + 1.62); box(g, 1.2, 0.3, 0.12, '#5b3a26', 0, 2.55, tzc + 1.62); box(g, 2.0, 0.2, 0.14, ST2, 0, 2.75, tzc + 1.64);
+      for (let k = 0; k < 3; k++) box(g, 2.4 - k * 0.4, 0.16, 0.45, '#c2b59c', 0, 0.08 + k * 0.16, tzc + 1.85 - k * 0.15);
+      // the rose window
+      box(g, 1.6, 1.6, 0.06, '#efe6d2', 0, 5.2, tzc + 1.61); for (const [dx, dy, c] of [[0, 0, '#d9b648'], [-0.4, 0, '#4f7fc0'], [0.4, 0, '#4f7fc0'], [0, 0.4, '#c0574f'], [0, -0.4, '#c0574f'], [-0.35, 0.35, '#5e9e6a'], [0.35, 0.35, '#5e9e6a'], [-0.35, -0.35, '#5e9e6a'], [0.35, -0.35, '#5e9e6a']]) box(g, 0.32, 0.32, 0.07, c, dx, 5.2 + dy, tzc + 1.62);
+      // the belfry and the clock
+      for (const s of [-1, 1]) box(g, 0.7, 1.6, 0.1, '#3f362e', s * 0.7, 9.3, tzc + 1.61);
+      box(g, 1.4, 1.4, 0.06, '#f8f4e8', 0, 7.9, tzc + 1.61); box(g, 1.6, 1.0, 0.05, '#c9a227', 0, 7.9, tzc + 1.6); box(g, 1.0, 1.6, 0.05, '#c9a227', 0, 7.9, tzc + 1.6);
+      box(g, 0.07, 0.5, 0.04, '#2a2a2a', 0, 8.1, tzc + 1.65); box(g, 0.4, 0.06, 0.04, '#2a2a2a', 0.18, 7.9, tzc + 1.65);
+      for (const s of [-1, 1]) for (let k = 0; k < 4; k++) box(g, 0.62, 0.1, 0.08, '#6b5a48', s * 0.7, 8.75 + k * 0.32, tzc + 1.63);
+      for (const s of [-1, 1]) { box(g, 0.5, 6.0, 0.6, ST2, s * (TW / 2 + 0.2), 3.0, tzc + 1.3); box(g, 0.4, 0.6, 0.5, ST2, s * (TW / 2 + 0.2), 6.25, tzc + 1.2); }
+      for (let k = 0; k < 4; k++) for (const s of [-1, 1]) box(g, 0.45, 3.0, 0.5, ST2, s * 4.5, 1.5, fz - 4.0 - k * 2.1 + 1.05);
+      for (const s of [-1, 1]) { box(g, 0.35, 0.8, 0.35, ST2, s * (TW / 2 - 0.1), TH + 0.5, tzc + 1.4); box(g, 0.2, 0.4, 0.2, '#d4af37', s * (TW / 2 - 0.1), TH + 1.1, tzc + 1.4); }
+      // the spire
+      let yy = TH + 0.1;
+      for (const [w, hh] of [[3.6, 0.4], [3.0, 0.8], [2.4, 0.9], [1.8, 1.0], [1.3, 1.0], [0.9, 1.0], [0.5, 1.0], [0.25, 0.8]]) { box(g, w, hh, w, '#5f9e8a', 0, yy + hh / 2, tzc); yy += hh; }
+      box(g, 0.08, 1.1, 0.08, '#d4af37', 0, yy + 0.5, tzc); box(g, 0.6, 0.08, 0.08, '#d4af37', 0, yy + 0.7, tzc); box(g, 0.25, 0.25, 0.25, '#d4af37', 0, yy + 0.05, tzc);
+      occ(g, C.x0, C.x1, C.z0, C.z1, 11, y0);
+    }
+    // ----- the museum on the upper town -----
+    { const Mu = OT_BIG.museum, cx = (Mu.x0 + Mu.x1) / 2, y0 = OT.UP, D = Mu.z1 - Mu.z0, W = Mu.x1 - Mu.x0 - 0.2;
+      const g = pivot(root, cx, y0, (Mu.z0 + Mu.z1) / 2), fz = D / 2;
+      box(g, W, 4.4, D - 1.4, '#efe7d6', 0, 2.2, -0.7);
+      box(g, W + 0.4, 0.4, D - 1.0, '#d8ccb4', 0, 4.6, -0.7);
+      for (let k = 0; k < 4; k++) box(g, (W + 0.4) - k * 2.0, 0.4, 1.0, '#e6dcc6', 0, 5.0 + k * 0.4, fz - 1.2 - k * 0.12);
+      for (let k = 0; k < 3; k++) box(g, W - k * 0.4, 0.14, 0.5, '#d6cbb5', 0, 0.07 + k * 0.14, fz - 0.25 + (2 - k) * 0.0 - k * 0.3);
+      for (const x of [-2.6, -0.9, 0.9, 2.6]) { box(g, 0.42, 3.6, 0.42, '#fbf7ee', x, 2.15, fz - 0.9); box(g, 0.56, 0.16, 0.56, '#e6dcc6', x, 4.0, fz - 0.9); box(g, 0.56, 0.16, 0.56, '#e6dcc6', x, 0.45, fz - 0.9); }
+      box(g, W + 0.2, 0.3, 0.8, '#e6dcc6', 0, 4.25, fz - 0.9);
+      box(g, 1.3, 2.1, 0.08, '#6d4c41', 0, 1.25, fz - 1.42);
+      for (const x of [-1.8, 1.8]) { box(g, 0.8, 1.4, 0.06, '#c0392b', x, 2.6, fz - 1.38); box(g, 0.56, 0.06, 0.07, '#f1c40f', x, 3.15, fz - 1.36); }
+      const sign = textSprite('🏛️ Museum', 0.5); sign.position.set(0, 6.4, fz - 1); g.add(sign);
+      q.museum = { g, front: new V3(cx, y0, Mu.z1 + 1.4) };
+      occ(g, Mu.x0, Mu.x1, Mu.z0, Mu.z1, 6, y0);
+    }
+    // ----- the gatehouse over the way in: an arch, battlements, the town's coat of arms -----
+    { const g = pivot(root, 0, 0, 19);
+      const ST = '#d4c6ab', ST2 = '#b9ab93';
+      for (const s2 of [-1, 1]) box(g, 2.0, 3.0, 5.6, ST, s2 * 3.0, 1.5, 0);
+      box(g, 8.0, 1.6, 5.6, ST, 0, 3.8, 0);
+      box(g, 4.0, 0.5, 5.6, ST, 0, 2.85, 0); box(g, 2.8, 0.3, 5.6, ST, 0, 2.5, 0);
+      box(g, 8.3, 0.25, 5.9, ST2, 0, 4.65, 0);
+      for (let k = 0; k < 8; k++) for (const zz of [-2.6, 2.6]) box(g, 0.6, 0.55, 0.4, ST, -3.5 + k, 5.05, zz);
+      for (let k = 0; k < 5; k++) for (const xx of [-3.8, 3.8]) box(g, 0.4, 0.55, 0.6, ST, xx, 5.05, -2 + k);
+      box(g, 0.9, 1.1, 0.06, '#d9cdb4', 0, 3.8, -2.83); box(g, 0.6, 0.8, 0.07, '#c62828', 0, 3.8, -2.84); box(g, 0.3, 0.3, 0.08, '#f1c40f', 0, 3.85, -2.85);
+      box(g, 0.22, 0.26, 0.22, M.lamp, 0, 2.15, -2.6);
+      occ(g, -4, 4, 16.2, 21.8, 5.3);
+    }
+    { const s = textSprite('🏠 Home', 0.62); s.position.set(0, 1.9, 20.8); root.add(s); }
+    // ----- the west gate for the road, out through the town wall -----
+    { const g = pivot(root, -33.5, 0, 0);
+      for (const [z0, z1] of [[-1, RZ0], [RZ1, 10]]) box(g, 1.6, 3.8, z1 - z0, '#d4c6ab', 0, 1.9, (z0 + z1) / 2);
+      box(g, 1.6, 1.4, RZ1 - RZ0, '#d4c6ab', 0, 3.1, RZ); box(g, 1.8, 0.3, 11.2, '#b9ab93', 0, 3.95, 4.5);
+      for (let z = -0.6; z < 10; z += 0.9) box(g, 1.8, 0.4, 0.45, '#cbbda2', 0, 4.3, z);
+    }
+    // ---------- the wall round the town (where no house stands) ----------
+    const WALLS = [], CREN = [];
+    const isQuayEdge = (x, z) => x > 17.5 && x < 18.5;
+    for (let i = -34; i < 36; i++) for (let j = -40; j < 22; j++) {
+      const x = i + 0.5, z = j + 0.5;
+      if (T.inside(x, z) || otWater(x, z) || otBlocked(x, z)) continue;
+      let hh = -Infinity, lo = Infinity, n8 = false;
+      for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) if (T.inside(x + a, z + b)) { hh = Math.max(hh, gy(x + a, z + b)); lo = Math.min(lo, gy(x + a, z + b)); n8 = true; }
+      if (!n8) continue;
+      if (x < -33 && z > 0 && z < 9) continue;
+      if (isQuayEdge(x, z)) continue;
+      const court = (x > 0 && x < 14 && z < -22) || (x > 11 && x < 13 && z < -14);
+      const tall = court ? 3.4 : z > 16.5 ? 2.6 : 1.8;
+      const base = Math.min(lo, 0);
+      const c = court ? (hash2(x, z) < 0.5 ? '#e8d6b8' : '#e2cfaf') : hash2(x, z) < 0.5 ? '#c9bb9f' : '#c1b296';
+      WALLS.push([x, base + (hh - base + tall) / 2 - 0.02, z, 1, hh - base + tall, 1, c]);
+      if (!court && ((i + j) & 1)) CREN.push([x, hh + tall + 0.25, z, 0.8, 0.5, 0.8, c]);
+      else CREN.push([x, hh + tall + 0.06, z, 1.06, 0.12, 1.06, shade(c, 0.86)]);
+    }
+    boxBatch(root, WALLS); boxBatch(root, CREN);
+    // ---------- the market square ----------
+    const F = OT.FOUNTAIN;
+    // the fountain: an eight-sided basin, a column, and the town's bronze dog on top
+    { const g = pivot(root, F.x, 0, F.z);
+      box(g, 4.6, 0.45, 3.4, '#bfb29b', 0, 0.22, 0); box(g, 3.4, 0.45, 4.6, '#bfb29b', 0, 0.22, 0);
+      // the rim round the eight-sided basin
+      for (const sx of [-1, 1]) { box(g, 0.28, 0.2, 3.5, '#a99c86', sx * 2.21, 0.55, 0); box(g, 3.5, 0.2, 0.28, '#a99c86', 0, 0.55, sx * 2.21); }
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) { box(g, 0.28, 0.2, 0.62, '#a99c86', sx * 1.61, 0.55, sz * 2.0); box(g, 0.62, 0.2, 0.28, '#a99c86', sx * 2.0, 0.55, sz * 1.61); }
+      const FW = new THREE.MeshLambertMaterial({ color: '#5fa9d8', emissive: '#0b2a44', emissiveIntensity: 0.3 });
+      box(g, 4.2, 0.06, 3.0, FW, 0, 0.44, 0); box(g, 3.0, 0.06, 4.2, FW, 0, 0.44, 0);
+      box(g, 0.8, 1.6, 0.8, '#c7baa2', 0, 1.1, 0); box(g, 1.7, 0.2, 1.7, '#a99c86', 0, 1.95, 0); box(g, 1.4, 0.05, 1.4, FW, 0, 2.06, 0);
+      box(g, 0.6, 0.8, 0.6, '#c7baa2', 0, 2.45, 0); box(g, 0.9, 0.16, 0.9, '#a99c86', 0, 2.92, 0);
+      // the dog statue
+      const d = pivot(g, 0, 3.0, 0); d.rotation.y = 0.5;
+      const BR = '#8a6d3b';
+      box(d, 0.36, 0.34, 0.7, BR, 0, 0.4, 0); box(d, 0.32, 0.32, 0.32, BR, 0, 0.66, 0.36); box(d, 0.18, 0.14, 0.18, BR, 0, 0.6, 0.56); for (const s of [-1, 1]) box(d, 0.08, 0.16, 0.06, BR, s * 0.12, 0.86, 0.34);
+      for (const [x, z] of [[-0.12, 0.25], [0.12, 0.25], [-0.12, -0.25], [0.12, -0.25]]) box(d, 0.1, 0.3, 0.1, BR, x, 0.15, z);
+      box(d, 0.08, 0.08, 0.3, BR, 0, 0.6, -0.42).rotation.x = -0.7;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) box(g, 0.12, 0.12, 0.3, '#a99c86', dx * 0.45, 1.75, dz * 0.45);
+      solid(F.x - 2.35, F.z - 1.75, F.x + 2.35, F.z + 1.75); solid(F.x - 1.75, F.z - 2.35, F.x + 1.75, F.z + 2.35);
+    }
+    const pond = { x0: F.x - 1.6, x1: F.x + 1.6, z0: F.z - 1.6, z1: F.z + 1.6 };
+    ponds.push(pond);
+    const water = { pos: new V3(F.x, 0, F.z + 2.0), bowl: new V3(F.x, 0, F.z + 2.75), taken: null };
+    sb(water.bowl.x, 0.05, water.bowl.z, 0.46, 0.1, 0.46, '#3d7fd6'); box(root, 0.34, 0.03, 0.34, M.water, water.bowl.x, 0.1, water.bowl.z);
+    const spouts = [];
+    { const g = pivot(root); g.userData.noBake = true; for (let k = 0; k < 16; k++) spouts.push(box(g, 0.1, 0.1, 0.1, k % 2 ? '#d8efff' : '#ffffff', F.x, 1.7, F.z)); }
+    // benches round the fountain
+    const bench = (x, z, rot, style = 'dark') => {
+      const g = buildBench(style); g.position.set(x, gy(x, z), z); g.rotation.y = rot; g.userData.seat = 1; root.add(g);
+      const c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
+      if (c > 0.95 || s > 0.95) { const ax = c > 0.5 ? 0.82 : 0.3, az = c > 0.5 ? 0.3 : 0.82; solid(x - ax, z - az, x + ax, z + az, { seat: true }); }
+      else colliders.push({ x, z, r: 0.72, seat: true });
+    };
+    for (const a of [45, 135, 225, 315]) { const t = (a * Math.PI) / 180, x = F.x + Math.sin(t) * 3.9, z = F.z + Math.cos(t) * 3.9; bench(x, z, Math.atan2(F.x - x, F.z - z)); }
+    // trees in iron grates, town lamps
+    const linden = (x, z, s = 1) => {
+      const y = gy(x, z);
+      sb(x, y + 0.02, z, 1.4, 0.04, 1.4, '#3d3d3d'); sb(x, y + 0.03, z, 1.0, 0.04, 1.0, '#6b5a45');
+      const g = pivot(root, x, y, z);
+      box(g, 0.32 * s, 2.0 * s, 0.32 * s, '#6b4f36', 0, 1.0 * s, 0);
+      box(g, 2.4 * s, 1.1 * s, 2.4 * s, '#5a9a48', 0, 2.4 * s, 0); box(g, 1.9 * s, 0.9 * s, 1.9 * s, '#6aac56', 0.15 * s, 3.2 * s, -0.1 * s); box(g, 1.2 * s, 0.7 * s, 1.2 * s, '#79b962', -0.1 * s, 3.8 * s, 0.1 * s); box(g, 1.0 * s, 0.7 * s, 1.0 * s, '#5a9a48', 1.0 * s, 2.7 * s, 0.6 * s);
+      round(x, z, 0.3);
+    };
+    const townLamp = (x, z) => {
+      const y = gy(x, z), g = pivot(root, x, y, z);
+      for (const s of [-1, 1]) { box(g, 0.3, 0.22, 0.3, '#7a5a3c', s * 0.42, 1.75, 0); for (let k = 0; k < 4; k++) box(g, 0.13, 0.13, 0.13, ['#e53950', '#ffffff', '#ffb74d', '#ba68c8'][k], s * 0.42 + (k % 2 ? 0.08 : -0.08), 1.9, k < 2 ? 0.08 : -0.08); box(g, 0.02, 0.4, 0.02, '#2b2f2e', s * 0.42, 2.05, 0); }
+      box(g, 0.34, 0.25, 0.34, '#2b2f2e', 0, 0.12, 0); box(g, 0.12, 2.6, 0.12, '#2b2f2e', 0, 1.4, 0); box(g, 0.9, 0.08, 0.08, '#2b2f2e', 0, 2.55, 0);
+      for (const s of [-1, 1]) { box(g, 0.28, 0.34, 0.28, M.lamp, s * 0.42, 2.35, 0); box(g, 0.36, 0.08, 0.36, '#2b2f2e', s * 0.42, 2.56, 0); }
+      box(g, 0.16, 0.2, 0.16, '#2b2f2e', 0, 2.75, 0);
+      round(x, z, 0.2);
+    };
+    for (const [x, z] of [[-10.5, -13], [10.5, -13], [-10, 0], [10.6, -1.0]]) linden(x, z, 1.05);
+    for (const [x, z] of [[-5.4, -10.6], [5.4, -10.6], [-5.6, -2.0], [5.6, -2.0]]) townLamp(x, z);
+    // strings of lights across the square, from the café row to poles on the promenade side
+    { const BUL = [];
+      for (const z of [-12.2, -8.4, -4.6]) {
+        const xa = -13, xb = 12.9, n = 32;
+        sb(xb, 2.2, z, 0.14, 4.4, 0.14, '#2b2f2e'); round(xb, z, 0.14);
+        for (let k = 0; k <= n; k++) { const t = k / n, x = xa + (xb - xa) * t, y = 4.3 - Math.sin(t * Math.PI) * 0.9; if (k < n) sb(x + (xb - xa) / n / 2, y, z, (xb - xa) / n, 0.015, 0.015, '#6b6b6b'); if (k % 2 === 0) BUL.push([x, y - 0.12, z, 0.14, 0.18, 0.14, '#ffffff']); }
+      }
+      boxBatch(root, BUL, IMAT.bulbs); }
+    // Café Pfote's terrace: tables with umbrellas
+    for (const [x, z, c] of [[-10.8, -9.4, '#2e7d32'], [-10.8, -3.7, '#c62828'], [-8.8, -6.6, '#2e7d32']]) {
+      sb(x, 0.72, z, 0.8, 0.06, 0.8, '#f3ead9'); sb(x, 0.36, z, 0.08, 0.72, 0.08, '#2b2f2e'); sb(x, 0.03, z, 0.4, 0.06, 0.4, '#2b2f2e');
+      sb(x, 1.25, z, 0.05, 1.3, 0.05, '#bdbdbd');
+      for (let k = 0; k < 4; k++) { const g = pivot(root, x, 1.95, z); g.rotation.y = (k * Math.PI) / 2; const p = box(g, 0.75, 0.06, 1.5, k % 2 ? c : '#fbf6ec', 0.37, 0, 0); p.rotation.z = -0.25; }
+      for (const [dx, dz] of [[0.75, 0], [-0.75, 0]]) { sb(x + dx, 0.42, z + dz, 0.42, 0.06, 0.42, '#7a5a3c'); sb(x + dx + (dx > 0 ? 0.18 : -0.18), 0.66, z + dz, 0.06, 0.5, 0.42, '#7a5a3c'); for (const ox of [-0.16, 0.16]) for (const oz of [-0.16, 0.16]) sb(x + dx + ox, 0.2, z + dz + oz, 0.05, 0.4, 0.05, '#2b2f2e'); }
+      sb(x + 0.1, 0.8, z, 0.14, 0.12, 0.14, '#ffffff'); sb(x - 0.15, 0.78, z + 0.1, 0.2, 0.06, 0.2, '#f8bbd0');
+      solid(x - 1.1, z - 0.5, x + 1.1, z + 0.5);
+    }
+    for (const z of [-11, -3.6]) { sb(-12.6, 0.3, z, 0.5, 0.6, 0.5, '#7a5a3c'); for (let k = 0; k < 4; k++) sb(-12.6 + (k % 2 ? 0.1 : -0.1), 0.72, z + (k < 2 ? 0.1 : -0.1), 0.2, 0.2, 0.2, ['#e53950', '#ffffff'][k % 2]); round(-12.6, z, 0.32); }
+    { const s = textSprite('A-board: Kuchen!', 0.01); void s; sb(-9.4, 0.45, -3.4, 0.6, 0.85, 0.08, '#2b2f2e'); sb(-9.4, 0.5, -3.36, 0.5, 0.6, 0.02, '#f5f3ec'); round(-9.4, -3.4, 0.3); }
+    // an advertising column with posters
+    { const x = 11.2, z = -6.2; sb(x, 1.3, z, 1.0, 2.6, 1.0, '#2e5d43'); sb(x, 1.3, z, 1.1, 2.2, 0.8, '#f5f0e1'); sb(x, 1.3, z, 0.8, 2.2, 1.1, '#f5f0e1');
+      [['#e53950', 0.6, 1.9], ['#3d7fd6', -0.6, 1.0], ['#f1c40f', 0.6, 0.9]].forEach(([c, dz, y]) => sb(x - 0.56, y, z + dz * 0.4, 0.02, 0.7, 0.45, c));
+      sb(x, 2.75, z, 1.2, 0.3, 1.2, '#2e5d43'); sb(x, 3.0, z, 0.6, 0.3, 0.6, '#2e5d43'); round(x, z, 0.62); }
+    // the tram stop on the square side of the street
+    { const x = 13.2, z = 2.6;
+      sb(x, 1.2, z - 0.45, 2.6, 2.3, 0.06, '#d6eaf5'); sb(x, 2.4, z, 2.8, 0.1, 1.2, '#2f3b36'); for (const sx of [-1.3, 1.3]) sb(x + sx, 1.2, z - 0.45, 0.08, 2.4, 0.08, '#2f3b36');
+      sb(x, 0.45, z - 0.2, 2.0, 0.08, 0.35, '#7a5a3c'); for (const sx of [-0.9, 0.9]) sb(x + sx, 0.22, z - 0.2, 0.06, 0.44, 0.3, '#2f3b36');
+      sb(x + 1.8, 1.3, z + 0.3, 0.08, 2.6, 0.08, '#2f3b36'); sb(x + 1.8, 2.5, z + 0.3, 0.5, 0.5, 0.06, '#2e7d32'); sb(x + 1.8, 2.5, z + 0.32, 0.36, 0.36, 0.02, '#ffd54f');
+      solid(x - 1.4, z - 0.6, x + 1.4, z + 0.05); round(x + 1.8, z + 0.3, 0.12); }
+    // the weekend market: your stall in the middle, two neighbours either side (open on market days)
+    { const Mk = pivot(root), stalls = [];
+      const SZ = -0.3;
       const mk = (x, cols, own) => {
-        const g = pivot(M, x, 0, 14.4);
-        g.rotation.y = Math.PI;
-        box(g, 1.8, 0.85, 0.7, cols[0], 0, 0.42, 0.1);
-        box(g, 1.9, 0.08, 0.8, '#f3ead9', 0, 0.89, 0.12);
-        for (const sx of [-0.85, 0.85]) box(g, 0.1, 2.0, 0.1, '#6d4c41', sx, 1.0, 0.4);
-        for (const sx of [-0.85, 0.85]) box(g, 0.1, 2.0, 0.1, '#6d4c41', sx, 1.0, -0.3);
+        const g = pivot(Mk, x, 0, SZ); g.rotation.y = Math.PI;
+        box(g, 1.8, 0.85, 0.7, cols[0], 0, 0.42, 0.1); box(g, 1.9, 0.08, 0.8, '#f3ead9', 0, 0.89, 0.12);
+        for (const sx of [-0.85, 0.85]) { box(g, 0.1, 2.0, 0.1, '#6d4c41', sx, 1.0, 0.4); box(g, 0.1, 2.0, 0.1, '#6d4c41', sx, 1.0, -0.3); }
         const open = pivot(g), shut = pivot(g);
         for (let k = 0; k < 6; k++) box(open, 0.33, 0.08, 1.2, k % 2 ? cols[1] : '#ffffff', -0.83 + k * 0.33, 2.05, 0.05);
-        box(shut, 1.9, 0.9, 0.85, '#8d7b68', 0, 1.35, 0.1);
+        for (let k = 0; k < 6; k++) box(shut, 0.33, 1.1, 0.06, k % 2 ? cols[1] : '#f3ead9', -0.83 + k * 0.33, 1.45, 0.47);
+        for (let k = 0; k < 6; k++) box(shut, 0.33, 0.08, 1.0, k % 2 ? cols[1] : '#f3ead9', -0.83 + k * 0.33, 2.02, 0.05);
+        box(shut, 1.9, 0.12, 0.12, '#6d4c41', 0, 0.95, 0.47);
         const goods = pivot(open);
         for (const [gx, gc] of [[-0.55, cols[2]], [0, cols[3]], [0.55, cols[2]]]) { box(goods, 0.4, 0.12, 0.35, '#a1785a', gx, 0.99, 0.15); for (let k = 0; k < 3; k++) box(goods, 0.1, 0.1, 0.1, gc, gx - 0.1 + k * 0.1, 1.1, 0.15 + (k % 2) * 0.08); }
         if (!own) { const keeper = buildPlayer({ shirt: cols[1], hair: '#4e342e' }); keeper.root.position.set(0, 0, -0.35); open.add(keeper.root); }
         const sign = textSprite(own ? '🧺 Your stall' : cols[4], 0.42); sign.position.set(0, 2.55, 0); open.add(sign);
-        colliders.push({ x0: x - 1.0, x1: x + 1.0, z0: 14.1, z1: 14.95 });
+        solid(x - 1.0, SZ - 0.55, x + 1.0, SZ + 0.3);
         stalls.push({ open, shut });
       };
       mk(-4.6, ['#b5835a', '#66bb6a', '#e53935', '#ffb300', '🍎 Fruit'], false);
       mk(0, ['#c49a6c', '#ffb74d', '#f8bbd0', '#81d4fa'], true);
       mk(4.6, ['#a1785a', '#7e57c2', '#fff59d', '#ffffff', '🧀 Cheese'], false);
-      q.market = { g: M, front: new V3(0, 0, 13.1), stalls, setOpen: (o) => stalls.forEach((st) => { st.open.visible = o; st.shut.visible = !o; }) };
+      Mk.userData.noBake = true;
+      q.market = { g: Mk, front: new V3(0, 0, SZ - 1.35), stalls, setOpen: (o) => stalls.forEach((st) => { st.open.visible = o; st.shut.visible = !o; }) };
       q.market.setOpen(false);
     }
-    colliders.push({ x0: -22, x1: 6.6, z0: -19.6, z1: -14.5 }, { x0: 11, x1: 22, z0: -19.6, z1: -14.5 });
-    // where house 7 used to be: a narrow house built over an alley, which leads to a courtyard behind
-    const arch = pivot(root);
-    for (const [x0, x1] of [[6.55, 7.6], [10, 11.05]]) { box(arch, x1 - x0, 3.1, 5, '#ffe0b2', (x0 + x1) / 2, 1.55, -17.05); colliders.push({ x0, x1, z0: -19.6, z1: -14.5 }); }
-    box(arch, 4.5, 1.1, 5, '#ffe0b2', 8.8, 2.65, -17.05);
-    box(arch, 4.7, 0.3, 5.2, '#7b3f2f', 8.8, 3.35, -17.05);
-    box(arch, 3.2, 0.4, 3, '#7b3f2f', 8.8, 3.7, -17.05);
-    box(arch, 2.4, 0.12, 0.3, '#9e958a', 8.8, 2.05, -14.6);
-    for (const wx of [7.9, 9.7]) { box(arch, 0.6, 0.6, 0.06, '#ffffff', wx, 2.7, -14.52); box(arch, 0.48, 0.48, 0.07, M.window, wx, 2.7, -14.51); }
-    const archMats = fadeable(arch);
-    roofs.push({ id: 'arch', test: [ALLEY], mats: archMats });
-    // the courtyard: a well, washing on a line, flower pots and a sleepy cat
-    { const g = pivot(root, 9.6, 0, -23.2); box(g, 1.4, 0.7, 1.4, '#9e958a', 0, 0.35, 0); box(g, 1.0, 0.06, 1.0, M.water, 0, 0.68, 0); for (const x of [-0.6, 0.6]) box(g, 0.12, 1.5, 0.12, '#6d4c41', x, 1.1, 0); box(g, 1.5, 0.2, 0.9, '#7b3f2f', 0, 1.9, 0); colliders.push({ x: 9.6, z: -23.2, r: 0.85 }); }
-    for (const [x, z] of [[5.6, -20.3], [13.8, -20.4]]) box(root, 0.1, 2, 0.1, '#6d4c41', x, 1, z);
-    box(root, 8.2, 0.03, 0.03, '#eeeeee', 9.7, 1.9, -20.35);
-    [['#ef9a9a', 6.6], ['#90caf9', 7.6], ['#fff59d', 9.2], ['#a5d6a7', 11.3], ['#ce93d8', 12.6]].forEach(([c, x]) => box(root, 0.55, 0.6, 0.04, c, x, 1.55, -20.35));
-    for (const [x, z, c] of [[5.4, -22.4, '#e53950'], [6.6, -24.8, '#ffb74d'], [13.4, -23.8, '#f48fb1']]) { box(root, 0.5, 0.4, 0.5, '#b0623c', x, 0.2, z); box(root, 0.3, 0.2, 0.3, c, x, 0.5, z); colliders.push({ x, z, r: 0.35 }); }
-    { const g = pivot(root, 12.4, 0, -25.2); g.rotation.y = -0.6; g.userData.seat = 1; box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0); box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2); for (const x of [-0.65, 0.65]) box(g, 0.1, 0.4, 0.4, '#37474f', x, 0.2, 0); colliders.push({ x: 12.4, z: -25.2, r: 0.8 }); }
-    { const c2 = buildCritter('cat', '#e0a060'); c2.position.set(12.3, 0.48, -25.25); c2.rotation.y = 0.9; root.add(c2); }
-    box(root, 0.2, 0.25, 0.2, M.lamp, 8.8, 1.9, -19.75);
-    const yard = addSpot(root, spots, colliders, 6.8, -23.3, 'hidden:courtyard', spotLooks.planter, 0.4);
-    // the canal basin: a quay down the steps, a rowboat, and a nook under the bridge
-    box(root, 4.0, 0.08, 14.8, M.water, 29, -2.0, -8.6);
-    ponds.push({ x0: 27, x1: 31, z0: -16, z1: -1.2 });
-    colliders.push({ x0: 27, x1: 31.5, z0: -16.5, z1: -1 });
-    { const g = pivot(root, 29, -2.0, -11); box(g, 1.1, 0.35, 2.6, '#8d6e4c', 0, 0.15, 0); box(g, 0.9, 0.08, 2.3, '#a1785a', 0, 0.3, 0); box(g, 0.9, 0.12, 0.25, '#6d4c41', 0, 0.36, 0.4); }
-    for (let z = -7.8; z <= -5.6; z += 0.7) box(root, 0.08, 0.6, 0.08, '#37474f', 22.55, 0.3, z);
-    for (let x = 20.2; x <= 22.2; x += 1) box(root, 0.08, 0.6, 0.08, '#37474f', x, 0.3, -7.95);
-    box(root, 0.06, 0.06, 2.3, '#37474f', 22.55, 0.6, -6.7);
-    for (let z = -12.4; z <= -8.2; z += 1.05) box(root, 0.08, 0.6, 0.08, '#37474f', 19.95, 0.3, z);
-    box(root, 0.06, 0.06, 4.3, '#37474f', 19.95, 0.6, -10.3);
-    for (let x = 22.8; x <= 26.8; x += 1) box(root, 0.08, 0.6, 0.08, '#37474f', x, 0.3, -14.55);
-    for (const [x, z] of [[24.6, -14.8], [26.2, -9.6]]) { box(root, 0.35, 0.5, 0.35, '#5d4037', x, -1.55, z); box(root, 0.4, 0.06, 0.4, '#4e342e', x, -1.28, z); colliders.push({ x, z, r: 0.25 }); }
-    box(root, 0.22, 0.25, 0.22, M.lamp, 24.6, -0.6, -2.75);
-    for (const [x, z] of [[23.2, -4.6], [23.4, -3.2]]) { box(root, 0.5, 0.45, 0.5, '#8d6e4c', x, -1.58, z); colliders.push({ x, z, r: 0.3 }); }
-    const nook = addSpot(root, spots, colliders, 25.6, -3.6, 'hidden:bridge', spotLooks.hydrant, 0.3);
-    nook.group.position.y = -1.8;
-    roofs.find((rf) => rf.id === 'bridge').mats.push(...fadeable(bridge));
-    void yard;
-    for (let k = 0; k < 4; k++) {
-      house(17.3, 1.7 + k * 4.3, 4.2, 4.6, -Math.PI / 2, k + 3);
-      house(-17.3, 1.7 + k * 4.3, 4.2, 4.6, Math.PI / 2, k + 5);
-    }
-    colliders.push({ x0: 15, x1: 22, z0: -0.5, z1: 17 }, { x0: -22, x1: -15, z0: -0.5, z1: 17 });
-    // the plaza with a fountain
-    const P = q.plaza;
-    box(root, 8.8, 0.05, 8.8, '#d8c8aa', P.x, 0.025, P.z);
-    box(root, 7.6, 0.055, 7.6, '#c9b896', P.x, 0.028, P.z);
-    for (const [w, d, x, z] of [[2.8, 0.25, 0, -1.3], [2.8, 0.25, 0, 1.3], [0.25, 2.8, -1.3, 0], [0.25, 2.8, 1.3, 0]]) box(root, w, 0.5, d, '#bdb5a6', P.x + x, 0.25, P.z + z);
-    box(root, 2.4, 0.06, 2.4, M.water, P.x, 0.4, P.z);
-    box(root, 0.4, 1.2, 0.4, '#bdb5a6', P.x, 0.6, P.z);
-    box(root, 1.0, 0.15, 1.0, '#bdb5a6', P.x, 1.25, P.z);
-    box(root, 0.8, 0.05, 0.8, M.water, P.x, 1.34, P.z);
-    box(root, 0.12, 0.45, 0.12, M.water, P.x, 1.55, P.z);
-    const pond = { x0: P.x - 1.4, x1: P.x + 1.4, z0: P.z - 1.4, z1: P.z + 1.4 };
-    colliders.push(Object.assign({}, pond));
-    ponds.push(pond);
-    const water = { pos: new V3(P.x, 0, P.z), bowl: new V3(P.x, 0, P.z + 1.75), taken: null };
-    for (const [x, z, ry] of [[-3.3, 3, Math.PI / 2], [3.3, 3, -Math.PI / 2], [0, 6.6, Math.PI]]) {
-      const g = pivot(root, P.x + x, 0, z);
-      g.rotation.y = ry;
-      g.userData.seat = 1;
-      box(g, 1.6, 0.08, 0.45, '#8d6e63', 0, 0.42, 0);
-      box(g, 1.6, 0.35, 0.08, '#8d6e63', 0, 0.68, -0.2);
-      box(g, 0.1, 0.4, 0.4, '#37474f', -0.65, 0.2, 0);
-      box(g, 0.1, 0.4, 0.4, '#37474f', 0.65, 0.2, 0);
-    }
-    for (let k = 0; k < 7; k++) {
-      const a = (k / 7) * Math.PI * 2 + 0.4, rad = 2.2 + r() * 1.5;
+    // pigeons round the fountain
+    for (let k = 0; k < 9; k++) {
+      const a = (k / 9) * Math.PI * 2 + 0.3, rad = 3.0 + r() * 1.6;
       const pg = buildCritter('pigeon');
-      const home = new V3(P.x + Math.sin(a) * rad, 0, P.z + Math.cos(a) * rad);
-      pg.position.copy(home);
-      pg.rotation.y = r() * 6;
+      const home = new V3(F.x + Math.sin(a) * rad, 0, F.z + Math.cos(a) * rad);
+      pg.position.copy(home); pg.rotation.y = r() * 6; pg.userData.noBake = true;
       root.add(pg);
       q.pigeons.push({ g: pg, home, fly: 0, t: r() * 5 });
     }
-    // trees in planters and flower boxes in the open spaces
-    for (const [x, z] of [[-6, -8.5], [6, -8.5], [-15.5, -8.5], [15.5, -8.5], [-7, 15.5], [7, 15.5], [-15.6, 18.3], [15.6, 18.3]]) {
-      box(root, 0.9, 0.4, 0.9, '#9e9e9e', x, 0.2, z);
-      box(root, 0.3, 1.0, 0.3, '#795548', x, 0.9, z);
-      box(root, 1.3, 1.0, 1.3, '#558b2f', x, 1.8, z);
-      box(root, 0.9, 0.6, 0.9, '#689f38', x, 2.5, z);
-      colliders.push({ x, z, r: 0.55 });
+    // flower tubs and bike racks along the square
+    for (const [x, z] of [[-3.2, -13.9], [3.2, -13.9], [12.2, -11], [-12.2, 1.0]]) { sb(x, 0.3, z, 0.9, 0.6, 0.9, '#8d7b68'); sb(x, 0.62, z, 0.8, 0.06, 0.8, '#5d4037'); for (let k = 0; k < 6; k++) sb(x + (r() - 0.5) * 0.6, 0.78, z + (r() - 0.5) * 0.6, 0.2, 0.2, 0.2, ['#e53950', '#ffd54f', '#ba68c8', '#ffffff'][k % 4]); sb(x, 0.85, z, 0.4, 0.3, 0.4, '#5aa64a'); round(x, z, 0.55); }
+    { const x = 3.6, z = 1.1; for (let k = 0; k < 4; k++) { sb(x + k * 0.5, 0.35, z, 0.05, 0.7, 0.6, '#9e9e9e'); } sb(x + 0.75, 0.68, z, 1.6, 0.05, 0.05, '#9e9e9e');
+      for (const [dx, c] of [[0.25, '#c62828'], [1.25, '#1e88e5']]) { const b = pivot(root, x + dx, 0, z); b.rotation.y = Math.PI / 2; box(b, 1.2, 0.05, 0.05, c, 0, 0.55, 0); box(b, 0.05, 0.5, 0.5, '#2b2b2b', -0.5, 0.3, 0); box(b, 0.05, 0.5, 0.5, '#2b2b2b', 0.5, 0.3, 0); box(b, 0.05, 0.3, 0.05, c, 0.4, 0.75, 0); box(b, 0.3, 0.05, 0.06, '#2b2b2b', 0.4, 0.9, 0); }
+      solid(x - 0.2, z - 0.45, x + 1.7, z + 0.45); }
+    // ---------- the upper town ----------
+    const UP = OT.UP;
+    // the balustrade along the edge of the terrace (the lookout over the square)
+    for (let i = -33; i < -8; i++) {
+      const x = i + 0.5, z = -16.98;
+      if (x > OT.STAIRS.x0 && x < OT.STAIRS.x1) continue;
+      if (x > OT.RAMP.x0 && x < OT.RAMP.x1) continue;
+      sb(x, UP + 0.08, z, 1, 0.16, 0.36, '#d9cdb4'); sb(x, UP + 0.86, z, 1, 0.12, 0.4, '#d9cdb4');
+      for (const dx of [-0.25, 0.25]) sb(x + dx, UP + 0.47, z, 0.16, 0.66, 0.16, '#e6dcc6');
     }
-    for (const [x, z] of [[-16, -6.5], [16, -6.5], [-3, 18.6], [3, 18.6]]) {
-      const g = pivot(root, x, 0, z);
-      spotLooks.planter(g);
-      colliders.push({ x, z, r: 0.45 });
+    solid(-33, -17.3, OT.RAMP.x0, -16.8); solid(OT.RAMP.x1, -17.3, OT.STAIRS.x0, -16.8);
+    // the stairs: stone balustrades on either side
+    for (const x of [OT.STAIRS.x0 + 0.15, OT.STAIRS.x1 - 0.15]) for (let k = 0; k < 8; k++) { const z = OT.STAIRS.z0 + 0.25 + k * 0.5, y = gy(x + (x < -11 ? 0.4 : -0.4), z); sb(x, y + 0.4, z, 0.3, 0.8, 0.5, '#d9cdb4'); }
+    for (const x of [OT.STAIRS.x0 + 0.15, OT.STAIRS.x1 - 0.15]) { sb(x, 0.6, OT.STAIRS.z1 - 0.1, 0.42, 1.2, 0.42, '#cbbfa8'); box(root, 0.3, 0.32, 0.3, M.lamp, x, 1.36, OT.STAIRS.z1 - 0.1); solid(x - 0.25, OT.STAIRS.z0, x + 0.25, OT.STAIRS.z1); }
+    // the coin telescope at the lookout
+    { const x = -15.2, z = -17.8, g = pivot(root, x, UP, z); g.rotation.y = 0.3; box(g, 0.14, 0.95, 0.14, '#455a64', 0, 0.48, 0); box(g, 0.24, 0.24, 0.56, '#546e7a', 0, 1.0, 0.12); box(g, 0.18, 0.18, 0.1, '#90caf9', 0, 1.02, 0.42); box(g, 0.36, 0.06, 0.36, '#37474f', 0, 0.03, 0); round(x, z, 0.32); }
+    // the old linden with a round bench
+    { const x = -22, z = -21.6, y = UP; const g = pivot(root, x, y, z);
+      box(g, 0.6, 2.6, 0.6, '#6b4f36', 0, 1.3, 0); box(g, 0.3, 0.9, 0.3, '#6b4f36', 0.45, 2.4, 0).rotation.z = -0.6;
+      for (const [w, hh, yy, ox, oz, c] of [[4.4, 1.3, 3.2, 0, 0, '#5a9a48'], [3.6, 1.1, 4.3, 0.3, -0.2, '#6aac56'], [2.4, 0.9, 5.2, -0.2, 0.2, '#79b962'], [1.8, 0.8, 3.6, 1.8, 0.8, '#5a9a48'], [1.6, 0.8, 3.4, -1.7, -0.9, '#6aac56']]) box(g, w, hh, w, c, ox, yy, oz);
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; const p = pivot(g, Math.cos(a) * 1.05, 0, Math.sin(a) * 1.05); p.rotation.y = -a; box(p, 0.4, 0.08, 0.9, '#8d6e4c', 0, 0.45, 0); box(p, 0.08, 0.45, 0.1, '#5d4037', 0, 0.22, 0); }
+      round(x, z, 1.35); }
+    // a little well, flower beds, lanterns, benches on the church square
+    { const x = -13, z = -21.4; sb(x, UP + 0.35, z, 1.3, 0.7, 1.3, '#bfb29b'); sb(x, UP + 0.72, z, 1.0, 0.04, 1.0, '#5fa9d8'); for (const dx of [-0.55, 0.55]) sb(x + dx, UP + 1.2, z, 0.12, 1.3, 0.12, '#6d4c41'); sb(x, UP + 1.9, z, 1.5, 0.18, 1.0, '#8a3f2e'); sb(x, UP + 1.5, z, 1.1, 0.06, 0.06, '#6d4c41'); round(x, z, 0.8); }
+    for (const [x0, x1, z0, z1] of [[-32.6, -28.4, -26.4, -24.2], [-32.6, -28.4, -21.4, -19.2], [-19.2, -16.6, -26.4, -24.6]]) {
+      sb((x0 + x1) / 2, UP + 0.15, (z0 + z1) / 2, x1 - x0, 0.3, z1 - z0, '#bfb29b');
+      for (let x = x0 + 0.35; x < x1 - 0.2; x += 0.45) for (let z = z0 + 0.35; z < z1 - 0.2; z += 0.45) sb(x, UP + 0.4, z, 0.22, 0.2, 0.22, ['#e53950', '#ffd54f', '#ffffff', '#ba68c8', '#5aa64a', '#5aa64a'][Math.floor(hash2(x, z) * 6)]);
+      solid(x0, z0, x1, z1);
     }
-    // café tables
-    for (const [x, z] of [[-13.6, 8.4], [-14.6, 10.4]]) {
-      box(root, 0.7, 0.06, 0.7, '#ffffff', x, 0.72, z);
-      box(root, 0.08, 0.7, 0.08, '#37474f', x, 0.36, z);
-      box(root, 1.0, 0.06, 1.0, '#ef9a9a', x, 1.8, z);
-      box(root, 0.05, 1.1, 0.05, '#bdbdbd', x, 1.25, z);
-      colliders.push({ x, z, r: 0.4 });
+    for (const [x, z] of [[-29.5, -18.6], [-16, -20], [-8.9, -25.6], [-30.8, -23]]) townLamp(x, z);
+    bench(-25, -19.0, Math.PI); bench(-28.4, -22.8, Math.PI / 2);
+    // ---------- the promenade along the river ----------
+    for (const z of [-23, -16.5, -6.5, -0.5]) linden(17.1, z, 0.9);
+    for (const z of [-21, -15, -7.6]) { bench(14.4, z, Math.PI / 2); }
+    for (const z of [-19.8, -3.5]) townLamp(17.1, z);
+    // the ice cream kiosk at the end of the promenade
+    { const x = 15.6, z = -25.9, g = pivot(root, x, 0, z);
+      box(g, 2.2, 1.0, 1.2, '#f8bbd0', 0, 0.5, 0); box(g, 2.3, 0.08, 1.3, '#ffffff', 0, 1.04, 0); box(g, 2.2, 0.9, 0.1, '#f8bbd0', 0, 1.5, -0.55);
+      for (let k = 0; k < 6; k++) box(g, 0.38, 0.08, 1.5, k % 2 ? '#ec407a' : '#ffffff', -0.95 + k * 0.38, 2.05, 0.1);
+      for (const sx of [-1.05, 1.05]) box(g, 0.08, 2.0, 0.08, '#ffffff', sx, 1.0, 0.6);
+      for (let k = 0; k < 5; k++) box(g, 0.24, 0.12, 0.24, ['#fff3c4', '#f8bbd0', '#8d6e4c', '#c5e1a5', '#ffe082'][k], -0.8 + k * 0.4, 1.12, 0.2);
+      const e = emojiSprite('🍦', 0.6); e.position.set(0, 2.6, 0.1); g.add(e);
+      const keeper = buildPlayer({ shirt: '#f48fb1', hair: '#ffcc80' }); keeper.root.position.set(0, 0, -0.35); keeper.root.rotation.y = 0; g.add(keeper.root);
+      solid(x - 1.2, z - 0.7, x + 1.2, z + 0.7); }
+    // ---------- the gate square ----------
+    // the maypole
+    { const x = -6.5, z = 12.6, g = pivot(root, x, 0, z);
+      box(g, 0.5, 0.3, 0.5, '#8d7b68', 0, 0.15, 0);
+      for (let k = 0; k < 18; k++) box(g, 0.28, 0.5, 0.28, k % 2 ? '#3d7fd6' : '#f5f3ec', 0, 0.55 + k * 0.5, 0);
+      for (const [y, w] of [[6.8, 1.6], [5.2, 1.3]]) { box(g, w, 0.18, 0.18, '#4f8f3c', 0, y, 0); box(g, 0.18, 0.18, w, '#4f8f3c', 0, y, 0); }
+      for (const [y, dx, c] of [[8.2, 0.7, '#c62828'], [7.6, -0.7, '#f1c40f'], [6.0, 0.6, '#2e7d32'], [4.6, -0.6, '#8d5a34']]) { box(g, 0.04, 0.4, 0.04, '#5d4037', dx * 0.7, y + 0.2, 0); box(g, 0.5, 0.36, 0.06, '#f5f3ec', dx, y, 0); box(g, 0.3, 0.2, 0.07, c, dx, y, 0); }
+      box(g, 0.9, 0.6, 0.9, '#4f8f3c', 0, 9.3, 0); box(g, 0.5, 0.5, 0.5, '#5fa04a', 0, 9.8, 0);
+      const rib = []; for (let k = 0; k < 6; k++) { const rp = pivot(g, 0, 8.9, 0); rp.rotation.y = (k / 6) * Math.PI * 2; box(rp, 0.06, 1.4, 0.06, ['#c62828', '#f1c40f', '#3d7fd6', '#2e7d32', '#ffffff', '#ec407a'][k], 0.2, -0.7, 0); rib.push(rp); }
+      round(x, z, 0.4); }
+    // the flower stand by the street, a bench, the town's notice board
+    { const x0 = -20, x1 = -14, z0 = 8, z1 = 10; sb((x0 + x1) / 2, 0.45, (z0 + z1) / 2, x1 - x0, 0.9, z1 - z0, '#7a5a3c'); sb((x0 + x1) / 2, 0.92, (z0 + z1) / 2, x1 - x0 + 0.1, 0.06, z1 - z0 + 0.1, '#5d4037');
+      for (let k = 0; k < 10; k++) { const x = x0 + 0.5 + (k % 5) * 1.2, z = z0 + 0.55 + Math.floor(k / 5) * 0.9; sb(x, 1.15, z, 0.5, 0.4, 0.5, '#9e9e9e'); for (let f = 0; f < 4; f++) sb(x + (f % 2 ? 0.12 : -0.12), 1.48, z + (f < 2 ? 0.12 : -0.12), 0.18, 0.18, 0.18, ['#e53950', '#ffd54f', '#ba68c8', '#ffffff', '#ff8a65'][(k + f) % 5]); }
+      for (let k = 0; k < 7; k++) sb(x0 + 0.4 + k * 0.85, 2.3, (z0 + z1) / 2, 0.85, 0.08, z1 - z0 + 0.6, k % 2 ? '#c2185b' : '#fbf6ec');
+      for (const x of [x0 + 0.1, x1 - 0.1]) sb(x, 1.15, z1 + 0.25, 0.08, 2.3, 0.08, '#5d4037');
+      const e = emojiSprite('💐', 0.5); e.position.set((x0 + x1) / 2, 2.9, z1); root.add(e); }
+    bench(-5.4, 15.2, Math.PI); bench(5.4, 15.2, Math.PI);
+    { const x = -13.4, z = 8.9; sb(x, 0.9, z, 0.1, 1.8, 0.1, '#5d4037'); sb(x + 1.0, 0.9, z, 0.1, 1.8, 0.1, '#5d4037'); sb(x + 0.5, 1.45, z, 1.3, 0.9, 0.08, '#8d6e4c'); sb(x + 0.5, 1.95, z, 1.45, 0.1, 0.3, '#5d4037');
+      [['#fff59d', 0.15, 1.6], ['#b3e5fc', 0.6, 1.55], ['#f8bbd0', 0.85, 1.3], ['#ffffff', 0.3, 1.25]].forEach(([c, px, py]) => sb(x + px, py, z + 0.05, 0.3, 0.32, 0.02, c));
+      solid(x - 0.15, z - 0.2, x + 1.15, z + 0.2); }
+    for (const [x, z] of [[-9.4, 15.6], [9.4, 15.6]]) linden(x, z, 0.85);
+    for (const [x, z] of [[-3, 9.0], [3, 9.0]]) townLamp(x, z);
+    // bay trees in big pots either side of the gate, a street clock, bunting from the maypole
+    for (const x of [-2.9, 2.9]) { sb(x, 0.35, 15.4, 0.9, 0.7, 0.9, '#8d7b68'); sb(x, 0.72, 15.4, 0.95, 0.06, 0.95, '#6d5f50'); sb(x, 1.1, 15.4, 0.12, 0.8, 0.12, '#6b4f36'); sb(x, 1.75, 15.4, 0.9, 0.9, 0.9, '#4f8f3c'); sb(x, 2.25, 15.4, 0.55, 0.4, 0.55, '#5fa04a'); round(x, 15.4, 0.5); }
+    { const x = -2.6, z = 10.2, g = pivot(root, x, 0, z);
+      box(g, 0.4, 0.3, 0.4, '#2b2f2e', 0, 0.15, 0); box(g, 0.16, 2.6, 0.16, '#2b2f2e', 0, 1.4, 0); box(g, 0.8, 0.8, 0.8, '#2b2f2e', 0, 3.0, 0);
+      for (const [dx, dz, ry] of [[0, 0.41, 0], [0, -0.41, 0], [0.41, 0, Math.PI / 2], [-0.41, 0, Math.PI / 2]]) { const f = pivot(g, dx, 3.0, dz); f.rotation.y = ry; box(f, 0.62, 0.62, 0.02, '#f8f4e8', 0, 0, 0); box(f, 0.05, 0.24, 0.03, '#2a2a2a', 0, 0.1, 0); box(f, 0.18, 0.04, 0.03, '#2a2a2a', 0.08, 0, 0); }
+      box(g, 0.3, 0.3, 0.3, '#c9a227', 0, 3.55, 0); round(x, z, 0.3); }
+    { const BT = [];
+      for (const [ex, ez] of [[-16, 9.6], [-12, 16.4], [-1.0, 15.6]]) {
+        const sx = -6.5, sy = 6.6, sz = 12.6, n = 14;
+        for (let k = 1; k < n; k++) { const t = k / n, x = sx + (ex - sx) * t, z = sz + (ez - sz) * t, y = sy + (4.2 - sy) * t - Math.sin(t * Math.PI) * 0.8; BT.push([x, y - 0.18, z, 0.28, 0.3, 0.05, ['#c62828', '#f1c40f', '#3d7fd6', '#2e7d32', '#ffffff'][k % 5]]); }
+        for (let k = 0; k < n * 3; k++) { const t = (k + 0.5) / (n * 3), x = sx + (ex - sx) * t, z = sz + (ez - sz) * t, y = sy + (4.2 - sy) * t - Math.sin(t * Math.PI) * 0.8; BT.push([x, y, z, Math.abs(ex - sx) / (n * 3) + 0.05, 0.02, Math.abs(ez - sz) / (n * 3) + 0.05, '#e8e0d0']); }
+      }
+      for (const b of BT) sb(...b); }
+    // the bakery's little tables, and a round bed with a tree and benches on the east side of the square
+    for (const z of [11.6, 14.6]) {
+      const x = -10.4;
+      sb(x, 0.72, z, 0.8, 0.06, 0.8, '#f3ead9'); sb(x, 0.36, z, 0.08, 0.72, 0.08, '#2b2f2e'); sb(x, 0.03, z, 0.4, 0.06, 0.4, '#2b2f2e');
+      for (const dz of [-0.7, 0.7]) { sb(x, 0.42, z + dz, 0.42, 0.06, 0.42, '#7a5a3c'); sb(x, 0.66, z + dz + (dz > 0 ? 0.18 : -0.18), 0.42, 0.5, 0.06, '#7a5a3c'); }
+      sb(x + 0.15, 0.8, z, 0.16, 0.12, 0.16, '#ffffff'); sb(x - 0.15, 0.78, z + 0.1, 0.24, 0.08, 0.2, '#d9a35b');
+      solid(x - 0.5, z - 1.0, x + 0.5, z + 1.0);
     }
-    const vendors = [
-      stall(root, colliders, 'cafe', -13.6, 4.2, Math.PI / 2, { counter: '#8d6e63', wall: '#6d4c41', awning: '#43a047', shirt: '#fafafa', hair: '#3e2723', goods: ['☕', '🥨', '🥛'] }),
-      stall(root, colliders, 'boutique', 13.6, 4.2, -Math.PI / 2, { counter: '#f8bbd0', wall: '#f48fb1', awning: '#ab47bc', shirt: '#8e24aa', hair: '#ffcc80', goods: ['🎀', '🎨', '🍋'] }),
-    ];
-    // sniff spots: hydrants, planters and lamp posts along the promenade
-    const looks = ['hydrant', 'planter', 'lamppost'];
-    [[-12.8, -8.5], [12.8, -8.5], [-6, -12.9], [6, -12.9], [-12.9, 13.2], [12.9, 13.2], [-5.6, 8.9], [5.6, 8.9]].forEach(([x, z], i) => addSpot(root, spots, colliders, x, z, 'sniff', spotLooks[looks[i % 3]], i % 3 === 2 ? 0.2 : 0.4));
-    // night: a cat on the wall · rain: puddles
+    { const x = 8.2, z = 13.6;
+      for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; sb(x + Math.cos(a) * 1.7, 0.18, z + Math.sin(a) * 1.7, 0.6, 0.36, 0.6, '#bfb29b'); }
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) sb(x + i, 0.2, z + j, 1, 0.12, 1, '#6b5a45');
+      for (let k = 0; k < 20; k++) { const a = r() * Math.PI * 2, d = 0.4 + r() * 1.0; sb(x + Math.cos(a) * d, 0.36, z + Math.sin(a) * d, 0.2, 0.2, 0.2, ['#e53950', '#ffd54f', '#ffffff', '#ba68c8', '#ff8a65'][k % 5]); }
+      linden(x, z, 0.95);
+      colliders.pop(); round(x, z, 2.0);
+    }
+    // the riverside garden south of the street
+    { P_GARDEN: for (let i = 14; i < 18; i++) for (let j = 9; j < 17; j++) { const x = i + 0.5, z = j + 0.5; sb(x, 0.02, z, 1, 0.04, 1, hash2(x, z) < 0.5 ? '#8cc670' : '#86c16a'); } }
+    linden(16.2, 11.0, 0.9); bench(15.6, 14.6, Math.PI / 2);
+    // the night cat on the town wall by the gate square, puddles in the rain
     const cat = buildCritter('cat', '#3a3a3a');
-    cat.position.set(-8.6, 0.9, 19.6);
-    cat.rotation.y = Math.PI;
-    cat.visible = false;
-    root.add(cat);
-    box(root, 14, 0.9, 0.3, '#bdb5a6', -9.6, 0.45, 19.6);
-    box(root, 14, 0.9, 0.3, '#bdb5a6', 9.6, 0.45, 19.6);
-    q.cat = cat;
-    q.puddles = pivot(root);
-    for (let k = 0; k < 7; k++) {
-      const x = (r() * 2 - 1) * 9, z = 8 + r() * 9;
-      if (Math.abs(x) < 1.6) continue;
-      box(q.puddles, 0.8 + r() * 0.6, 0.02, 0.6 + r() * 0.5, '#8fb3cf', x, 0.06, z);
+    cat.position.set(-9.0, 2.65, 17.5); cat.rotation.y = 0; cat.visible = false; cat.userData.noBake = true;
+    root.add(cat); q.cat = cat;
+    q.puddles = pivot(root); q.puddles.userData.noBake = true;
+    for (let k = 0; k < 9; k++) {
+      const x = (r() * 2 - 1) * 10, z = -13 + r() * 13;
+      if (Math.hypot(x - F.x, z - F.z) < 3.5) continue;
+      box(q.puddles, 0.9 + r() * 0.7, 0.02, 0.6 + r() * 0.5, '#8fb3cf', x, 0.06, z);
     }
     q.puddles.visible = false;
-    const onPath = (x, z) => loopOnPath(L, 1.5)(x, z) || (z > q.street.z0 - 0.3 && z < q.street.z1 + 0.3);
+    // ---------- the hidden courtyard ----------
+    const CY = OT.CH;
+    { const x = 7.4, z = -29.5; sb(x, CY + 0.4, z, 1.5, 0.8, 1.5, '#a99c86'); sb(x, CY + 0.82, z, 1.1, 0.04, 1.1, '#5fa9d8'); for (const dx of [-0.6, 0.6]) sb(x + dx, CY + 1.3, z, 0.12, 1.5, 0.12, '#6d4c41'); sb(x, CY + 2.1, z, 1.7, 0.2, 1.0, '#8a3f2e'); sb(x, CY + 1.65, z, 1.2, 0.08, 0.08, '#6d4c41'); sb(x + 0.2, CY + 1.4, z, 0.2, 0.25, 0.2, '#8d6e4c'); round(x, z, 0.85); }
+    // washing on a line between the houses
+    const wash = [];
+    { sb(5.2, CY + 1.3, -26.0, 0.1, 2.6, 0.1, '#6d4c41'); sb(10.8, CY + 1.3, -26.0, 0.1, 2.6, 0.1, '#6d4c41'); sb(8, CY + 2.45, -26.0, 5.6, 0.03, 0.03, '#eeeeee');
+      const g = pivot(root, 0, 0, 0); g.userData.noBake = true;
+      [['#ef9a9a', 5.9], ['#90caf9', 6.8], ['#fff59d', 7.7], ['#a5d6a7', 8.7], ['#ce93d8', 9.7]].forEach(([c, x]) => { const p = pivot(g, x, CY + 2.44, -26.0); box(p, 0.6, 0.65, 0.04, c, 0, -0.33, 0); wash.push(p); });
+      round(5.2, -26, 0.12); round(10.8, -26, 0.12); }
+    for (const [x, z, c] of [[5.5, -24.2, '#e53950'], [5.5, -31.8, '#ffb74d'], [10.5, -32.2, '#f48fb1'], [10.4, -24.0, '#ba68c8']]) { sb(x, CY + 0.25, z, 0.55, 0.5, 0.55, '#b0623c'); sb(x, CY + 0.6, z, 0.4, 0.3, 0.4, '#5aa64a'); for (let k = 0; k < 3; k++) sb(x - 0.12 + k * 0.12, CY + 0.82, z, 0.12, 0.12, 0.12, c); round(x, z, 0.35); }
+    // a lemon tree in a big pot, an old handcart, barrels
+    { const x = 9.8, z = -30.6; sb(x, CY + 0.35, z, 0.8, 0.7, 0.8, '#b0623c'); sb(x, CY + 1.1, z, 0.14, 0.8, 0.14, '#6b4f36'); sb(x, CY + 1.8, z, 1.3, 0.9, 1.3, '#4f8f3c'); for (let k = 0; k < 6; k++) sb(x + (r() - 0.5) * 1.1, CY + 1.5 + r() * 0.8, z + (r() - 0.5) * 1.1, 0.16, 0.16, 0.16, '#f1d54a'); round(x, z, 0.5); }
+    { const x = 6.2, z = -27.8, g = pivot(root, x, CY, z); g.rotation.y = 0.4; box(g, 1.4, 0.12, 0.9, '#8d6e4c', 0, 0.55, 0); for (const s of [-1, 1]) box(g, 1.4, 0.35, 0.06, '#7a5a3c', 0, 0.75, s * 0.42); box(g, 0.1, 0.6, 0.6, '#3b2a1e', -0.2, 0.32, 0.5); box(g, 0.1, 0.6, 0.6, '#3b2a1e', -0.2, 0.32, -0.5); box(g, 1.2, 0.06, 0.06, '#7a5a3c', 1.2, 0.45, 0.3); box(g, 1.2, 0.06, 0.06, '#7a5a3c', 1.2, 0.45, -0.3);
+      for (let k = 0; k < 4; k++) box(g, 0.3, 0.3, 0.3, ['#c62828', '#ff8a65', '#ffd54f', '#5aa64a'][k], -0.4 + k * 0.28, 0.76, 0); round(x, z, 0.85); }
+    for (const [x, z] of [[10.4, -28.4], [10.4, -27.6]]) { sb(x, CY + 0.4, z, 0.6, 0.8, 0.6, '#8d5a34'); sb(x, CY + 0.25, z, 0.64, 0.08, 0.64, '#5d4037'); sb(x, CY + 0.6, z, 0.64, 0.08, 0.64, '#5d4037'); }
+    solid(10.0, -28.8, 10.9, -27.2);
+    { const g = buildBench('wood'); g.position.set(8.2, CY, -32.3); g.userData.seat = 1; root.add(g); solid(7.4, -32.6, 9.0, -32.0, { seat: true }); const c2 = buildCritter('cat', '#e0a060'); c2.position.set(8.6, CY + 0.48, -32.35); c2.rotation.y = 0.9; root.add(c2); }
+    box(root, 0.22, 0.26, 0.22, M.lamp, 5.2, CY + 2.2, -29.5);
+    for (let k = 0; k < 40; k++) sb(11.06 + 0.05, CY + 0.3 + r() * 3.0, -33 + r() * 9.8, 0.08, 0.3, 0.3, r() < 0.5 ? '#4f8f3c' : '#5fa04a');
+    // ---------- townspeople: a street musician, a painter at her easel, a fisherman on the quay ----------
+    const folk = [];
+    const person = (x, z, rot, shirt, hair, y = 0) => { const P = buildPlayer({ shirt, hair }); P.root.position.set(x, y, z); P.root.rotation.y = rot; P.root.userData.noBake = true; root.add(P.root); round(x, z, 0.35); return P; };
+    { const P = person(8.8, -6.8, -Math.PI / 2, '#5c6bc0', '#3b2a1e'); const gt = pivot(P.root, 0.05, 1.0, 0.25); gt.rotation.z = 0.6; box(gt, 0.22, 0.5, 0.08, '#b5793a', 0, 0, 0); box(gt, 0.06, 0.5, 0.05, '#5d4037', 0, 0.45, 0);
+      sb(8.2, 0.08, -6.2, 0.7, 0.16, 0.4, '#3b2a1e'); sb(8.2, 0.17, -6.2, 0.6, 0.03, 0.3, '#a3352a'); for (let k = 0; k < 4; k++) sb(8.0 + k * 0.12, 0.2, -6.2, 0.08, 0.02, 0.08, '#f1c40f');
+      const note = emojiSprite('🎵', 0.36); note.position.set(8.8, 2.3, -6.8); root.add(note); folk.push({ P, kind: 'play', note }); round(8.2, -6.2, 0.3); }
+    { const P = person(-25.4, -24.2, Math.PI, '#ef9a9a', '#d9a441', OT.UP); const g = pivot(root, -25.4, OT.UP, -25.2); g.rotation.y = Math.PI; box(g, 0.06, 1.4, 0.06, '#8d6e4c', -0.3, 0.7, 0.1); box(g, 0.06, 1.4, 0.06, '#8d6e4c', 0.3, 0.7, 0.1); box(g, 0.06, 1.5, 0.06, '#8d6e4c', 0, 0.75, -0.3); box(g, 0.8, 0.6, 0.04, '#f5f0e1', 0, 1.2, 0.12);
+      box(g, 0.5, 0.2, 0.05, '#7fa7d8', 0, 1.35, 0.14); box(g, 0.3, 0.25, 0.05, '#e3d6bd', -0.1, 1.15, 0.14); box(g, 0.08, 0.35, 0.05, '#5f9e8a', 0.15, 1.2, 0.14);
+      folk.push({ P, kind: 'paint' }); round(-25.4, -25.2, 0.4); }
+    { const P = person(20.75, -1.4, Math.PI / 2, '#6b7a4a', '#5d4037', OT.QH); const rod = pivot(P.root, 0.2, 1.1, 0.3); rod.rotation.x = -0.9; box(rod, 0.04, 0.04, 2.4, '#7a5a3c', 0, 0, 1.1);
+      sb(20.6, OT.QH + 0.18, -2.3, 0.36, 0.36, 0.36, '#4a6b8a'); sb(20.7, OT.QH + 0.22, -0.6, 0.5, 0.44, 0.4, '#a1785a');
+      folk.push({ P, kind: 'fish', rod }); }
+    // a post box on the street corner
+    { const x = -12.5, z = -1.6; sb(x, 0.5, z, 0.1, 1.0, 0.1, '#2b2f2e'); sb(x, 1.25, z, 0.55, 0.6, 0.4, '#f2c200'); sb(x, 1.6, z, 0.6, 0.12, 0.45, '#e0b000'); sb(x, 1.32, z + 0.21, 0.3, 0.05, 0.02, '#2b2f2e'); round(x, z, 0.3); }
+    // sparkles on the river
+    const glints = [];
+    { const g = pivot(root); g.userData.noBake = true; for (let k = 0; k < 26; k++) { const m = box(g, 0.5, 0.02, 0.08, '#ffffff', 0, OT.WATER + 0.02, 0); glints.push({ m, x: 22 + r() * 10.5, z: -40 + r() * 70, o: r() * 10 }); } }
+    // ---------- sniff spots ----------
+    const spotDefs = [[-7.8, -13.8, 'planter'], [12.2, -14.0, 'hydrant'], [-3.6, 1.0, 'lamppost'], [-24.5, -6, 'hydrant'], [-24.6, -14.6, 'planter'], [16.9, -17.8, 'lamppost'], [16.0, -8.8, 'hydrant'],
+      [19.6, -27.6, 'planter'], [-1.6, 10.2, 'hydrant'], [10.2, 9.2, 'planter'], [-20.4, -25.6, 'lamppost'], [-10.0, -24.4, 'planter']];
+    spotDefs.forEach(([x, z, look]) => { const s = addSpot(root, spots, colliders, x, z, 'sniff', spotLooks[look], look === 'lamppost' ? 0.2 : 0.4); s.group.position.y = gy(x, z); s.group.userData.noBake = true; });
+    { const s = addSpot(root, spots, colliders, 7.2, -24.4, 'hidden:courtyard', spotLooks.planter, 0.4); s.group.position.y = CY; s.group.userData.noBake = true; }
+    { const s = addSpot(root, spots, colliders, 20.6, 4.6, 'hidden:bridge', spotLooks.hydrant, 0.3); s.group.position.y = OT.QH; s.group.userData.noBake = true; }
+    // ---------- the land beyond the walls: gardens and trees ----------
+    for (let k = 0; k < 160; k++) {
+      const x = -50 + r() * 100, z = -56 + r() * 86;
+      if (otWater(x, z) || (x > -36 && x < 34 && z > -41 && z < 23) || Math.abs(z - RZ) < 3) continue;
+      const y = 0; if (r() < 0.5) oakTree(root, x, y, z, r, 1.0 + r() * 0.4); else pineTree(root, x, y, z, r, 1.1 + r() * 0.3);
+    }
+    // ---------- one mesh for everything plain ----------
+    boxBatch(root, SB); boxBatch(root, COB);
+    bakeStatic(root);
+    // ---------- what moves ----------
+    const anim = (t) => {
+      syncIMats();
+      for (const f of folk) {
+        if (f.kind === 'play') { f.P.armR.rotation.x = -0.6 + Math.sin(t * 9) * 0.35; f.P.armL.rotation.x = -0.9; f.note.position.y = 2.2 + ((t * 0.6) % 1) * 0.6; f.note.material.opacity = 1 - ((t * 0.6) % 1); }
+        if (f.kind === 'paint') { f.P.armR.rotation.x = -1.1 + Math.sin(t * 2.2) * 0.25; }
+        if (f.kind === 'fish') { f.rod.rotation.x = -0.9 + Math.sin(t * 0.8) * 0.06; }
+      }
+      glints.forEach((g) => { const f = (t * 0.25 + g.o) % 1; g.m.position.set(g.x, OT.WATER + 0.02, g.z + f * 3); g.m.visible = Math.sin(t * 3 + g.o * 7) > 0.3; });
+      spouts.forEach((s, k) => { const a = (k / spouts.length) * Math.PI * 2, f = (t * 0.8 + (k % 4) * 0.25) % 1, rr = 0.5 + f * 1.3; s.position.set(F.x + Math.cos(a) * rr, 1.9 + Math.sin(f * Math.PI) * 0.4 - f * 1.4, F.z + Math.sin(a) * rr); });
+      if (q.hallFlags) q.hallFlags.forEach((f, k) => { f.rotation.y = Math.sin(t * 2.4 + k) * 0.3; });
+      wash.forEach((p, k) => { p.rotation.x = Math.sin(t * 1.6 + k * 0.9) * 0.18; });
+      boats.forEach((b, k) => { b.position.y = OT.WATER + Math.sin(t * 1.2 + k * 2) * 0.04; b.rotation.z = Math.sin(t * 0.9 + k) * 0.03; });
+      if (clockHands) { const d = new Date(); clockHands[0].rotation.z = -((d.getHours() % 12) + d.getMinutes() / 60) / 12 * Math.PI * 2; clockHands[1].rotation.z = -(d.getMinutes() / 60) * Math.PI * 2; }
+    };
+    // ---------- the neighbours' walk: round both squares, over both crossings ----------
+    const LP = curvePts([[0, 12.6], [-6, 9.4], [-6, 5.3], [-6.4, 1.2], [-6.3, -4], [-6.4, -11.6], [0, -12.6], [7, -12.4], [10.6, -9], [9.8, -3.2], [8, 1.2], [8, 5.3], [7.6, 9.6], [4, 12.8]], true);
+    const vendors = [cafeV, boutiqueV].filter(Boolean);
+    const isWater = (x, z) => otWater(x, z) && !T.inside(x, z);
+    const shore = (pos) => {
+      const z = clamp(pos.z, OT.QUAY.z0 + 0.5, 2.5);
+      const p = new V3(20.7, 0, z); p.center = new V3(22.4, 0, z);
+      return p;
+    };
     const secrets = [
-      { id: 'courtyard', name: 'The hidden courtyard', rects: [{ x0: 4.5, x1: 15, z0: -26.5, z1: -20 }], hint: 'There’s a house on the north row that’s only a front. My cat disappears through it every evening.' },
-      { id: 'bridge', name: 'Under the old bridge', rects: [UNDER], hint: 'The boatmen used to sit under the bridge by the old canal, out of the rain. I don’t know how they got down there.' },
+      { id: 'courtyard', name: 'The hidden courtyard', rects: [{ x0: OT.COURT.x0, x1: OT.COURT.x1, z0: OT.COURT.z0, z1: OT.COURT.z1 }], hint: 'There’s an archway in the row by the town hall, with a lantern inside. My cat goes through it every evening and comes back smelling of lemons.' },
+      { id: 'bridge', name: 'Under the old bridge', rects: [OT.UNDER], hint: 'The boatmen used to sit under the old stone bridge, out of the rain. There are steps down to the river somewhere along the promenade.' },
     ];
-    return Object.assign({ colliders, spots, water, ponds, onPath, loop: L, vendors, q }, shapeOut(T, roofs, { secrets }));
+    return Object.assign({ colliders, spots, water, ponds: ponds.concat([{ x0: 22.6, x1: 30.6, z0: -26, z1: -2 }]), onPath: (x, z) => T.inside(x, z), loop: { x: 11, z0: -11, z1: 11, pts: LP }, vendors, q, noAutoSeats: true, clearance: true, isWater, shore, anim,
+      lookout: { x0: -33, x1: -8, z0: -21.5, z1: -17 } }, shapeOut(T, roofs, { secrets }));
   }
 
   // ----- Whispering Forest -----
