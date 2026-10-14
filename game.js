@@ -1668,9 +1668,10 @@
     const p = player.root.position;
     // a cliff or a hill you are standing under turns see-through
     for (const r of S.roofs || []) {
-      const under = p.y < 1.2 && r.test.some((t) => inRectXZ(t, p.x, p.z));
-      if (under) roofOver = r.id;
-      const want = under ? 0.16 : 1;
+      // buildings between you and the camera (r.occ) fade wherever you stand; caves and cliffs only from below
+      const under = (r.occ || p.y < 1.2) && r.test.some((t) => inRectXZ(t, p.x, p.z));
+      if (under && !r.occ) roofOver = r.id;
+      const want = under ? (r.fadeTo !== undefined ? r.fadeTo : r.occ ? 0.12 : 0.16) : 1;
       if (r.fade === undefined) r.fade = 1;
       if (Math.abs(r.fade - want) > 0.004) {
         r.fade = lerp(r.fade, want, Math.min(1, dt * 5));
@@ -1678,6 +1679,8 @@
         // solid again: back to a normal opaque material, so nothing flickers when you are not underneath
         const see = r.fade < 0.999;
         for (const m of r.mats) { if (m.transparent !== see) { m.transparent = see; m.needsUpdate = true; } m.opacity = r.fade; m.depthWrite = !see; }
+        if (r.hide) r.hide.forEach((m) => { m.visible = r.fade > 0.7; });
+        if (r.squash) r.squash.scale.y = Math.max(0.06, r.fade);
       }
     }
     // stepping into a hidden spot for the first time
@@ -7050,7 +7053,7 @@
   const SHAPE_TIPS = {
     park: 'There is more to explore now: a hill with a pavilion, a pond fed by a woodland creek and a meadow to the east. Not every corner is easy to find.',
     beach: 'There is more to explore now: dunes, a boardwalk and a rocky headland with stairs up to the lighthouse. Some places only show at the right tide.',
-    oldtown: 'There is more to explore now: steps lead down to the old canal in the east. And not every door in town is what it seems.',
+    oldtown: 'There is more to explore now: grand stairs up to the church and the museum, a lane winding behind the houses, and steps down to the river quay. Not every archway is just a door.',
     forest: 'The forest has grown: a mossy dell lies past the west glade, and a rocky terrace rises in the north-east. Listen for water.',
     alpine: 'There’s a real mountain to climb now, north of the meadow. The view from the top is worth it.',
     caves: 'The tunnels go further now, east and west. One of them leads down, deep under the mountain.',
@@ -7083,7 +7086,7 @@
     player.moveTarget = null;
     player.root.position.set(0, groundAt(0, 16), 16);
     player.root.rotation.y = player.face = Math.PI;
-    if (S.roofs) S.roofs.forEach((r) => { r.fade = 1; r.mats.forEach((m) => { m.opacity = 1; m.depthWrite = true; if (m.transparent) { m.transparent = false; m.needsUpdate = true; } }); });
+    if (S.roofs) S.roofs.forEach((r) => { r.fade = 1; r.mats.forEach((m) => { m.opacity = 1; m.depthWrite = true; if (m.transparent) { m.transparent = false; m.needsUpdate = true; } }); if (r.hide) r.hide.forEach((m) => { m.visible = true; }); if (r.squash) r.squash.scale.y = 1; });
     walkTotal = 0;
     walkInfo = { night: nightLevel > 0.5, storm: !!curWeather().lightning, rain: curWeather().precip === 'rain' };
     dogs.forEach((d, i) => {
@@ -7135,6 +7138,7 @@
     const first = intro && tip('visit:' + loc, { title: LOC().name, text: intro, th: TH('loc', loc) });
     if (!first) toast(intro || (parkLoot ? 'Walk time! Something is glinting in the grass… ✨' : W.muddy ? `Walk time! It's ${W.name.toLowerCase()} — expect muddy paws 🐾` : 'Walk time! Let your dog sniff the ✨ spots'));
     if (S.secrets && !first && SHAPE_TIPS[loc]) tip('shape:' + loc, { title: `${LOC().name} has grown`, text: SHAPE_TIPS[loc], icon: 'map' });
+    if (loc === 'oldtown' && !first && (state.locWalks || {}).oldtown) tip('oldtown2', { title: 'Old Town has been rebuilt', text: 'A gate in the town wall, the market square with the town hall and its clock tower, Café Pfote’s terrace, a tram, the upper town with the church and the museum, and a promenade along the river with steps down to the quay. The courtyard and the spot under the bridge are still hidden somewhere.', icon: 'map' });
     if (loc === 'park' && !first && (state.locWalks || {}).park) tip('park2', { title: 'The park got a makeover', text: 'Paths now wind around the big lawn, the pond has a jetty and a creek with a little bridge, and there’s a playground, a flower garden by the fountain and a pavilion on the hill. The rose garden and the grotto are still there, if you know where to look.', icon: 'map' });
     if (loc === 'park' && unlockedFeat('minimap')) tip('minimap', { title: 'The mini-map', text: 'The little map in the top right shows sniff spots, shops and the way home. Tap it to make it bigger.', icon: 'map' });
   }
@@ -7660,12 +7664,12 @@
     // cars stop for people when the light is green for them
     for (const c of q.cars) {
       const x = c.g.position.x, nx = x + c.dir * c.speed * dt;
-      const front = (v) => v + c.dir * 0.9;
+      const front = (v) => v + c.dir * (c.len || 0.9);
       let stop = L.green && q.crosswalks.some((w) => {
         const lo = w.x0 - 0.4, hi = w.x1 + 0.4, a = front(x), b = front(nx);
         return !(a > lo && a < hi) && b > lo && b < hi;
       });
-      if (!stop) stop = q.cars.some((o) => o !== c && o.dir === c.dir && (o.g.position.x - x) * c.dir > 0 && (o.g.position.x - x) * c.dir < 2.3);
+      if (!stop) stop = q.cars.some((o) => o !== c && o.dir === c.dir && (o.g.position.x - x) * c.dir > 0 && (o.g.position.x - x) * c.dir < 1.4 + (c.len || 0.9) + (o.len || 0.9));
       if (!stop) c.g.position.x = nx > 36 ? -36 : nx < -36 ? 36 : nx;
     }
     // pigeons flutter off when someone comes close
