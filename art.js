@@ -4383,13 +4383,14 @@ window.VP_ART = (function () {
     }
     return g;
   }
-
-
   // ===================================================================
-  // Player places as real places: a hall you walk around in, with stations for the little games.
-  // Each returns what a walk place returns, plus stations ({ act, x, z, label }) and a spawn point.
+  // Player places as real places: halls you walk around in, with stands you tap to use.
+  // Each returns what a walk place returns, plus stations ({ act, x, z }), invisible tap boxes
+  // (hits, userData.station) and a spawn point.
   // ===================================================================
   const neon = (c, k = 0.9) => new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: k });
+  const glassMat = (c = '#d6eefa', o = 0.42) => new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: o });
+  const HITMAT = new THREE.MeshBasicMaterial({ visible: false });
   function hall(root, o) {
     const X = o.w / 2, Z0 = -o.d / 2, Z1 = o.d / 2;
     const walk = [[[-X, Z0], [X, Z0], [X, Z1], [1.6, Z1], [1.6, Z1 + 3.5], [-1.6, Z1 + 3.5], [-1.6, Z1], [-X, Z1]]].concat(o.extra || []);
@@ -4414,47 +4415,102 @@ window.VP_ART = (function () {
       box(root, X - 1.6, 0.08, 0.4, trim, (-X - 1.6) / 2, low + 0.04, Z1 + 0.15);
       box(root, X - 1.6, 0.08, 0.4, trim, (X + 1.6) / 2, low + 0.04, Z1 + 0.15);
       box(root, 0.4, 0.08, o.d, trim, X + 0.15, low + 0.04, 0);
-      // the way out: a door frame with the place's sign
       for (const x of [-1.75, 1.75]) box(root, 0.3, 1.0, 0.4, trim, x, 0.5, Z1 + 0.15);
-      box(root, 3.2, 0.04, 1.4, '#8d6e63', 0, 0.02, Z1 + 1.2);
+      box(root, 3.2, 0.04, 1.4, o.mat || '#8d6e63', 0, 0.02, Z1 + 1.2);
       const exit = textSprite('🚪 Exit', 0.45);
       exit.position.set(0, 1.4, Z1 + 0.6);
       root.add(exit);
     }
-    const colliders = [], stations = [];
+    const colliders = [], stations = [], hits = [];
     const solid = (x0, z0, x1, z1) => colliders.push({ x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1) });
     const round = (x, z, r) => colliders.push({ x, z, r });
-    const station = (act, x, z, label, sy = 2.5) => {
-      stations.push({ act, x, z });
-      if (label) { const s = textSprite(label, 0.42); s.position.set(x, (T.height(x, z) || 0) + sy, z); root.add(s); }
+    const gy = (x, z) => T.height(x, z) || 0;
+    // a stand: where you stand to use it (x, z), and the thing itself you can tap (a box over it)
+    const station = (act, x, z, label, sy = 2.5, tb) => {
+      stations.push({ act, x, z, y: gy(x, z) });
+      if (label) { const s = textSprite(label, 0.42); s.position.set(tb ? tb[0] : x, gy(x, z) + sy, tb ? tb[1] : z); root.add(s); }
+      const [cx, cz, w, d, h] = tb || [x, z, 1.6, 1.6, 2];
+      const m = new THREE.Mesh(geo(w, h, d), HITMAT);
+      m.position.set(cx, gy(cx, cz) + h / 2, cz);
+      m.userData.station = act;
+      root.add(m);
+      hits.push(m);
     };
-    const fur = (type, x, z, rot = 0, y) => { const g = buildItem(type); g.position.set(x, y !== undefined ? y : T.height(x, z), z); g.rotation.y = rot; root.add(g); return g; };
+    const fur = (type, x, z, rot = 0, opts = {}) => {
+      const g = buildItem(type);
+      g.position.set(x, opts.y !== undefined ? opts.y : gy(x, z), z);
+      g.rotation.y = rot;
+      if (opts.s) g.scale.setScalar(opts.s);
+      root.add(g);
+      if (!opts.nocol) round(x, z, opts.r || 0.45);
+      return g;
+    };
     const staff = (x, z, rot, shirt, hair, y) => {
       const P = buildPlayer({ shirt, hair });
-      P.root.position.set(x, y !== undefined ? y : T.height(x, z), z);
+      P.root.position.set(x, y !== undefined ? y : gy(x, z), z);
       P.root.rotation.y = rot;
       root.add(P.root);
       round(x, z, 0.35);
       return P;
     };
-    const plant = (x, z, s = 1) => { box(root, 0.5 * s, 0.45 * s, 0.5 * s, '#b0705a', x, 0.22 * s, z); box(root, 0.7 * s, 0.6 * s, 0.7 * s, '#4caf50', x, 0.75 * s, z); box(root, 0.45 * s, 0.4 * s, 0.45 * s, '#66bb6a', x, 1.2 * s, z); round(x, z, 0.4 * s); };
+    const plant = (x, z, s = 1, y) => {
+      const b = y !== undefined ? y : gy(x, z);
+      box(root, 0.55 * s, 0.5 * s, 0.55 * s, '#b0705a', x, b + 0.25 * s, z); box(root, 0.6 * s, 0.08 * s, 0.6 * s, '#8d5a44', x, b + 0.5 * s, z);
+      box(root, 0.75 * s, 0.6 * s, 0.75 * s, '#4caf50', x, b + 0.85 * s, z); box(root, 0.5 * s, 0.45 * s, 0.5 * s, '#66bb6a', x, b + 1.3 * s, z); box(root, 0.3 * s, 0.3 * s, 0.3 * s, '#81c784', x + 0.2 * s, b + 1.05 * s, z + 0.2 * s);
+      round(x, z, 0.42 * s);
+    };
+    const bench = (x, z, rot = 0, col = '#a0703f', y) => {
+      const g = pivot(root, x, y !== undefined ? y : gy(x, z), z); g.rotation.y = rot;
+      box(g, 1.8, 0.08, 0.5, col, 0, 0.45, 0); box(g, 1.8, 0.4, 0.08, col, 0, 0.7, -0.22);
+      for (const sx of [-0.75, 0.75]) box(g, 0.08, 0.45, 0.45, '#546e7a', sx, 0.22, 0);
+      if (Math.abs(Math.sin(rot)) > 0.5) solid(x - 0.3, z - 0.95, x + 0.3, z + 0.95); else solid(x - 0.95, z - 0.3, x + 0.95, z + 0.3);
+    };
+    const lampPost = (x, z, h2 = 2.4) => { box(root, 0.12, h2, 0.12, '#37474f', x, gy(x, z) + h2 / 2, z); box(root, 0.36, 0.3, 0.36, M.lamp, x, gy(x, z) + h2 + 0.1, z); round(x, z, 0.2); };
+    const sign = (txt, x, y, z, s = 0.5) => { const t = textSprite(txt, s); t.position.set(x, y, z); root.add(t); return t; };
     const out = (extra) => Object.assign({ colliders, spots: [], water: { pos: new V3(-2.6, 0, Z1 + 1.6), bowl: new V3(-2.6, 0, Z1 + 2.1), taken: null }, ponds: [], onPath: o.path || (() => false), loop: o.loop || { x: 4, z0: -2, z1: 4 },
-      vendors: [], q: {}, stations, spawn: { x: 0, z: Z1 - 1.6 }, venue: true, env: o.env || { sky: '#2b2340', hemi: 1.0, sun: 0.55, noWeather: true, lit: true, fog: [30, 70] } }, shapeOut(T, [], extra || {}), { exit: { x: 0, z: Z1 + 3 } });
+      vendors: [], q: {}, stations, hits, spawn: { x: 0, z: Z1 - 1.6 }, venue: true, env: o.env || { sky: '#2b2340', hemi: 0.9, sun: 0.55, noWeather: true, lit: true, fog: [30, 70] } }, shapeOut(T, [], extra || {}), { exit: { x: 0, z: Z1 + 3 } });
     // a water bowl for the dogs by the door
     box(root, 0.44, 0.1, 0.44, '#3d7fd6', -2.6, 0.05, Z1 + 2.1);
     box(root, 0.32, 0.03, 0.32, M.water, -2.6, 0.1, Z1 + 2.1);
-    return { T, X, Z0, Z1, solid, round, station, fur, staff, plant, out, colliders };
+    return { T, X, Z0, Z1, solid, round, station, fur, staff, plant, bench, lampPost, sign, out, colliders, gy };
   }
-  function storefront(root, x, z, w, sign, col, facing = 0) {
-    const g = pivot(root, x, 0, z);
-    g.rotation.y = facing;
-    box(g, w, 0.5, 0.25, col, 0, 2.35, 0);
-    for (const s of [-w / 2 + 0.1, w / 2 - 0.1]) box(g, 0.2, 2.6, 0.3, '#ffffff', s, 1.3, 0);
-    box(g, w - 0.4, 1.6, 0.06, new THREE.MeshLambertMaterial({ color: '#d6eefa', transparent: true, opacity: 0.45 }), 0, 1.1, 0.05);
-    const t = textSprite(sign, 0.45);
-    t.position.set(0, 2.35, 0.2);
-    g.add(t);
+  // shelves full of things (along x, facing +z unless back = true)
+  function goodsShelf(root, x, z, w, h, cols, o = {}) {
+    const y0 = o.y || 0, rows = Math.max(2, Math.round(h / 0.55));
+    box(root, w, h, 0.5, o.col || '#8d6e4c', x, y0 + h / 2, z);
+    for (let r = 0; r < rows; r++) {
+      box(root, w - 0.1, 0.05, 0.5, o.board || '#a1887f', x, y0 + 0.15 + r * (h / rows), z + 0.02);
+      let k = (Math.abs(Math.round(x * 7 + z * 3 + r)) % cols.length);
+      for (let px = x - w / 2 + 0.2; px < x + w / 2 - 0.15; px += 0.32) {
+        const sz = 0.18 + ((k * 7) % 3) * 0.05;
+        box(root, sz, sz, 0.22, cols[k % cols.length], px, y0 + 0.18 + r * (h / rows) + sz / 2, z + (o.back ? -0.15 : 0.15));
+        k++;
+      }
+    }
+  }
+  function mannequin(root, x, z, shirt, pants = '#37474f', y = 0, rot = 0) {
+    const g = pivot(root, x, y, z); g.rotation.y = rot;
+    box(g, 0.3, 0.05, 0.3, '#cfd8dc', 0, 0.025, 0); box(g, 0.05, 0.5, 0.05, '#90a4ae', 0, 0.3, 0);
+    box(g, 0.34, 0.5, 0.2, pants, 0, 0.7, 0); box(g, 0.44, 0.55, 0.24, shirt, 0, 1.2, 0); box(g, 0.2, 0.22, 0.2, '#eceff1', 0, 1.6, 0);
     return g;
+  }
+  function storefront(root, x, z, w, label, col, y = 0, h = 2.4) {
+    box(root, w, 0.45, 0.3, col, x, y + h + 0.05, z);
+    for (const s of [-w / 2 + 0.12, w / 2 - 0.12]) box(root, 0.24, h, 0.34, '#eceff1', x + s, y + h / 2, z);
+    box(root, w - 0.4, h * 0.7, 0.04, '#fbf3e6', x, y + h * 0.4, z - 0.02);
+    for (let k = 0; k < Math.floor(w / 0.6); k++) box(root, 0.3, 0.3, 0.06, ['#ef9a9a', '#90caf9', '#ffe082', '#a5d6a7', '#ce93d8'][k % 5], x - w / 2 + 0.5 + k * 0.6, y + 0.9 + (k % 2) * 0.5, z + 0.02);
+    box(root, w - 0.4, h * 0.62, 0.06, glassMat(), x, y + h * 0.4, z + 0.08);
+    box(root, w - 0.3, 0.12, 0.4, '#cfd8dc', x, y + 0.06, z + 0.05);
+    if (!label) return;
+    const t = textSprite(label, 0.42);
+    t.position.set(x, y + h + 0.1, z + 0.3);
+    root.add(t);
+  }
+  function umbrellaTable(h, root, x, z, col) {
+    h.fur('table', x, z, 0, { r: 0.6 });
+    box(root, 0.06, 2.0, 0.06, '#eceff1', x, 1.0, z);
+    for (let k = 0; k < 4; k++) { const g = pivot(root, x, 2.0, z); g.rotation.y = (k * Math.PI) / 2; box(g, 0.9, 0.08, 1.8, k % 2 ? col : '#ffffff', 0.45, 0, 0).rotation.z = -0.25; }
+    h.fur('chair', x + 0.9, z, -Math.PI / 2, { nocol: true }); h.fur('chair', x - 0.9, z, Math.PI / 2, { nocol: true });
   }
 
   function buildVenue(id, root) {
@@ -4470,306 +4526,447 @@ window.VP_ART = (function () {
     }
   }
 
-  // ----- the mall: shops downstairs, a gallery upstairs, escalators between -----
+  // ----- the mall: a fountain plaza, shops downstairs, a gallery upstairs with escalators, a food court -----
   function buildMallHall(root) {
-    const GAL = { x0: -13, x1: 13, z0: -11, z1: -6.5 };
+    const GAL = { x0: -14, x1: 14, z0: -12, z1: -7.5 };
+    const UP = 2.4;
     const h = hall(root, {
-      w: 26, d: 22, floor: ['#d5d9df', '#cbd0d7', '#dde1e6'], wall: ['#f1e9dc', '#e8dfd0'], trim: '#90a4ae', wallH: 5.2, outside: '#9ea7ad', env: { sky: '#3a3550', hemi: 0.82, sun: 0.5, noWeather: true, lit: true, fog: [30, 70] },
-      tone: (x, z, hh) => (hh > 1 ? (hash2(x, z) < 0.5 ? '#d7ccc8' : '#cfc3bf') : (Math.abs(x) < 3 && z > -2 && z < 9 ? ((Math.floor(x) + Math.floor(z)) & 1 ? '#c5cae9' : '#e8eaf6') : null)),
-      areas: [{ kind: 'flat', rect: GAL, h: 2.2 }, { kind: 'ramp', rect: { x0: -10.6, x1: -9.2, z0: -6.5, z1: -1 }, axis: 'z', h0: 2.2, h1: 0 }, { kind: 'ramp', rect: { x0: 9.2, x1: 10.6, z0: -6.5, z1: -1 }, axis: 'z', h0: 2.2, h1: 0 }],
-      side: '#b0bec5', stair: '#78909c', stairSide: '#546e7a', loop: { x: 6, z0: 1, z1: 8 },
+      w: 28, d: 24, floor: ['#d9d4cc', '#d2ccc3', '#e0dbd3'], wall: ['#f3ece0', '#ece3d4'], trim: '#8d9aa3', wallH: 5.4, outside: '#9ea7ad', mat: '#455a64',
+      tone: (x, z, hh) => {
+        if (hh > 1) return (Math.floor(x) + Math.floor(z)) & 1 ? '#c9b8a6' : '#d4c5b5';
+        const r = Math.hypot(x, z - 2.5);
+        if (r < 3.4) return (Math.floor(x) + Math.floor(z)) & 1 ? '#c5cae9' : '#e8eaf6';
+        if (x > 7.5 && z > 1) return (Math.floor(x) + Math.floor(z)) & 1 ? '#d7a77f' : '#e2b48c';
+        if (Math.abs(x) < 1.6 && z > 6) return '#b0bec5';
+        return null;
+      },
+      areas: [{ kind: 'flat', rect: GAL, h: UP }, { kind: 'ramp', rect: { x0: -12.6, x1: -11.2, z0: -7.5, z1: -1.5 }, axis: 'z', h0: UP, h1: 0 }, { kind: 'ramp', rect: { x0: 11.2, x1: 12.6, z0: -7.5, z1: -1.5 }, axis: 'z', h0: UP, h1: 0 }],
+      side: '#b9ada0', stair: '#607d8b', stairSide: '#455a64', loop: { x: 6, z0: -3.5, z1: 7.5 },
+      env: { sky: '#3a3550', hemi: 0.78, sun: 0.48, noWeather: true, lit: true, fog: [30, 70] },
     });
-    const { solid, station, fur, staff, plant, round } = h;
-    // gallery front and its glass railing (open at the escalators)
-    box(root, 26, 0.1, 0.12, '#90a4ae', 0, 2.25, -6.45);
-    for (let x = -12.5; x <= 12.5; x += 1) if (!(x > -11 && x < -8.8) && !(x > 8.8 && x < 11)) box(root, 1, 0.9, 0.06, new THREE.MeshLambertMaterial({ color: '#b3e5fc', transparent: true, opacity: 0.45 }), x, 2.7, -6.48);
-    box(root, 26, 0.08, 0.14, '#cfd8dc', 0, 3.17, -6.48);
-    // escalators: moving steps, rubber rails
+    const { solid, station, fur, staff, plant, bench, round, sign } = h;
+    // the gallery: its front is a row of shop windows at ground level, with a glass railing on top (open at the escalators)
+    const front = -7.5;
+    box(root, 28, 0.2, 0.3, '#eceff1', 0, UP + 0.02, front + 0.1);
+    for (let x = -13.5; x <= 13.5; x += 1) if (!(x > -13 && x < -10.8) && !(x > 10.8 && x < 13)) box(root, 1, 0.9, 0.06, glassMat('#b3e5fc', 0.45), x, UP + 0.55, front + 0.05);
+    box(root, 28, 0.08, 0.14, '#b0bec5', 0, UP + 1.02, front + 0.05);
+    // ground-floor shops in the gallery's front
+    storefront(root, -6, front + 0.62, 7, '', '#ef9a9a', 0, 2.2);
+    for (const [x, c, p] of [[-8.4, '#e57373', '#3949ab'], [-6, '#81c784', '#5d4037'], [-3.6, '#ffd54f', '#37474f']]) mannequin(root, x, front + 1.0, c, p);
+    solid(-9, front, -3, front + 1.4);
+    box(root, 0.1, 1.9, 0.9, '#c9a227', -9.3, 1.1, front + 1.6); box(root, 0.06, 1.7, 0.75, glassMat('#e3f2fd', 0.85), -9.24, 1.1, front + 1.6);
+    station('clothes', -6, front + 2.4, '👗 Clothes shop', 3.0, [-6, front + 0.9, 7, 1.8, 2.4]);
+    storefront(root, 3, front + 0.62, 4, '', '#90caf9', 0, 2.2);
+    box(root, 1.8, 2.3, 1.6, '#5b7cfa', 3, 1.15, front + 1.0); box(root, 1.6, 1.7, 0.06, '#ffeb3b', 3, 1.25, front + 1.82);
+    for (let k = 0; k < 6; k++) box(root, 0.24, 1.6, 0.04, k % 2 ? '#e53935' : '#c62828', 2.4 + k * 0.24, 1.25, front + 1.86);
+    box(root, 0.9, 0.35, 0.06, neon('#ff7aa8', 0.8), 3, 2.1, front + 1.86);
+    solid(2, front, 4, front + 1.9);
+    station('booth', 3, front + 2.8, '📸 Photo booth', 3.0, [3, front + 1.0, 2, 2, 2.4]);
+    storefront(root, 8, front + 0.62, 4.4, '🌸 Florist', '#a5d6a7', 0, 2.2);
+    for (let k = 0; k < 4; k++) { box(root, 0.5, 0.5, 0.5, '#8d6e63', 6.6 + k * 0.95, 0.25, front + 0.8); box(root, 0.45, 0.4, 0.45, ['#f48fb1', '#fff176', '#ce93d8', '#ff8a65'][k], 6.6 + k * 0.95, 0.65, front + 0.8); }
+    solid(6.2, front, 10.1, front + 1.2);
+    // escalators: moving steps, rubber rails, glass sides
     const steps = [];
-    for (const ex of [-9.9, 9.9]) {
-      for (const sx of [-0.78, 0.78]) { box(root, 0.16, 1.2, 5.6, '#cfd8dc', ex + sx, 1.3, -3.75); box(root, 0.18, 0.1, 5.8, '#263238', ex + sx, 1.95, -3.75); }
-      for (let k = 0; k < 10; k++) { const s = box(root, 1.3, 0.06, 0.5, '#455a64', ex, 0, 0); steps.push({ s, ex, k }); }
+    for (const ex of [-11.9, 11.9]) {
+      for (const sx of [-0.78, 0.78]) {
+        const rail = box(root, 0.14, 1.0, 6.4, glassMat('#b3e5fc', 0.4), ex + sx, 1.5, -4.5); rail.rotation.x = -Math.atan2(UP, 6);
+        const r2 = box(root, 0.18, 0.1, 6.6, '#263238', ex + sx, 2.0, -4.5); r2.rotation.x = -Math.atan2(UP, 6);
+      }
+      for (let k = 0; k < 12; k++) { const s = box(root, 1.3, 0.08, 0.5, '#546e7a', ex, 0, 0); steps.push({ s, ex, k }); }
+      sign(ex < 0 ? '⬆️ Up' : '⬇️ Down', ex, 1.6, -0.6, 0.4);
     }
-    const escal = (t) => steps.forEach(({ s, ex, k }) => { const f = ((k / 10 + t * 0.12 * (ex < 0 ? 1 : -1)) % 1 + 1) % 1; const z = -1 - f * 5.5; s.position.set(ex, 2.2 * f + 0.05, z); });
-    escal(0);
-    // upstairs: toy shop and furniture showroom
-    storefront(root, -6, -10.8, 7, '🧸 Toy shop', '#90caf9');
-    for (const [t, x] of [['toybox', -8], ['beanbag', -5.5], ['toybox', -3.8]]) fur(t, x, -10, 0);
-    station('toys', -6, -8, '🧸 Toy shop', 4.6);
-    storefront(root, 6, -10.8, 9, '🛋️ Showroom', '#ffe082');
-    fur('sofa', 4, -10, 0); fur('lamp', 2.4, -10.2); fur('rug', 4, -8.8); fur('armchair', 7.5, -9.8, 0); fur('fireplace', 9.6, -10.3, 0); fur('plant', 10.8, -10.2);
-    station('showroom', 6, -7.7, '🛋️ Furniture showroom', 4.6);
-    staff(-1.5, -9.8, 0, '#4db6ac', '#3b2a1e', 2.2);
-    // downstairs: clothes with a mirror (west), the photo booth, weekly specials in the middle, the food court (east)
-    storefront(root, -12.85, -2.5, 6, '👗 Clothes', '#ef9a9a', Math.PI / 2);
-    for (let k = 0; k < 3; k++) { box(root, 0.08, 1.4, 1.4, '#9e9e9e', -11.8, 1.3, -4.3 + k * 1.8); box(root, 0.5, 0.9, 1.2, ['#e57373', '#64b5f6', '#81c784'][k], -11.8, 1, -4.3 + k * 1.8); }
-    box(root, 0.1, 1.9, 0.9, '#c9a227', -12.6, 1.1, 0.4); box(root, 0.06, 1.7, 0.75, '#e3f2fd', -12.55, 1.1, 0.4);
-    solid(-13, -5.2, -11.3, 0.9);
-    station('clothes', -10.4, -1.5, '👗 Clothes shop');
-    staff(-11.6, 1.6, Math.PI / 2, '#ba68c8', '#1a1a1a');
-    box(root, 1.6, 2.3, 1.6, '#5b7cfa', -11.6, 1.15, 6.4); box(root, 1.4, 1.6, 0.06, '#ffeb3b', -11.6, 1.3, 7.22); box(root, 0.9, 0.3, 0.06, '#ff7aa8', -11.6, 2.05, 7.24);
-    solid(-12.4, 5.6, -10.8, 7.2);
-    station('booth', -11.4, 8.4, '📸 Photo booth');
-    box(root, 2.4, 1.1, 1.4, '#ffffff', 0, 0.55, 4); box(root, 2.6, 0.12, 1.6, '#ffb74d', 0, 1.14, 4); box(root, 0.12, 1.6, 0.12, '#ffb74d', -1.1, 1.9, 4); box(root, 0.12, 1.6, 0.12, '#ffb74d', 1.1, 1.9, 4); box(root, 2.6, 0.5, 1.6, '#ff8a3d', 0, 2.9, 4);
-    solid(-1.3, 3.2, 1.3, 4.8);
-    station('specials', 0, 5.6, '⭐ Weekly specials', 3.4);
-    staff(0, 3.2, 0, '#ffb74d', '#6d4c41');
-    for (const [z, c, t] of [[0.5, '#a5d6a7', '🍜'], [4.5, '#ffcc80', '🥨'], [8.5, '#f8bbd0', '🍦']]) {
-      box(root, 1.4, 1.1, 2.6, c, 12.2, 0.55, z); box(root, 1.6, 0.4, 2.8, '#ffffff', 12.2, 2.4, z);
-      const e = emojiSprite(t, 0.7); e.position.set(12.2, 2.9, z); root.add(e);
-      solid(11.4, z - 1.3, 13, z + 1.3);
+    const escal = (t) => steps.forEach(({ s, ex, k }) => { const f = ((k / 12 + t * 0.1 * (ex < 0 ? 1 : -1)) % 1 + 1) % 1; s.position.set(ex, UP * f + 0.06, -1.5 - f * 6); });
+    // upstairs: the toy shop and the furniture showroom
+    storefront(root, -6.5, -11.8, 8, '', '#90caf9', UP, 2.4);
+    goodsShelf(root, -9, -11.3, 2.6, 1.8, ['#ef5350', '#42a5f5', '#ffca28', '#66bb6a', '#ab47bc'], { y: UP });
+    goodsShelf(root, -4, -11.3, 2.6, 1.8, ['#f48fb1', '#ffe082', '#80deea', '#c5e1a5'], { y: UP });
+    for (let k = 0; k < 6; k++) box(root, 0.36, 0.36, 0.36, ['#f4a6c6', '#9fd3f5', '#ffe082', '#b8e994', '#d7b8ff', '#ffcc80'][k], -7.1 + (k % 3) * 0.4, UP + 0.18 + Math.floor(k / 3) * 0.36, -9.6);
+    fur('toybox', -5.6, -9.8, 0, { y: UP });
+    solid(-10.5, -12, -2.5, -10.9); solid(-7.4, -10, -6.4, -9.2);
+    station('toys', -6.5, -8.6, '🧸 Toy shop', 2.8, [-6.5, -10.6, 8, 2.4, 2.4]);
+    staff(-2.4, -10.2, 0, '#4db6ac', '#3b2a1e', UP);
+    storefront(root, 6.5, -11.8, 9, '', '#ffe082', UP, 2.4);
+    box(root, 4, 0.03, 3, '#e8d7b0', 4.2, UP + 0.02, -10); box(root, 3.6, 0.03, 2.6, '#c8a165', 4.2, UP + 0.04, -10);
+    fur('sofa', 4.2, -11, 0, { y: UP }); fur('lamp', 2.6, -11.2, 0, { y: UP }); fur('rug', 4.2, -9.6, 0, { y: UP, nocol: true }); fur('plant', 6, -11.2, 0, { y: UP });
+    fur('armchair', 8.6, -10.8, 0, { y: UP }); fur('fireplace', 10.5, -11.3, 0, { y: UP }); fur('beanbag', 9.4, -9.4, 0, { y: UP }); fur('bed', 11.6, -10.2, 0, { y: UP });
+    station('showroom', 6.5, -8.4, '🛋️ Furniture showroom', 2.8, [6.5, -10.6, 9, 2.4, 2.4]);
+    staff(1.6, -9.8, Math.PI / 2, '#ffb74d', '#6d4c41', UP);
+    bench(-1, -8.6, 0, '#a0703f', UP);
+    // the plaza: a fountain, benches, planters with little trees
+    const FX = 0, FZ = 2.5;
+    box(root, 4.4, 0.5, 4.4, '#cfd8dc', FX, 0.25, FZ); box(root, 3.8, 0.1, 3.8, M.water, FX, 0.48, FZ); box(root, 0.6, 1.4, 0.6, '#b0bec5', FX, 0.9, FZ); box(root, 1.4, 0.12, 1.4, '#b0bec5', FX, 1.55, FZ);
+    const jets = [];
+    for (let k = 0; k < 6; k++) jets.push(box(root, 0.1, 0.1, 0.1, glassMat('#b3e5fc', 0.8), FX, 1.7, FZ));
+    solid(FX - 2.2, FZ - 2.2, FX + 2.2, FZ + 2.2);
+    for (const [x, z, r] of [[-3.6, 2.5, Math.PI / 2], [3.6, 2.5, -Math.PI / 2]]) bench(x, z, r, '#8d6e4c');
+    for (const [x, z] of [[-4, -2.5], [4, -2.5], [-4, 7.5], [4, 7.5]]) { box(root, 1.2, 0.6, 1.2, '#a1887f', x, 0.3, z); voxelTree(root, x, 0.6, z, mulberry32(Math.round(x * 13 + z)), 0.55); round(x, z, 0.7); }
+    // weekly specials: a cart with an awning and stacks of goods
+    const kx = -7, kz = 2.5;
+    box(root, 2.6, 1.0, 1.4, '#ffffff', kx, 0.5, kz); box(root, 2.7, 0.1, 1.5, '#ffb74d', kx, 1.03, kz);
+    for (const s of [-1.2, 1.2]) box(root, 0.1, 1.5, 0.1, '#ff8a3d', kx + s, 1.8, kz - 0.6);
+    for (let k = 0; k < 6; k++) box(root, 0.44, 0.1, 1.6, k % 2 ? '#ffffff' : '#ff8a3d', kx - 1.1 + k * 0.44, 2.55, kz);
+    for (let k = 0; k < 5; k++) box(root, 0.3, 0.3, 0.3, ['#ef5350', '#42a5f5', '#ffca28', '#ab47bc', '#66bb6a'][k], kx - 0.9 + k * 0.45, 1.25, kz - 0.2);
+    for (const wx of [-0.9, 0.9]) box(root, 0.3, 0.3, 0.06, '#37474f', kx + wx, 0.18, kz + 0.72);
+    solid(kx - 1.4, kz - 0.8, kx + 1.4, kz + 0.8);
+    staff(kx, kz - 1.3, 0, '#ffb74d', '#3b2a1e');
+    station('specials', kx, kz + 1.6, '⭐ Weekly specials', 3.2, [kx, kz, 2.8, 1.6, 2.6]);
+    // the food court: three counters along the east wall, tables with umbrellas
+    for (const [z, c, t, lbl] of [[2.2, '#a5d6a7', '🍜', 'Noodles'], [5.6, '#ffcc80', '🥨', 'Pretzels'], [9, '#f8bbd0', '🍦', 'Ice cream']]) {
+      box(root, 1.4, 1.1, 2.8, c, 13.2, 0.55, z); box(root, 1.5, 0.08, 3, '#ffffff', 13.1, 1.12, z);
+      box(root, 0.3, 1.4, 2.8, '#ffffff', 13.85, 1.8, z); box(root, 0.2, 0.6, 2.4, '#263238', 13.7, 2.1, z);
+      const e = emojiSprite(t, 0.7); e.position.set(13.2, 3.0, z); root.add(e);
+      sign(lbl, 12.9, 2.6, z, 0.32);
+      solid(12.4, z - 1.4, 14, z + 1.4);
     }
-    staff(12.6, 4.5, -Math.PI / 2, '#e57373', '#3b2a1e');
-    for (const [x, z] of [[8.6, 1.5], [8.6, 5.5], [8.6, 9]]) { fur('table', x, z); round(x, z, 0.6); }
-    station('food', 9.6, 3.4, '🍔 Food court');
-    for (const [x, z] of [[-4, 10.2], [4, 10.2], [-6.5, -0.2], [6.5, -0.2]]) plant(x, z);
-    return h.out({ anim: escal, venueSky: true });
+    staff(13.6, 5.6, -Math.PI / 2, '#e57373', '#3b2a1e');
+    for (const [x, z, c] of [[9.4, 3.2, '#e53935'], [9.4, 7.8, '#3d7fd6']]) umbrellaTable(h, root, x, z, c);
+    station('food', 11.2, 5.6, '🍔 Food court', 3.0, [13.2, 5.6, 1.6, 8, 2.2]);
+    // the directory board by the door, trash bins, a balloon seller
+    box(root, 1.2, 1.8, 0.2, '#37474f', -4.2, 0.9, 9.6); box(root, 1.0, 1.4, 0.05, neon('#e3f2fd', 0.5), -4.2, 1.05, 9.72);
+    sign('🗺️ Mall map', -4.2, 2.2, 9.6, 0.35); solid(-4.9, 9.4, -3.5, 9.8);
+    for (const [x, z] of [[2.6, 9.6], [-9.5, 6]]) { box(root, 0.5, 0.8, 0.5, '#78909c', x, 0.4, z); round(x, z, 0.3); }
+    for (let k = 0; k < 4; k++) { box(root, 0.02, 1.3, 0.02, '#eceff1', 8.2 + k * 0.15, 1.3, 9.9); box(root, 0.4, 0.5, 0.4, ['#ef5350', '#ffca28', '#42a5f5', '#ab47bc'][k], 8.2 + k * 0.15, 2.1 + (k % 2) * 0.2, 9.9); }
+    staff(8.6, 10.4, Math.PI, '#ba68c8', '#1a1a1a');
+    plant(-12.8, 10.6, 1.1); plant(12.8, 10.6, 1.1); plant(-12.8, -6, 1);
+    // hanging banners on the back wall
+    for (const [x, c, t] of [[-8, '#ef9a9a', 'SALE'], [0, '#90caf9', 'PIXELPUPS MALL'], [8, '#a5d6a7', 'NEW']]) { box(root, 3.4, 0.9, 0.06, c, x, 4.6, -11.96); sign(t, x, 4.6, -11.85, 0.45); }
+    round(0, 0, 0.01);
+    return h.out({ anim: (t) => { escal(t); jets.forEach((j, k) => { const a = (k / 6) * Math.PI * 2, f = (t * 1.3 + k * 0.17) % 1; j.position.set(FX + Math.cos(a) * f * 1.3, 1.7 + Math.sin(f * Math.PI) * 0.6, FZ + Math.sin(a) * f * 1.3); }); } });
   }
 
-  // ----- the library: aisles of shelves to wander, a reading rug, a librarian -----
+  // ----- the library: aisles of tall shelves to wander, a reading corner with a fire, the librarian -----
   function buildLibraryHall(root) {
-    const h = hall(root, { w: 24, d: 20, floor: ['#8d6e4f', '#86684a', '#937455'], wall: ['#e8dcc3', '#e1d3b7'], trim: '#5d4037', wallH: 3.4,
-      tone: (x, z) => (x < -3 && x > -11 && z > 2.5 && z < 8 ? ((Math.floor(x) + Math.floor(z)) & 1 ? '#a5413f' : '#b5504d') : null), loop: { x: 3, z0: 3, z1: 7 } });
-    const { solid, station, fur, staff, plant } = h;
-    const COLS = ['#c0504d', '#3d7fd6', '#5f8a5c', '#e9a400', '#8a5cf6', '#e5738f', '#4db6ac', '#795548'];
-    const shelf = (x0, x1, z, two = true) => {
+    const h = hall(root, { w: 26, d: 22, floor: ['#8d6e4f', '#86684a', '#937455'], wall: ['#e8dcc3', '#e1d3b7'], trim: '#5d4037', wallH: 3.6,
+      tone: (x, z) => {
+        if (x < -5 && x > -12 && z > 3.5 && z < 9) return (Math.floor(x) + Math.floor(z)) & 1 ? '#a5413f' : '#b5504d';
+        if (x > -12 && x < -1 && z > -9.5 && z < 1.5 && Math.abs(((z + 100) % 2.5) - 0.6) < 0.5) return '#6d3f2f';
+        if (Math.abs(x) < 1.4 && z > 0) return '#7b4a2a';
+        return null;
+      }, loop: { x: 4, z0: 3, z1: 8 } });
+    const { solid, station, fur, staff, plant, sign, bench } = h;
+    const COLS = ['#c0504d', '#3d7fd6', '#5f8a5c', '#e9a400', '#8a5cf6', '#e5738f', '#4db6ac', '#795548', '#f5ecd9'];
+    const shelf = (x0, x1, z, two = true, hh = 2.6) => {
       const len = x1 - x0, mx = (x0 + x1) / 2;
-      box(root, len, 2.4, 0.7, '#5d3a22', mx, 1.2, z);
+      box(root, len, hh, 0.7, '#5d3a22', mx, hh / 2, z);
       for (let r = 0; r < 4; r++) for (const side of two ? [-1, 1] : [1]) {
-        let x = x0 + 0.1;
-        let k = Math.floor((x0 * 7 + r * 3 + z) * 13) & 7;
-        while (x < x1 - 0.15) { const w = 0.12 + ((k * 37) % 5) * 0.03; box(root, w, 0.42 - ((k * 11) % 3) * 0.05, 0.08, COLS[k % COLS.length], x + w / 2, 0.35 + r * 0.55, z + side * 0.33); x += w + 0.02; k++; }
+        let x = x0 + 0.1, k = Math.abs(Math.floor((x0 * 7 + r * 3 + z) * 13)) % COLS.length;
+        while (x < x1 - 0.15) { const w = 0.11 + ((k * 37) % 5) * 0.03, bh = 0.42 - ((k * 11) % 3) * 0.06; box(root, w, bh, 0.1, COLS[k % COLS.length], x + w / 2, 0.38 + r * 0.6 + bh / 2 - 0.2, z + side * 0.33); x += w + 0.015; k++; if (k % 9 === 0) x += 0.18; }
       }
-      box(root, len + 0.1, 0.1, 0.8, '#4e2e1a', mx, 2.45, z);
+      box(root, len + 0.12, 0.12, 0.82, '#4e2e1a', mx, hh + 0.06, z);
       solid(x0, z - 0.4, x1, z + 0.4);
     };
-    // aisles in the north-west, open on alternating ends so you can weave through
-    shelf(-11, -3, -8, false); shelf(-10, -2, -5.5); shelf(-11, -3.5, -3); shelf(-9.5, -2, -0.5);
-    shelf(1, 6, -8, false); shelf(1.5, 6, -5.5);
-    // a ladder against the back shelf
-    for (const x of [-6.4, -5.9]) box(root, 0.06, 2.6, 0.06, '#8d6e4f', x, 1.3, -7.5);
-    for (let k = 0; k < 6; k++) box(root, 0.56, 0.05, 0.05, '#8d6e4f', -6.15, 0.3 + k * 0.42, -7.5);
-    // the big book on its lectern
-    box(root, 0.5, 1.1, 0.5, '#5d3a22', 3.6, 0.55, -2.4); box(root, 0.9, 0.12, 0.7, '#3e2416', 3.6, 1.15, -2.4); box(root, 0.8, 0.08, 0.6, '#f5ecd9', 3.6, 1.24, -2.4);
-    h.round(3.6, -2.4, 0.5);
-    station('book', 3.6, -1.2, '📖 Breed encyclopedia');
-    // the quiz corner: a desk with an old computer
-    box(root, 1.8, 0.8, 0.9, '#6d4c41', 9.5, 0.4, -7.8); box(root, 0.7, 0.6, 0.5, '#e0e0e0', 9.5, 1.1, -7.9); box(root, 0.56, 0.42, 0.04, neon('#7cff6b', 0.5), 9.5, 1.12, -7.62);
-    solid(8.5, -8.4, 10.5, -7.2);
-    station('quiz', 9.5, -6.3, '❓ Dog quiz');
-    // the reading rug: armchairs, a lamp, a sleepy library cat on the cushion
-    fur('armchair', -9.5, 3.5, Math.PI / 2); fur('armchair', -9.5, 6.5, Math.PI / 2); fur('lamp', -10.6, 5); fur('cushion', -6, 5); fur('beanbag', -4.6, 7);
-    box(root, 0.3, 0.2, 0.5, '#757575', -6, 0.2, 5); box(root, 0.18, 0.18, 0.18, '#757575', -6, 0.32, 5.25);
-    solid(-10.2, 2.9, -8.8, 7.1);
-    // the librarian's desk
-    box(root, 3.2, 1.0, 1, '#6d4c41', 6.5, 0.5, 5); box(root, 3.4, 0.08, 1.2, '#4e2e1a', 6.5, 1.04, 5); box(root, 0.5, 0.4, 0.4, '#c0504d', 5.6, 1.25, 5); box(root, 0.3, 0.06, 0.4, '#3d7fd6', 7.5, 1.12, 5.1);
-    solid(4.9, 4.4, 8.1, 5.6);
-    staff(6.5, 3.9, 0, '#8a5cf6', '#9c9c9c');
-    station('borrow', 6.5, 6.6, '📚 Borrow a book');
-    for (const [x, z] of [[10.6, 9], [-10.6, 9], [10.6, -3]]) plant(x, z);
-    // tall windows with light on the back wall
-    for (const x of [-2, 2.5, 8]) { box(root, 1.4, 1.8, 0.06, '#ffffff', x, 2, -9.84); box(root, 1.2, 1.6, 0.07, M.window, x, 2, -9.82); }
+    // the stacks: aisles open at alternating ends, with letter signs
+    shelf(-12, -2, -9.6, false, 3.2);
+    [['A–F', -9.6, -7.4], ['G–M', -10.4, -5], ['N–S', -9.6, -2.6], ['T–Z', -10.4, -0.2]].forEach(([t, x0, z], k) => { const x1 = x0 + 7.6; shelf(x0, x1, z); sign(t, k % 2 ? x0 + 0.2 : x1 - 0.2, 3.0, z, 0.36); });
+    shelf(1, 7, -9.6, false, 3.2); shelf(1.5, 7, -7);
+    // a rolling ladder
+    for (const x of [-6.4, -5.9]) box(root, 0.06, 3, 0.06, '#8d6e4f', x, 1.5, -9.0);
+    for (let k = 0; k < 7; k++) box(root, 0.56, 0.05, 0.05, '#8d6e4f', -6.15, 0.3 + k * 0.42, -9.0);
+    // the encyclopedia on its lectern, lit by a green banker's lamp
+    box(root, 0.5, 1.1, 0.5, '#5d3a22', 4.2, 0.55, -3.4); box(root, 0.9, 0.12, 0.7, '#3e2416', 4.2, 1.15, -3.4); box(root, 0.8, 0.06, 0.6, '#f5ecd9', 4.2, 1.24, -3.4); box(root, 0.04, 0.06, 0.6, '#8d6e4f', 4.2, 1.27, -3.4);
+    h.round(4.2, -3.4, 0.5);
+    station('book', 4.2, -2.1, '📖 Breed encyclopedia', 2.6, [4.2, -3.4, 1.2, 1.2, 1.6]);
+    // reading tables with green lamps
+    for (const [x, z] of [[2.6, 1], [6.6, 1]]) {
+      box(root, 2.4, 0.08, 1.2, '#6d4c41', x, 0.78, z); for (const [dx, dz] of [[-1.05, -0.5], [1.05, -0.5], [-1.05, 0.5], [1.05, 0.5]]) box(root, 0.08, 0.76, 0.08, '#4e2e1a', x + dx, 0.38, z + dz);
+      box(root, 0.06, 0.3, 0.06, '#c9a227', x, 0.95, z); box(root, 0.36, 0.12, 0.2, '#2e7d32', x, 1.12, z); box(root, 0.3, 0.04, 0.16, neon('#fff3c4', 0.6), x, 1.05, z);
+      for (const dz of [-0.85, 0.85]) fur('chair', x, z + dz, dz < 0 ? 0 : Math.PI, { nocol: true });
+      solid(x - 1.2, z - 0.6, x + 1.2, z + 0.6);
+      box(root, 0.4, 0.06, 0.3, '#3d7fd6', x - 0.6, 0.85, z + 0.2); box(root, 0.3, 0.12, 0.4, '#c0504d', x + 0.7, 0.88, z - 0.2);
+    }
+    // the quiz corner: a desk with an old computer and a "Dog quiz" poster
+    box(root, 1.8, 0.8, 0.9, '#6d4c41', 10.6, 0.4, -9.2); box(root, 0.7, 0.6, 0.5, '#e0e0e0', 10.6, 1.1, -9.3); box(root, 0.56, 0.42, 0.04, neon('#7cff6b', 0.5), 10.6, 1.12, -9.02);
+    box(root, 0.5, 0.06, 0.25, '#e0e0e0', 10.6, 0.84, -8.85); fur('chair', 10.6, -8.2, Math.PI, { nocol: true });
+    box(root, 1.4, 1.0, 0.04, '#fff59d', 10.6, 2.2, -10.95);
+    solid(9.6, -10, 11.6, -8.7);
+    station('quiz', 10.6, -7.4, '❓ Dog quiz', 2.8, [10.6, -9.2, 2, 1.4, 1.6]);
+    // the reading corner: a rug, armchairs, a fireplace, a sleepy cat
+    fur('fireplace', -12.5, 6.2, Math.PI / 2); fur('armchair', -10, 4.4, Math.PI / 2 + 0.4); fur('armchair', -10, 8, Math.PI / 2 - 0.4); fur('lamp', -12.4, 9.2);
+    fur('cushion', -7, 6, 0, { nocol: true }); fur('beanbag', -5.4, 8.4); fur('beanbag', -5.6, 4.2);
+    box(root, 0.32, 0.18, 0.5, '#757575', -7, 0.22, 6); box(root, 0.18, 0.18, 0.18, '#757575', -7, 0.3, 6.25); box(root, 0.06, 0.08, 0.04, '#757575', -7.05, 0.42, 6.32);
+    sign('🛋️ Reading corner', -8, 2.6, 6.2, 0.36);
+    // the librarian's desk, with a book cart
+    box(root, 3.4, 1.0, 1, '#6d4c41', 7.5, 0.5, 6.5); box(root, 3.6, 0.08, 1.2, '#4e2e1a', 7.5, 1.04, 6.5); box(root, 1.0, 0.1, 0.4, '#4e2e1a', 9.1, 0.5, 7.4);
+    for (let k = 0; k < 4; k++) box(root, 0.3, 0.1 + k * 0.02, 0.4, COLS[k], 6.2, 1.13 + k * 0.1, 6.5);
+    box(root, 0.5, 0.4, 0.4, '#c0504d', 8.6, 1.25, 6.5); box(root, 0.18, 0.12, 0.12, '#f5c542', 7.4, 1.14, 6.3);
+    solid(5.8, 5.9, 9.2, 7.1);
+    staff(7.5, 5.4, 0, '#8a5cf6', '#9c9c9c');
+    box(root, 1.2, 0.8, 0.6, '#8d6e4f', 4.4, 0.6, 9); for (let k = 0; k < 6; k++) box(root, 0.14, 0.4, 0.3, COLS[k + 1], 3.95 + k * 0.17, 1.2, 9); h.round(4.4, 9, 0.6);
+    station('borrow', 7.5, 8.2, '📚 Borrow a book', 2.8, [7.5, 6.5, 3.4, 1.2, 1.6]);
+    bench(0, 9.8, 0, '#6d4c41');
+    for (const [x, z] of [[12.4, 10.4], [-12.4, -8], [12.4, -4]]) plant(x, z, 1.1);
+    // tall windows with a little sunshine on the back wall
+    for (const x of [-1, 9]) { box(root, 1.6, 2.2, 0.06, '#ffffff', x, 2.0, -10.84); box(root, 1.4, 2.0, 0.07, M.window, x, 2.0, -10.82); const beam = box(root, 1.4, 0.02, 3, glassMat('#fff8e1', 0.18), x, 0.03, -9); void beam; }
     return h.out();
   }
 
-  // ----- the arcade: neon, cabinets, the claw machine, Boop-a-Mole, the dance pads, prizes -----
+  // ----- the arcade: neon, rows of cabinets, claw machines, Boop-a-Mole, dance pads, the prize counter -----
   function buildArcadeHall(root) {
     const NE = ['#ff5fa2', '#5be0ff', '#ffe24a', '#7cff6b', '#b98bff'];
-    const h = hall(root, { w: 24, d: 18, floor: ['#1c1736', '#211a40', '#18132e'], wall: ['#2a2350', '#251e48'], trim: '#ff5fa2', wallH: 3.2, outside: '#3a3346',
-      tone: (x, z) => { const k = hash2(x * 3.1, z * 1.7); return k < 0.06 ? NE[Math.floor(k * 80) % 5] : null; },
-      env: { sky: '#0c0a18', hemi: 0.62, sun: 0.38, noWeather: true, lit: true, fog: [26, 60] }, loop: { x: 4, z0: 1, z1: 6 } });
-    const { solid, station, staff, round } = h;
-    const lights = [];
-    // neon strips along the walls
-    box(root, 24, 0.1, 0.1, neon('#ff5fa2', 1.2), 0, 3.0, -8.8); box(root, 0.1, 0.1, 18, neon('#5be0ff', 1.2), -11.8, 3.0, 0);
-    box(root, 24, 0.08, 0.08, neon('#5be0ff', 1), 0, 0.25, -8.8);
-    // cabinets along the back, screens flickering
-    for (let k = 0; k < 7; k++) {
-      const x = -9 + k * 3, c = NE[k % 5];
-      box(root, 1.3, 2.2, 1.1, '#3f2a8a', x, 1.1, -8.1); box(root, 1.1, 0.7, 0.05, neon(c, 0.8), x, 1.55, -7.53); box(root, 1.32, 0.3, 1.12, neon(c, 1), x, 2.3, -8.1);
-      box(root, 1.3, 0.12, 0.6, '#2a1c60', x, 1.0, -7.4); box(root, 0.08, 0.14, 0.08, '#e53935', x - 0.3, 1.12, -7.3);
-      lights.push(box(root, 0.3, 0.3, 0.05, neon(NE[(k + 2) % 5], 1), x + 0.25, 1.6, -7.5));
-      solid(x - 0.65, -8.7, x + 0.65, -7.1);
-    }
-    // two claw machines (west)
-    for (const z of [-3, 0]) {
-      box(root, 1.6, 0.9, 1.6, '#e53935', -9.6, 0.45, z); box(root, 1.6, 1.5, 1.6, new THREE.MeshLambertMaterial({ color: '#b3e5fc', transparent: true, opacity: 0.35 }), -9.6, 1.65, z); box(root, 1.64, 0.25, 1.64, neon('#ffe24a', 1), -9.6, 2.5, z);
-      for (let k = 0; k < 6; k++) box(root, 0.28, 0.28, 0.28, ['#f4a6c6', '#9fd3f5', '#ffe082', '#b8e994', '#d7b8ff', '#f6d365'][k], -10.1 + (k % 3) * 0.5, 1.05, z - 0.3 + Math.floor(k / 3) * 0.55);
-      box(root, 0.08, 0.5, 0.08, '#cfd8dc', -9.6, 2.1, z); box(root, 0.3, 0.12, 0.3, '#cfd8dc', -9.6, 1.85, z);
-      solid(-10.4, z - 0.8, -8.8, z + 0.8);
-    }
-    station('claw', -8.1, -1.5, '🧸 Claw machine');
-    // Boop-a-Mole table
-    box(root, 2.2, 0.9, 1.6, '#43a047', -3, 0.45, 3); box(root, 2.3, 0.1, 1.7, '#ffe24a', -3, 0.92, 3);
-    const moles = [];
-    for (let k = 0; k < 6; k++) { box(root, 0.36, 0.04, 0.36, '#3e2723', -3.7 + (k % 3) * 0.7, 0.96, 2.6 + Math.floor(k / 3) * 0.75); moles.push(box(root, 0.24, 0.26, 0.24, '#9c7a5b', -3.7 + (k % 3) * 0.7, 0.9, 2.6 + Math.floor(k / 3) * 0.75)); }
-    box(root, 2.2, 1.2, 0.2, '#2e7d32', -3, 1.5, 2.15); box(root, 1.4, 0.3, 0.04, neon('#ffe24a', 0.8), -3, 1.75, 2.27);
-    solid(-4.1, 2.1, -1.9, 3.8);
-    station('mole', -3, 4.6, '🔨 Boop-a-Mole');
-    // the dance machine: lit pads on the floor and a big screen
-    const pads = [];
-    for (let k = 0; k < 9; k++) pads.push(box(root, 0.62, 0.05, 0.62, neon(NE[k % 5], 0.3), 4.3 + (k % 3) * 0.7, 0.03, -3.6 + Math.floor(k / 3) * 0.7));
-    box(root, 2.6, 2.4, 0.5, '#3f2a8a', 5, 1.2, -5.6); box(root, 2.2, 1.3, 0.05, neon('#b98bff', 0.9), 5, 1.5, -5.33); box(root, 2.7, 0.3, 0.55, neon('#ff5fa2', 1), 5, 2.5, -5.6);
-    solid(3.7, -5.9, 6.3, -5.3);
-    station('beat', 5, -1.4, '🎵 Paw Beat');
-    // the prize counter
-    box(root, 4, 1.1, 1, '#5b3fb0', 9.6, 0.55, 4); box(root, 4.2, 0.1, 1.2, neon('#ffe24a', 0.7), 9.6, 1.12, 4);
-    box(root, 4.2, 2.6, 0.4, '#2a2350', 9.6, 1.3, 6.4);
-    for (let r = 0; r < 3; r++) for (let k = 0; k < 6; k++) box(root, 0.32, 0.32, 0.3, ['#f4a6c6', '#9fd3f5', '#ffe082', '#b8e994', '#d7b8ff', '#ffcc80'][(k + r) % 6], 7.9 + k * 0.65, 0.6 + r * 0.75, 6.2);
-    solid(7.5, 3.5, 11.7, 4.6); solid(7.5, 6.1, 11.7, 6.7);
-    staff(9.6, 5.3, Math.PI, '#ff5fa2', '#1a1a1a');
-    station('prizes', 9.6, 2.6, '🎁 Prize counter');
-    round(0, 0, 0.01);
-    const anim = (t) => {
-      lights.forEach((l, k) => { l.visible = Math.sin(t * 5 + k * 1.3) > -0.3; });
-      pads.forEach((p, k) => { p.material.emissiveIntensity = 0.25 + 0.9 * Math.max(0, Math.sin(t * 6 + k * 2.1)); });
-      moles.forEach((m, k) => { m.position.y = 0.88 + Math.max(0, Math.sin(t * 2.3 + k * 1.9)) * 0.22; });
+    const h = hall(root, { w: 26, d: 20, floor: ['#1c1736', '#211a40', '#18132e'], wall: ['#2a2350', '#251e48'], trim: '#ff5fa2', wallH: 3.4, outside: '#3a3346', mat: '#ff5fa2',
+      tone: (x, z) => { const k = hash2(x * 3.1, z * 1.7); if (k < 0.03) return NE[Math.floor(k * 166) % 5]; if (Math.abs(x) < 1.4 && z > 3) return (Math.floor(z) & 1) ? '#2f2763' : '#3a2f7a'; return null; },
+      env: { sky: '#0c0a18', hemi: 0.6, sun: 0.36, noWeather: true, lit: true, fog: [26, 60] }, loop: { x: 5, z0: 3, z1: 7.5 } });
+    const { solid, station, staff, round, sign, bench } = h;
+    const blink = [];
+    // neon strips along the walls and the ceiling edge
+    box(root, 26, 0.1, 0.1, neon('#ff5fa2', 1.2), 0, 3.2, -9.8); box(root, 0.1, 0.1, 20, neon('#5be0ff', 1.2), -12.8, 3.2, 0);
+    box(root, 26, 0.08, 0.08, neon('#5be0ff', 1), 0, 0.3, -9.8); box(root, 0.08, 0.08, 20, neon('#ff5fa2', 1), -12.8, 0.3, 0);
+    for (const [x, t, c] of [[-6, '★ HIGH SCORE ★', '#ffe24a'], [6, 'GAME ON!', '#7cff6b']]) { box(root, 4.2, 0.7, 0.06, '#140f2b', x, 2.6, -9.94); box(root, 4.0, 0.06, 0.07, neon(c, 1), x, 2.95, -9.92); box(root, 4.0, 0.06, 0.07, neon(c, 1), x, 2.25, -9.92); sign(t, x, 2.6, -9.8, 0.38); }
+    const cabinet = (x, z, rot, c, k) => {
+      const g = pivot(root, x, 0, z); g.rotation.y = rot;
+      box(g, 1.2, 2.2, 1.0, '#3f2a8a', 0, 1.1, 0); box(g, 1.0, 0.7, 0.05, neon(c, 0.75), 0, 1.5, 0.52); box(g, 1.22, 0.32, 1.02, neon(NE[(k + 1) % 5], 1), 0, 2.32, 0);
+      box(g, 1.2, 0.12, 0.6, '#2a1c60', 0, 0.98, 0.7); box(g, 0.06, 0.16, 0.06, '#e53935', -0.3, 1.12, 0.75); box(g, 0.12, 0.12, 0.12, '#e53935', -0.3, 1.22, 0.75);
+      for (const bx of [0.1, 0.3]) box(g, 0.12, 0.05, 0.12, NE[(k + 2) % 5], bx, 1.06, 0.75);
+      blink.push(box(g, 0.25, 0.25, 0.04, neon(NE[(k + 3) % 5], 1), 0.2, 1.55, 0.555), box(g, 0.15, 0.15, 0.04, neon('#ffffff', 1), -0.25, 1.4, 0.555));
     };
-    return h.out({ anim });
+    // a row of cabinets along the back, and a back-to-back row in the middle
+    for (let k = 0; k < 8; k++) { cabinet(-10 + k * 2.6, -9.2, 0, NE[k % 5], k); solid(-10.6 + k * 2.6, -9.8, -9.4 + k * 2.6, -8.4); }
+    for (let k = 0; k < 4; k++) { const x = -1 + k * 1.3; cabinet(x, -4.2, 0, NE[(k + 2) % 5], k + 3); cabinet(x, -5.3, Math.PI, NE[k % 5], k + 1); }
+    solid(-1.7, -5.9, 3.5, -3.6);
+    // two claw machines
+    for (const z of [-4.5, -1.6]) {
+      box(root, 1.7, 0.95, 1.7, '#e53935', -10.4, 0.48, z); box(root, 1.7, 1.6, 1.7, glassMat('#b3e5fc', 0.32), -10.4, 1.75, z); box(root, 1.74, 0.3, 1.74, neon('#ffe24a', 1), -10.4, 2.7, z);
+      for (let k = 0; k < 8; k++) box(root, 0.28, 0.28, 0.28, ['#f4a6c6', '#9fd3f5', '#ffe082', '#b8e994', '#d7b8ff', '#f6d365', '#ffcc80', '#80deea'][k], -10.95 + (k % 3) * 0.5, 1.1 + Math.floor(k / 6) * 0.25, z - 0.4 + (Math.floor(k / 3) % 2) * 0.55);
+      box(root, 0.06, 0.5, 0.06, '#cfd8dc', -10.4, 2.25, z); box(root, 0.3, 0.12, 0.3, '#cfd8dc', -10.4, 2.0, z); box(root, 0.4, 0.3, 0.06, '#140f2b', -10.0, 0.8, z + 0.86);
+      solid(-11.3, z - 0.9, -9.5, z + 0.9);
+    }
+    station('claw', -8.6, -3, '🧸 Claw machine', 3.2, [-10.4, -3, 1.8, 4.6, 2.8]);
+    // Boop-a-Mole
+    box(root, 2.4, 0.95, 1.7, '#43a047', -4, 0.48, 3.2); box(root, 2.5, 0.1, 1.8, '#ffe24a', -4, 0.98, 3.2);
+    const moles = [];
+    for (let k = 0; k < 6; k++) { box(root, 0.38, 0.04, 0.38, '#3e2723', -4.75 + (k % 3) * 0.75, 1.03, 2.8 + Math.floor(k / 3) * 0.8); moles.push(box(root, 0.26, 0.28, 0.26, '#9c7a5b', -4.75 + (k % 3) * 0.75, 0.95, 2.8 + Math.floor(k / 3) * 0.8)); }
+    box(root, 2.4, 1.3, 0.2, '#2e7d32', -4, 1.6, 2.3); box(root, 1.6, 0.35, 0.04, neon('#ffe24a', 0.8), -4, 1.9, 2.42);
+    box(root, 0.08, 0.5, 0.08, '#8d6e63', -2.6, 1.25, 4.0); box(root, 0.3, 0.2, 0.2, '#ef5350', -2.6, 1.5, 4.0);
+    solid(-5.2, 2.2, -2.8, 4.1);
+    station('mole', -4, 5, '🔨 Boop-a-Mole', 3.0, [-4, 3.2, 2.4, 1.8, 1.8]);
+    // air hockey (just for looks) and a change machine
+    box(root, 2.2, 0.85, 1.2, '#1e88e5', 3.6, 0.42, 3.4); box(root, 2.1, 0.04, 1.1, '#e3f2fd', 3.6, 0.86, 3.4); box(root, 0.16, 0.06, 0.16, '#e53935', 3.2, 0.9, 3.5); box(root, 0.16, 0.06, 0.16, '#212121', 4.1, 0.9, 3.3);
+    solid(2.5, 2.8, 4.7, 4.0);
+    box(root, 0.9, 1.6, 0.6, '#90a4ae', -12.3, 0.8, 7.5); box(root, 0.5, 0.3, 0.04, neon('#7cff6b', 0.6), -12.3, 1.2, 7.82); round(-12.3, 7.5, 0.5);
+    // the dance machine: lit pads and a big screen, speakers on the sides
+    const pads = [];
+    for (let k = 0; k < 9; k++) pads.push(box(root, 0.64, 0.05, 0.64, neon(NE[k % 5], 0.3), 7.3 + (k % 3) * 0.72, 0.03, -3.4 + Math.floor(k / 3) * 0.72));
+    box(root, 2.8, 2.6, 0.6, '#3f2a8a', 8, 1.3, -5.6); box(root, 2.4, 1.4, 0.05, neon('#b98bff', 0.9), 8, 1.6, -5.28); box(root, 2.9, 0.32, 0.65, neon('#ff5fa2', 1), 8, 2.7, -5.6);
+    for (const sx of [6.2, 9.8]) { box(root, 0.7, 1.5, 0.6, '#212121', sx, 0.75, -5.4); box(root, 0.4, 0.4, 0.04, '#424242', sx, 1.0, -5.08); box(root, 0.26, 0.26, 0.04, '#424242', sx, 0.45, -5.08); }
+    solid(5.8, -6, 10.2, -5.0);
+    station('beat', 8, -1.0, '🎵 Paw Beat', 3.4, [8, -4, 3, 3, 2.8]);
+    // the prize counter: glass case, shelves of plushies, a ticket machine
+    box(root, 4.4, 1.1, 1, '#5b3fb0', 10, 0.55, 5); box(root, 4.4, 0.6, 1, glassMat('#e1f5fe', 0.4), 10, 1.4, 5); box(root, 4.5, 0.08, 1.1, neon('#ffe24a', 0.7), 10, 1.72, 5);
+    for (let k = 0; k < 6; k++) box(root, 0.3, 0.3, 0.3, ['#f4a6c6', '#9fd3f5', '#ffe082', '#b8e994', '#d7b8ff', '#ffcc80'][k], 8.4 + k * 0.6, 1.3, 5);
+    box(root, 4.6, 2.8, 0.4, '#2a2350', 10, 1.4, 7.6);
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 7; k++) box(root, 0.34, 0.34, 0.3, ['#f4a6c6', '#9fd3f5', '#ffe082', '#b8e994', '#d7b8ff', '#ffcc80', '#80deea'][(k + r) % 7], 8.1 + k * 0.62, 0.7 + r * 0.8, 7.35);
+    box(root, 1.6, 0.6, 0.06, neon('#ff5fa2', 0.9), 10, 3.1, 7.4); sign('🎁 PRIZES', 10, 3.1, 7.5, 0.4);
+    box(root, 0.7, 1.5, 0.6, '#ff5fa2', 12.4, 0.75, 4.2); box(root, 0.3, 0.12, 0.04, neon('#ffe24a', 0.8), 12.4, 1.1, 4.52); round(12.4, 4.2, 0.5);
+    solid(7.8, 4.5, 12.2, 5.5); solid(7.7, 7.3, 12.3, 7.9);
+    staff(10, 6.4, Math.PI, '#ff5fa2', '#1a1a1a');
+    station('prizes', 10, 3.4, '🎁 Prize counter', 3.4, [10, 5, 4.4, 1.2, 2]);
+    bench(-1, 8.6, 0, '#5b3fb0'); bench(-7, 8.6, 0, '#5b3fb0');
+    return h.out({ anim: (t) => {
+      blink.forEach((l, k) => { l.visible = Math.sin(t * 5 + k * 1.3) > -0.3; });
+      pads.forEach((p, k) => { p.material.emissiveIntensity = 0.25 + 0.9 * Math.max(0, Math.sin(t * 6 + k * 2.1)); });
+      moles.forEach((m, k) => { m.position.y = 0.93 + Math.max(0, Math.sin(t * 2.3 + k * 1.9)) * 0.24; });
+    } });
   }
 
-  // ----- the café upstairs: a counter with the espresso machine, the neighbors' big table -----
+  // ----- the café upstairs: a counter with cakes and the espresso machine, the neighbors' big table, window seats -----
   function buildCafeHall(root) {
-    const h = hall(root, { w: 18, d: 14, floor: ['#a0714a', '#996b45', '#a8774f'], wall: ['#f2dcc0', '#ecd2b2'], trim: '#5d3a22', wallH: 3.0,
-      tone: (x, z) => ((Math.floor(z) & 1) ? null : (hash2(x, z) < 0.5 ? '#8f6340' : null)), loop: { x: 3, z0: 0, z1: 4 }, outside: '#6d4c41' });
-    const { solid, station, fur, staff, plant, round } = h;
+    const h = hall(root, { w: 20, d: 16, floor: ['#a0714a', '#996b45', '#a8774f'], wall: ['#f2dcc0', '#ecd2b2'], trim: '#5d3a22', wallH: 3.0,
+      tone: (x, z) => ((Math.floor(z) & 1) ? null : (hash2(x, z) < 0.5 ? '#8f6340' : null)), loop: { x: 3, z0: 1, z1: 5 }, outside: '#6d4c41', mat: '#5d3a22' });
+    const { solid, station, fur, staff, plant, sign, round } = h;
     // the stairs you came up, going down outside the door
-    for (let k = 0; k < 4; k++) box(root, 3, 0.18, 0.5, '#8d5a34', 0, -0.1 - k * 0.2, 7.6 + k * 0.5);
-    // counter and espresso machine
-    box(root, 6, 1.1, 1, '#6d4128', 4.5, 0.55, -4.6); box(root, 6.2, 0.1, 1.2, '#f2e3c8', 4.5, 1.12, -4.6);
-    box(root, 0.9, 0.7, 0.6, '#b0bec5', 3, 1.5, -4.7); box(root, 0.7, 0.2, 0.5, '#455a64', 3, 1.95, -4.7); box(root, 0.1, 0.25, 0.1, '#263238', 2.8, 1.3, -4.35); box(root, 0.18, 0.15, 0.18, '#ffffff', 2.8, 1.2, -4.3);
-    for (let k = 0; k < 4; k++) box(root, 0.6, 0.5, 0.6, ['#f8bbd0', '#ffe082', '#c5e1a5', '#d7ccc8'][k], 4.8 + k * 0.7, 1.4, -4.7);
-    box(root, 3, 1.6, 0.08, '#263238', 4.5, 2.2, -6.9); box(root, 2.8, 1.4, 0.06, '#37474f', 4.5, 2.2, -6.85);
-    solid(1.4, -5.2, 7.6, -4);
-    staff(4.5, -5.6, 0, '#8d6e4f', '#3b2a1e');
-    station('latte', 3, -3.2, '☕ Latte art');
-    // the big table with neighbors around it
-    box(root, 3.4, 0.12, 1.6, '#8d5a34', -4, 0.78, 0.5); for (const [x, z] of [[-5.5, -0.1], [-2.5, -0.1], [-5.5, 1.1], [-2.5, 1.1]]) box(root, 0.12, 0.76, 0.12, '#6d4128', x, 0.38, z);
-    for (const [x, z] of [[-5, -0.6], [-3, -0.6]]) { fur('chair', x, z, 0); }
-    const n1 = staff(-5, 1.6, Math.PI, '#e57373', '#3b2a1e'); const n2 = staff(-3, 1.6, Math.PI, '#4db6ac', '#d9a441');
-    void n1; void n2;
-    box(root, 0.25, 0.25, 0.25, '#ffffff', -4.4, 0.95, 0.4); box(root, 0.25, 0.25, 0.25, '#ffffff', -3.4, 0.95, 0.6); box(root, 0.6, 0.15, 0.6, '#ffcc80', -4, 0.92, 0.5);
-    solid(-5.8, -0.4, -2.2, 1.4);
-    station('table', -4, 2.9, '💬 The neighbors’ table');
-    // little tables by the windows
-    for (const [x, z] of [[-6.5, -5], [-2.5, -5], [6.5, 3.5]]) { fur('table', x, z); round(x, z, 0.6); fur('chair', x + 0.9, z, -Math.PI / 2); }
-    for (const x of [-6, -2, 1]) { box(root, 1.4, 1.2, 0.06, '#ffffff', x, 1.8, -6.84); box(root, 1.2, 1.0, 0.07, M.window, x, 1.8, -6.82); }
-    box(root, 0.44, 0.1, 0.44, '#3d7fd6', 7.8, 0.05, 5.6); box(root, 0.32, 0.03, 0.32, M.water, 7.8, 0.1, 5.6);
-    plant(-8, 5.6, 0.9); plant(8, -2, 0.9);
-    return h.out();
-  }
-
-  // ----- the workshop hall: pottery wheel, sewing table, woodwork bench -----
-  function buildWorkshopHall(root) {
-    const h = hall(root, { w: 22, d: 16, floor: ['#bfa27e', '#b69871', '#c6aa87'], wall: ['#d9c3a2', '#cfb894'], trim: '#6d4c41', wallH: 3.4, loop: { x: 4, z0: 1, z1: 5 } });
-    const { solid, station, staff, round } = h;
-    // a tool wall
-    box(root, 8, 0.12, 0.2, '#6d4c41', -4, 2.4, -7.8);
-    for (let k = 0; k < 10; k++) box(root, 0.12, 0.5 + (k % 3) * 0.2, 0.08, ['#9e9e9e', '#795548', '#e53935', '#ffca28'][k % 4], -7.5 + k * 0.8, 2.0, -7.85);
-    // pottery: the wheel, shelves of pots, a kiln
-    box(root, 1.4, 0.6, 1.4, '#6d4c41', -6.5, 0.3, -3); box(root, 1.1, 0.08, 1.1, '#8d6e63', -6.5, 0.64, -3); box(root, 0.5, 0.45, 0.5, '#c86b4a', -6.5, 0.9, -3);
-    box(root, 2.4, 2, 0.6, '#8d5a34', -9.2, 1, -6.8); for (let k = 0; k < 6; k++) box(root, 0.35, 0.35, 0.35, ['#c86b4a', '#5aa9e6', '#ef6fa8', '#f5c542'][k % 4], -10 + (k % 3) * 0.75, 0.6 + Math.floor(k / 3) * 0.8, -6.6);
-    box(root, 1.4, 1.6, 1.4, '#78909c', -9.5, 0.8, -1.5); box(root, 0.8, 0.5, 0.08, neon('#ff8a3d', 0.8), -9.5, 0.7, -0.78);
-    solid(-7.2, -3.7, -5.8, -2.3); solid(-10.4, -7.2, -8, -6.4); solid(-10.2, -2.2, -8.8, -0.8);
-    station('pottery', -6.5, -1.4, '🏺 Pottery');
-    // sewing: a table with a machine and bolts of fabric
-    box(root, 2.6, 0.8, 1.2, '#a1785a', 0, 0.4, -4); box(root, 0.6, 0.4, 0.4, '#e0e0e0', -0.4, 1, -4); box(root, 0.1, 0.3, 0.1, '#9e9e9e', -0.2, 1.3, -4);
-    for (let k = 0; k < 5; k++) box(root, 0.3, 1.2, 0.3, ['#e5484d', '#3d7fd6', '#f5c542', '#3fbf7f', '#ef6fa8'][k], -1.6 + k * 0.8, 0.6, -6.6);
-    box(root, 1.4, 0.04, 1, '#ef6fa8', 0.6, 0.82, -4);
-    solid(-1.3, -4.6, 1.3, -3.4);
-    station('sewing', 0, -2.4, '🧵 Sewing');
-    staff(1.8, -5.2, 0, '#6b7a4a', '#3b2a1e');
-    // woodwork: a bench, planks, a saw, a half-painted dog house
-    box(root, 3, 0.9, 1.2, '#8d5a34', 6.5, 0.45, -4); box(root, 1.6, 0.1, 0.4, '#e3c08f', 6.2, 0.95, -4); box(root, 0.6, 0.04, 0.12, '#9e9e9e', 7.4, 0.95, -4);
-    for (let k = 0; k < 5; k++) box(root, 0.2, 2.2, 0.1, '#e3c08f', 8.6 + k * 0.25, 1.1, -7.6);
-    box(root, 1, 0.8, 1, '#7fb3d5', 9.4, 0.4, -2); box(root, 1.1, 0.3, 1.1, '#f5c542', 9.4, 0.95, -2);
-    solid(4.9, -4.7, 8.1, -3.3); solid(8.8, -2.6, 10, -1.4);
-    station('wood', 6.5, -2.4, '🪚 Woodwork');
-    // the shavings corner where dogs nap
-    for (let k = 0; k < 14; k++) box(root, 0.3, 0.06, 0.3, '#f3e2b3', 7 + (k % 5) * 0.5, 0.03, 4 + Math.floor(k / 5) * 0.5);
+    for (let k = 0; k < 5; k++) box(root, 3, 0.18, 0.5, '#8d5a34', 0, -0.1 - k * 0.2, 8.6 + k * 0.5);
+    // the counter: a pastry case, the espresso machine, cups, a menu board, pendant lamps
+    box(root, 7, 1.1, 1, '#6d4128', 4.5, 0.55, -5.4); box(root, 7.2, 0.1, 1.2, '#f2e3c8', 4.5, 1.12, -5.4);
+    box(root, 2.4, 0.6, 0.9, glassMat('#fffde7', 0.45), 6.6, 1.47, -5.4);
+    for (let k = 0; k < 6; k++) box(root, 0.3, 0.2 + (k % 2) * 0.08, 0.3, ['#f8bbd0', '#ffe082', '#c5e1a5', '#d7ccc8', '#ce93d8', '#ffab91'][k], 5.7 + (k % 3) * 0.6, 1.3 + Math.floor(k / 3) * 0.24, -5.4 + (k % 2) * 0.2);
+    box(root, 1, 0.75, 0.6, '#b0bec5', 2.6, 1.55, -5.6); box(root, 0.8, 0.2, 0.5, '#455a64', 2.6, 2.0, -5.6); box(root, 0.1, 0.25, 0.1, '#263238', 2.4, 1.32, -5.25); box(root, 0.18, 0.15, 0.18, '#ffffff', 2.4, 1.24, -5.2);
+    const steam = [0, 1, 2].map(() => box(root, 0.08, 0.08, 0.08, glassMat('#ffffff', 0.6), 2.4, 1.6, -5.2));
+    for (let k = 0; k < 5; k++) box(root, 0.14, 0.14, 0.14, '#ffffff', 3.4 + k * 0.2, 1.24, -5.0);
+    box(root, 3.2, 1.6, 0.08, '#263238', 4.5, 2.1, -7.86); box(root, 3.0, 1.4, 0.06, '#37474f', 4.5, 2.1, -7.82); sign('☕ Latte · Puppuccino · Cake', 4.5, 2.2, -7.7, 0.26);
+    for (const x of [2, 4.5, 7]) { box(root, 0.02, 0.8, 0.02, '#212121', x, 2.6, -5.4); box(root, 0.4, 0.3, 0.4, M.lamp, x, 2.1, -5.4); }
+    solid(0.9, -6, 8.1, -4.8);
+    staff(4.5, -6.5, 0, '#8d6e4f', '#3b2a1e');
+    station('latte', 2.6, -3.8, '☕ Latte art', 2.8, [4.5, -5.4, 7, 1.2, 2]);
+    // the neighbors' big table
+    box(root, 3.6, 0.12, 1.8, '#8d5a34', -4.5, 0.78, 0.5); for (const [x, z] of [[-6.1, -0.2], [-2.9, -0.2], [-6.1, 1.2], [-2.9, 1.2]]) box(root, 0.12, 0.76, 0.12, '#6d4128', x, 0.38, z);
+    for (const [x, z] of [[-5.5, -0.6], [-3.5, -0.6]]) fur('chair', x, z, 0, { nocol: true });
+    staff(-5.5, 1.7, Math.PI, '#e57373', '#3b2a1e'); staff(-3.5, 1.7, Math.PI, '#4db6ac', '#d9a441');
+    box(root, 0.25, 0.25, 0.25, '#ffffff', -5, 0.95, 0.4); box(root, 0.25, 0.25, 0.25, '#ffffff', -3.9, 0.95, 0.6); box(root, 0.7, 0.16, 0.7, '#ffcc80', -4.5, 0.92, 0.5); box(root, 0.5, 0.1, 0.5, '#f8bbd0', -4.5, 1.05, 0.5);
+    solid(-6.3, -0.3, -2.7, 1.3);
+    station('table', -4.5, 3.0, '💬 The neighbors’ table', 2.8, [-4.5, 0.6, 3.8, 2.6, 2]);
+    // little tables, window seats with cushions, a bookshelf, a dog corner
+    for (const [x, z] of [[-7.5, -5.5], [-3.5, -5.5], [7.5, 3.5], [3.5, 5.5]]) { fur('table', x, z, 0, { r: 0.6 }); fur('chair', x + 0.9, z, -Math.PI / 2, { nocol: true }); fur('chair', x - 0.9, z, Math.PI / 2, { nocol: true }); box(root, 0.16, 0.14, 0.16, '#ffffff', x, 0.86, z); }
+    for (const x of [-7, -3, 1]) { box(root, 1.6, 1.3, 0.06, '#ffffff', x, 1.8, -7.84); box(root, 1.4, 1.1, 0.07, M.window, x, 1.8, -7.82); box(root, 1.8, 0.4, 0.7, '#8d5a34', x, 0.2, -7.4); box(root, 1.6, 0.12, 0.6, '#ef9a9a', x, 0.46, -7.4); solid(x - 0.9, -7.8, x + 0.9, -7); }
+    box(root, 0.5, 2.2, 1.6, '#6d4128', -9.7, 1.1, 3.5); for (let k = 0; k < 8; k++) box(root, 0.3, 0.32, 0.12, ['#c0504d', '#3d7fd6', '#5f8a5c', '#e9a400'][k % 4], -9.4, 0.5 + Math.floor(k / 4) * 0.6, 2.9 + (k % 4) * 0.36); solid(-10, 2.6, -9.4, 4.4);
+    box(root, 2.2, 0.03, 1.4, '#ffcc80', 8, 0.02, 7); box(root, 0.44, 0.1, 0.44, '#3d7fd6', 7.4, 0.05, 7); box(root, 0.32, 0.03, 0.32, M.water, 7.4, 0.1, 7); box(root, 0.44, 0.1, 0.44, '#d64545', 8.5, 0.05, 7); sign('🐾 Dogs welcome', 8, 1.4, 7.4, 0.3);
+    plant(-9.2, 7.4, 0.9); plant(9.2, -3, 0.9); plant(-9.2, -2, 0.9);
     round(0, 0, 0.01);
-    return h.out();
+    return h.out({ anim: (t) => steam.forEach((s, k) => { const f = (t * 0.6 + k / 3) % 1; s.position.set(2.4 + Math.sin(t * 2 + k) * 0.05, 1.5 + f * 0.6, -5.2); s.scale.setScalar(1 + f); s.material.opacity = 0.6 * (1 - f); }) });
   }
 
-  // ----- the indoor pool: lanes, starting blocks, the diving board; dogs wait at the entrance -----
+  // ----- the workshop hall: the pottery corner with a kiln, the sewing table, the woodwork bench -----
+  function buildWorkshopHall(root) {
+    const h = hall(root, { w: 24, d: 18, floor: ['#bfa27e', '#b69871', '#c6aa87'], wall: ['#d9c3a2', '#cfb894'], trim: '#6d4c41', wallH: 3.6, loop: { x: 4, z0: 2, z1: 6 },
+      tone: (x, z) => (x < -4 && z < 0 ? ((Math.floor(x) + Math.floor(z)) & 1 ? '#c9a089' : '#d1ab95') : x > 4 && z < 0 ? (hash2(x, z) < 0.4 ? '#e3c08f' : null) : null) });
+    const { solid, station, staff, round, sign, plant, fur } = h;
+    // a pegboard of tools along the back
+    box(root, 9, 1.6, 0.06, '#c8a165', 0, 2.0, -8.94);
+    for (let k = 0; k < 14; k++) box(root, 0.1, 0.4 + (k % 3) * 0.2, 0.08, ['#9e9e9e', '#795548', '#e53935', '#ffca28', '#1e88e5'][k % 5], -4 + k * 0.6, 2.0, -8.88);
+    for (const [x, t] of [[-7.5, '🏺 Pottery'], [0, '🧵 Sewing'], [7.5, '🪚 Woodwork']]) sign(t, x, 3.1, -8.6, 0.45);
+    // pottery: the wheel (it turns), shelves of pots, the kiln glowing
+    box(root, 1.4, 0.6, 1.4, '#6d4c41', -7.5, 0.3, -4); const wheel = pivot(root, -7.5, 0.64, -4); box(wheel, 1.1, 0.08, 1.1, '#8d6e63'); box(wheel, 0.5, 0.45, 0.5, '#c86b4a', 0, 0.26, 0); box(wheel, 0.2, 0.08, 0.2, '#e08b6a', 0, 0.52, 0);
+    fur('chair', -7.5, -2.9, Math.PI, { nocol: true });
+    box(root, 3, 2.2, 0.6, '#8d5a34', -10, 1.1, -8.4);
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) { const c = ['#c86b4a', '#5aa9e6', '#ef6fa8', '#f5c542', '#3fbf7f', '#8a5cf6'][(k + r) % 6]; box(root, 0.36, 0.3 + (k % 2) * 0.12, 0.36, c, -11.1 + k * 0.72, 0.5 + r * 0.7, -8.2); }
+    box(root, 1.6, 1.8, 1.6, '#78909c', -11.4, 0.9, -2); box(root, 1.0, 0.6, 0.08, neon('#ff8a3d', 0.9), -11.4, 0.7, -1.18); box(root, 0.4, 0.8, 0.4, '#607d8b', -11.4, 2.2, -2.2);
+    box(root, 2.2, 0.8, 1, '#a1785a', -9.6, 0.4, -0.2); for (let k = 0; k < 4; k++) box(root, 0.3, 0.3, 0.3, '#c86b4a', -10.3 + k * 0.45, 0.95, -0.2);
+    solid(-8.2, -4.7, -6.8, -3.3); solid(-11.6, -8.8, -8.4, -8); solid(-12.2, -2.8, -10.6, -1.2); solid(-10.7, -0.7, -8.5, 0.3);
+    station('pottery', -7.5, -1.8, '🏺 Pottery wheel', 2.6, [-7.5, -4, 1.6, 1.6, 1.6]);
+    // sewing: a big table, a machine, bolts of fabric, a dress form, spools on the wall
+    box(root, 3, 0.8, 1.4, '#a1785a', 0, 0.4, -4.4); box(root, 0.7, 0.45, 0.45, '#e0e0e0', -0.6, 1.02, -4.4); box(root, 0.12, 0.35, 0.12, '#9e9e9e', -0.4, 1.32, -4.4); box(root, 1.6, 0.04, 1.1, '#ef6fa8', 0.7, 0.82, -4.4); box(root, 0.5, 0.04, 0.6, '#5aa9e6', 0.9, 0.86, -4.3);
+    for (let k = 0; k < 6; k++) box(root, 0.32, 1.4, 0.32, ['#e5484d', '#3d7fd6', '#f5c542', '#3fbf7f', '#ef6fa8', '#8a5cf6'][k], -2 + k * 0.8, 0.7, -8.2);
+    for (let k = 0; k < 12; k++) box(root, 0.12, 0.16, 0.12, ['#e5484d', '#3d7fd6', '#f5c542', '#3fbf7f'][k % 4], -1.6 + (k % 6) * 0.6, 1.4 + Math.floor(k / 6) * 0.3, -8.88);
+    mannequin(root, 2.6, -6.6, '#ef6fa8', '#ef6fa8');
+    fur('chair', 0, -3.3, Math.PI, { nocol: true });
+    solid(-1.6, -5.2, 1.6, -3.6); solid(-2.3, -8.5, 2.4, -7.9); round(2.6, -6.6, 0.4);
+    station('sewing', 0, -2.4, '🧵 Sewing table', 2.6, [0, -4.4, 3, 1.4, 1.6]);
+    staff(1.8, -5.4, -Math.PI / 4, '#6b7a4a', '#3b2a1e');
+    // woodwork: a bench with a vise, planks on a rack, saws on the wall, painted dog houses for show
+    box(root, 3.2, 0.9, 1.3, '#8d5a34', 7.5, 0.45, -4.4); box(root, 1.8, 0.1, 0.4, '#e3c08f', 7.2, 0.96, -4.4); box(root, 0.7, 0.04, 0.14, '#9e9e9e', 8.4, 0.96, -4.4); box(root, 0.3, 0.25, 0.3, '#455a64', 6.1, 1.0, -3.9);
+    for (let k = 0; k < 7; k++) box(root, 0.18, 2.6, 0.1, '#e3c08f', 9.6 + k * 0.24, 1.3, -8.6);
+    for (const [x, c, r] of [[5.4, '#7fb3d5', '#f5c542'], [10.8, '#ef9a9a', '#5d4037']]) { box(root, 1.1, 0.8, 1.1, c, x, 0.4, -1.4); box(root, 1.3, 0.3, 1.3, r, x, 0.95, -1.4); box(root, 0.5, 0.5, 0.04, '#3b2a1e', x, 0.3, -0.83); round(x, -1.4, 0.7); }
+    solid(5.8, -5.1, 9.2, -3.7); solid(9.4, -8.8, 11.4, -8.4);
+    station('wood', 7.5, -2.6, '🪚 Woodwork bench', 2.6, [7.5, -4.4, 3.2, 1.4, 1.6]);
+    // the wood-shavings corner where dogs nap, a work light, aprons on hooks
+    for (let k = 0; k < 20; k++) box(root, 0.32, 0.06, 0.32, k % 3 ? '#f3e2b3' : '#e3c08f', 8 + (k % 5) * 0.5, 0.03, 4.4 + Math.floor(k / 5) * 0.5);
+    sign('💤 Nap corner', 9, 1.2, 5.4, 0.3);
+    for (let k = 0; k < 3; k++) box(root, 0.06, 0.8, 0.5, ['#ef9a9a', '#90caf9', '#a5d6a7'][k], -11.9, 1.6, 4 + k * 0.8);
+    for (const x of [-6, 0, 6]) { box(root, 0.02, 1, 0.02, '#212121', x, 3.0, 2); box(root, 0.5, 0.25, 0.5, M.lamp, x, 2.4, 2); }
+    plant(-11.2, 7.4); plant(11.2, 7.4);
+    return h.out({ anim: (t) => { wheel.rotation.y = t * 3; } });
+  }
+
+  // ----- the indoor pool: lanes, starting blocks, the diving tower, a lifeguard; dogs wait at the entrance -----
   function buildPoolHall(root) {
     const POOL = { x0: -9, x1: 9, z0: -7, z1: 3 };
-    const h = hall(root, { w: 26, d: 20, floor: ['#e3f2f7', '#d6ecf3', '#eaf6fa'], wall: ['#d6ecf3', '#cfe7f0'], trim: '#4fb3e0', wallH: 4.2, blocks: [POOL], loop: { x: 11, z0: 5, z1: 8.5 } });
-    const { station, staff, solid } = h;
-    box(root, 18, 0.06, 10, '#4fb3e0', 0, 0.02, -2); box(root, 18.4, 0.1, 0.2, '#ffffff', 0, 0.05, -7.1); box(root, 18.4, 0.1, 0.2, '#ffffff', 0, 0.05, 3.1);
-    for (let l = 1; l < 4; l++) for (let x = -9; x < 9; x += 0.5) box(root, 0.4, 0.08, 0.08, (x * 2) & 1 ? '#e53935' : '#ffffff', x + 0.25, 0.08, -7 + l * 2.5);
-    for (let k = 0; k < 4; k++) { box(root, 0.6, 0.5, 0.6, '#ffffff', -9.5, 0.25, -5.75 + k * 2.5); box(root, 0.3, 0.06, 0.3, ['#e53935', '#3d7fd6', '#3fbf7f', '#f5c542'][k], -9.5, 0.53, -5.75 + k * 2.5); }
-    station('swim', -10.6, -1.4, '🏊 Swim race');
-    // the diving tower at the far end
-    for (const z of [-3, -1]) box(root, 0.2, 2.6, 0.2, '#b0bec5', 10.6, 1.3, z);
-    box(root, 1.4, 0.15, 2.4, '#90a4ae', 10.6, 2.6, -2); box(root, 3.2, 0.1, 0.8, '#ffffff', 8.6, 2.7, -2);
-    for (let k = 0; k < 7; k++) box(root, 0.6, 0.06, 0.06, '#b0bec5', 11.8, 0.3 + k * 0.35, -2);
-    solid(10.2, -3.4, 12.2, -0.6);
-    station('dive', 11, 0.6, '🤸 Diving board');
-    staff(-11.5, 4.5, Math.PI / 2, '#e53935', '#1a1a1a');
-    for (let k = 0; k < 4; k++) { box(root, 2.2, 0.4, 0.6, '#ffffff', -6 + k * 4, 0.2, 9); }
+    const h = hall(root, { w: 26, d: 20, floor: ['#e3f2f7', '#d6ecf3', '#eaf6fa'], wall: ['#d6ecf3', '#cfe7f0'], trim: '#4fb3e0', wallH: 4.4, blocks: [POOL], loop: { x: 11, z0: 5, z1: 8.5 }, mat: '#4fb3e0',
+      tone: (x, z) => (x > POOL.x0 - 0.6 && x < POOL.x1 + 0.6 && z > POOL.z0 - 0.6 && z < POOL.z1 + 0.6 ? '#ffffff' : null) });
+    const { station, staff, solid, sign, plant, bench, round } = h;
+    box(root, 18, 0.06, 10, '#4fb3e0', 0, 0.02, -2);
+    for (let l = 0; l < 4; l++) box(root, 16, 0.02, 0.2, '#1f6fa8', 0, 0.06, -5.75 + l * 2.5);
+    box(root, 18.4, 0.12, 0.2, '#ffffff', 0, 0.06, -7.1); box(root, 18.4, 0.12, 0.2, '#ffffff', 0, 0.06, 3.1); box(root, 0.2, 0.12, 10.2, '#ffffff', 9.1, 0.06, -2);
+    const ripples = [];
+    for (let k = 0; k < 18; k++) ripples.push(box(root, 0.8, 0.02, 0.12, glassMat('#b3e5fc', 0.7), 0, 0.07, 0));
+    for (let l = 1; l < 4; l++) for (let x = -9; x < 9; x += 0.5) box(root, 0.4, 0.08, 0.08, (Math.round(x * 2) & 1) ? '#e53935' : '#ffffff', x + 0.25, 0.1, -7 + l * 2.5);
+    for (let k = 0; k < 4; k++) { box(root, 0.6, 0.55, 0.6, '#ffffff', -9.6, 0.27, -5.75 + k * 2.5); box(root, 0.3, 0.06, 0.3, ['#e53935', '#3d7fd6', '#3fbf7f', '#f5c542'][k], -9.6, 0.57, -5.75 + k * 2.5); sign(String(k + 1), -9.6, 1.0, -5.75 + k * 2.5, 0.3); }
+    solid(-9.95, -7, -9.25, 3);
+    station('swim', -10.8, -2, '🏊 Swim race', 2.6, [-9.6, -2, 1, 10, 1.4]);
+    // the diving tower
+    for (const z of [-3, -1]) box(root, 0.22, 2.8, 0.22, '#b0bec5', 10.8, 1.4, z);
+    box(root, 1.6, 0.16, 2.4, '#90a4ae', 10.8, 2.8, -2); box(root, 3.4, 0.1, 0.8, '#ffffff', 8.8, 2.9, -2); box(root, 1.6, 0.06, 0.06, '#b0bec5', 10.8, 3.6, -3.1); box(root, 1.6, 0.06, 0.06, '#b0bec5', 10.8, 3.6, -0.9);
+    for (let k = 0; k < 8; k++) box(root, 0.6, 0.06, 0.06, '#b0bec5', 12.0, 0.3 + k * 0.34, -2);
+    solid(10.0, -3.4, 12.4, -0.6);
+    station('dive', 11.2, 0.6, '🤸 Diving board', 3.8, [10.8, -2, 2.4, 3, 3.2]);
+    // a lifeguard on a tall chair, the scoreboard, kickboards, plants
+    box(root, 0.9, 1.6, 0.9, '#e53935', -11.6, 0.8, 5.2); box(root, 0.9, 0.12, 0.9, '#ffffff', -11.6, 1.66, 5.2); staff(-11.6, 5.2, Math.PI / 2, '#e53935', '#1a1a1a', 1.7);
+    box(root, 5, 1.4, 0.1, '#263238', 0, 3.2, -9.9); box(root, 4.6, 1.0, 0.05, neon('#5be0ff', 0.4), 0, 3.2, -9.82); sign('🏊 50 m · Lane records', 0, 3.2, -9.7, 0.35);
+    for (let k = 0; k < 6; k++) box(root, 0.5, 0.08, 0.7, ['#ef5350', '#42a5f5', '#ffca28', '#66bb6a', '#ab47bc', '#ff7043'][k], 12.2, 0.05 + k * 0.08, 6); round(12.2, 6, 0.5);
+    for (let k = 0; k < 5; k++) box(root, 0.12, 1.4, 0.12, ['#ef5350', '#42a5f5', '#ffca28', '#66bb6a', '#ab47bc'][k], 11.0 + k * 0.2, 0.7, 7.6);
+    for (let k = 0; k < 4; k++) bench(-6 + k * 4, 9.2, 0, '#90a4ae');
+    plant(-12.2, -8.6, 1.1); plant(12.2, -8.6, 1.1);
     // towels at the entrance, where dogs wait
-    for (const x of [2.8, 4.2, 5.6]) box(root, 1.1, 0.04, 0.8, ['#ff8a3d', '#ef6fa8', '#5aa9e6'][Math.round((x - 2.8) / 1.4)], x, 0.02, 11);
-    return h.out({ dogWait: [[2.8, 11], [4.2, 11], [5.6, 11], [7, 11]] });
+    for (const [x, c] of [[2.8, '#ff8a3d'], [4.2, '#ef6fa8'], [5.6, '#5aa9e6'], [7, '#3fbf7f']]) box(root, 1.1, 0.04, 0.8, c, x, 0.02, 11);
+    sign('🐾 Dogs wait here', 4.9, 1.2, 11.6, 0.3);
+    round(0, 0, 0.01);
+    return h.out({ dogWait: [[2.8, 11], [4.2, 11], [5.6, 11], [7, 11]], anim: (t) => ripples.forEach((r, k) => { const a = k * 2.39; r.position.set(-8 + ((k * 3.7 + t * 0.8) % 16), 0.07, -6.5 + ((k * 1.9) % 9)); r.visible = Math.sin(t * 2 + a) > -0.2; }) });
   }
 
   // ----- mini golf by the sea (outdoors) -----
   function buildGolfPlace(root) {
-    const h = hall(root, { w: 28, d: 22, floor: ['#7cc56a', '#76bf63', '#83cb70'], walls: false, outside: '#6fb4e6', outside2: '#5aa4dc',
-      tone: (x, z) => (z < -8.5 ? (hash2(x, z) < 0.5 ? '#ecd9a4' : '#e3cd93') : null),
-      env: { sky: null }, loop: { x: 9, z0: 0, z1: 8 } });
-    const { station, staff, solid, round } = h;
-    // a white picket fence around, the gate at the front
-    for (let x = -14; x <= 14; x += 0.75) { if (Math.abs(x) < 1.8) continue; box(root, 0.09, 0.6, 0.09, '#f4efe6', x, 0.3, 11.1); }
-    for (let z = -11; z <= 11; z += 0.75) { box(root, 0.09, 0.6, 0.09, '#f4efe6', -14.1, 0.3, z); box(root, 0.09, 0.6, 0.09, '#f4efe6', 14.1, 0.3, z); }
-    box(root, 28.4, 0.08, 0.08, '#f4efe6', 0, 0.45, -11.1);
-    const sign = textSprite('⛳ Paws & Putts Mini Golf', 0.6); sign.position.set(0, 2.6, 11.4); root.add(sign);
-    for (const x of [-1.8, 1.8]) box(root, 0.2, 2.2, 0.2, '#f4efe6', x, 1.1, 11.1);
-    // holes to look at: felt greens with borders, a doghouse, hydrants, a big bone
-    const green = (x, z, w, d) => { box(root, w + 0.3, 0.16, d + 0.3, '#8d5a34', x, 0.08, z); box(root, w, 0.18, d, '#43a047', x, 0.1, z); solid(x - w / 2 - 0.15, z - d / 2 - 0.15, x + w / 2 + 0.15, z + d / 2 + 0.15); };
-    green(-9, -4, 6, 3); box(root, 0.12, 0.12, 0.12, '#1b1b1b', -11, 0.2, -4); box(root, 0.05, 0.9, 0.05, '#ffffff', -11, 0.65, -4); box(root, 0.3, 0.2, 0.03, '#e53935', -10.85, 1, -4);
-    box(root, 1.2, 0.9, 1.0, '#d9a066', -7.5, 0.6, -4); box(root, 1.4, 0.3, 1.2, '#c0392b', -7.5, 1.15, -4);
-    green(8, -4, 6, 3); for (const x of [6.5, 8, 9.5]) { box(root, 0.3, 0.6, 0.3, '#e53935', x, 0.5, -4); box(root, 0.5, 0.1, 0.12, '#ffca28', x, 0.5, -4); }
-    green(-9, 5, 5, 3); box(root, 2.2, 0.35, 0.5, '#f5ecd9', -9, 0.35, 5); for (const dx of [-1.2, 1.2]) for (const dz of [-0.3, 0.3]) box(root, 0.45, 0.4, 0.45, '#f5ecd9', -9 + dx, 0.35, 5 + dz);
-    green(9, 5, 5, 3); box(root, 1.5, 0.4, 1, '#5aa9e6', 9, 0.25, 5); box(root, 1.3, 0.05, 0.8, M.water, 9, 0.46, 5);
-    // a windmill shaped like a dog's head, turning
-    box(root, 1.6, 2.2, 1.6, '#d9a441', 0, 1.1, -7); box(root, 0.4, 0.6, 0.3, '#d9a441', -0.6, 2.4, -7); box(root, 0.4, 0.6, 0.3, '#d9a441', 0.6, 2.4, -7); box(root, 0.5, 0.3, 0.2, '#2b1d14', 0, 1.4, -6.15);
-    const mill = pivot(root, 0, 1.6, -6.1);
-    for (let k = 0; k < 4; k++) { const b = box(mill, 0.3, 1.8, 0.06, '#ffffff', 0, 0.9, 0); const p2 = pivot(mill); p2.rotation.z = (k * Math.PI) / 2; p2.add(b); }
-    solid(-0.9, -7.9, 0.9, -6.1);
-    // the clubhouse: putters, scorecards
-    box(root, 4, 2.2, 2.2, '#f4efe6', 6.5, 1.1, 8.6); box(root, 4.4, 0.4, 2.6, '#e53935', 6.5, 2.4, 8.6); box(root, 3, 0.1, 0.6, '#8d5a34', 6.5, 1.1, 7.4);
-    for (let k = 0; k < 5; k++) box(root, 0.06, 1, 0.06, ['#e53935', '#3d7fd6', '#f5c542', '#3fbf7f', '#8a5cf6'][k], 5 + k * 0.4, 1.4, 7.6);
-    solid(4.4, 7.4, 8.6, 9.8);
-    staff(6.5, 9.2, Math.PI, '#ffb74d', '#6d4c41');
-    station('golf', 6.5, 6.4, '⛳ Play nine holes');
-    for (const [x, z] of [[-12.5, 9.5], [12.5, -9.5], [-12.5, -9.5]]) { voxelTree(root, x, 0, z, mulberry32(Math.round(x * 7 + z)), 0.9); round(x, z, 0.6); }
+    const h = hall(root, { w: 30, d: 24, floor: ['#7cc56a', '#76bf63', '#83cb70'], walls: false, outside: '#6fb4e6', outside2: '#5aa4dc',
+      tone: (x, z) => (z < -9.5 ? (hash2(x, z) < 0.5 ? '#ecd9a4' : '#e3cd93') : (Math.abs(x) < 1.3 || Math.abs(z - 1.5) < 0.7) ? (hash2(x, z) < 0.5 ? '#d7ccc8' : '#cfc3bf') : null),
+      env: { sky: null }, loop: { x: 9, z0: 1.5, z1: 8 } });
+    const { station, staff, solid, round, sign, bench, lampPost } = h;
+    for (let x = -15; x <= 15; x += 0.75) { if (Math.abs(x) < 1.8) continue; box(root, 0.09, 0.6, 0.09, '#f4efe6', x, 0.3, 12.1); }
+    for (let z = -12; z <= 12; z += 0.75) { box(root, 0.09, 0.6, 0.09, '#f4efe6', -15.1, 0.3, z); box(root, 0.09, 0.6, 0.09, '#f4efe6', 15.1, 0.3, z); }
+    for (const z of [12.1]) { box(root, 13.2, 0.06, 0.06, '#f4efe6', -8.4, 0.45, z); box(root, 13.2, 0.06, 0.06, '#f4efe6', 8.4, 0.45, z); }
+    sign('⛳ Paws & Putts Mini Golf', 0, 2.8, 12.4, 0.6);
+    for (const x of [-1.8, 1.8]) { box(root, 0.24, 2.4, 0.24, '#f4efe6', x, 1.2, 12.1); box(root, 0.4, 0.4, 0.4, '#e53935', x, 2.5, 12.1); }
+    // the holes: felt greens with wooden borders, each with a dog-themed obstacle
+    const green = (x, z, w, d, num) => {
+      box(root, w + 0.3, 0.18, d + 0.3, '#8d5a34', x, 0.09, z); box(root, w, 0.2, d, '#43a047', x, 0.11, z);
+      solid(x - w / 2 - 0.15, z - d / 2 - 0.15, x + w / 2 + 0.15, z + d / 2 + 0.15);
+      sign(`Hole ${num}`, x - w / 2 + 0.6, 0.9, z + d / 2 + 0.2, 0.3);
+    };
+    const cup = (x, z) => { box(root, 0.14, 0.02, 0.14, '#1b1b1b', x, 0.22, z); box(root, 0.05, 0.9, 0.05, '#ffffff', x, 0.65, z); box(root, 0.32, 0.2, 0.03, '#e53935', x + 0.16, 1.0, z); };
+    green(-9.5, -5.5, 6, 3, 1); cup(-12, -5.5); box(root, 1.2, 0.9, 1.0, '#d9a066', -8, 0.6, -5.5); box(root, 1.4, 0.3, 1.2, '#c0392b', -8, 1.15, -5.5); box(root, 0.5, 0.5, 0.04, '#3b2a1e', -8, 0.45, -4.98);
+    green(9.5, -5.5, 6, 3, 2); cup(12, -5.5); for (const x of [8, 9.5, 11]) { box(root, 0.3, 0.6, 0.3, '#e53935', x, 0.5, -5.5); box(root, 0.5, 0.1, 0.12, '#ffca28', x, 0.55, -5.5); box(root, 0.2, 0.1, 0.2, '#e53935', x, 0.85, -5.5); }
+    green(-10, 5, 5, 3, 3); cup(-12, 5); box(root, 2.2, 0.35, 0.5, '#f5ecd9', -9.6, 0.38, 5); for (const dx of [-1.2, 1.2]) for (const dz of [-0.3, 0.3]) box(root, 0.45, 0.45, 0.45, '#f5ecd9', -9.6 + dx, 0.38, 5 + dz);
+    green(10, 5, 5, 3, 4); cup(12, 5); box(root, 1.5, 0.4, 1, '#5aa9e6', 9.6, 0.28, 5); box(root, 1.3, 0.05, 0.8, M.water, 9.6, 0.49, 5);
+    green(-4, 9, 4, 2, 5); cup(-5.5, 9); box(root, 0.8, 0.5, 0.6, '#d9a441', -3.4, 0.45, 9); box(root, 0.4, 0.4, 0.4, '#d9a441', -2.9, 0.6, 9.1); box(root, 0.08, 0.06, 0.04, '#2b1d14', -2.75, 0.65, 9.32);
+    // the dog-head windmill, turning
+    box(root, 1.8, 2.4, 1.8, '#d9a441', 0, 1.2, -7.8); box(root, 0.5, 0.7, 0.3, '#b8862f', -0.6, 2.7, -7.8); box(root, 0.5, 0.7, 0.3, '#b8862f', 0.6, 2.7, -7.8); box(root, 0.6, 0.3, 0.2, '#2b1d14', 0, 1.6, -6.85); for (const x of [-0.35, 0.35]) box(root, 0.15, 0.15, 0.04, '#2b1d14', x, 2.0, -6.88);
+    const mill = pivot(root, 0, 1.8, -6.8);
+    for (let k = 0; k < 4; k++) { const p2 = pivot(mill); p2.rotation.z = (k * Math.PI) / 2; box(p2, 0.34, 2, 0.06, k % 2 ? '#ffffff' : '#e53935', 0, 1, 0); }
+    solid(-1, -8.8, 1, -6.9);
+    // the clubhouse: putters, balls, a scoreboard
+    box(root, 5, 2.4, 2.4, '#f4efe6', 7.5, 1.2, 9.6); for (let k = 0; k < 5; k++) box(root, 1.0, 0.4, 2.8, k % 2 ? '#ffffff' : '#e53935', 5.5 + k * 1.0, 2.6, 9.6);
+    box(root, 3.6, 0.12, 0.7, '#8d5a34', 7.5, 1.1, 8.2); box(root, 3, 1.0, 0.04, '#d7ccc8', 7.5, 1.7, 8.38);
+    for (let k = 0; k < 6; k++) box(root, 0.05, 1, 0.05, ['#e53935', '#3d7fd6', '#f5c542', '#3fbf7f', '#8a5cf6', '#ff8a3d'][k], 5.8 + k * 0.35, 0.6, 8.0);
+    for (let k = 0; k < 8; k++) box(root, 0.1, 0.1, 0.1, ['#ffffff', '#ffeb3b', '#ff8a65', '#81d4fa'][k % 4], 6.8 + k * 0.2, 1.22, 8.2);
+    box(root, 2, 1.4, 0.2, '#2e7d32', 3.4, 1.4, 10.4); sign('Best today: 24', 3.4, 1.5, 10.3, 0.28);
+    solid(4.8, 8.2, 10.2, 10.9); solid(2.3, 10.2, 4.5, 10.6);
+    staff(7.5, 9.4, Math.PI, '#ffb74d', '#6d4c41');
+    station('golf', 7.5, 6.8, '⛳ Play nine holes', 3.0, [7.5, 9, 5, 2.6, 2.6]);
+    // picnic benches, flower beds, trees, the beach and a lighthouse out at sea
+    bench(-8, 0.4, 0); bench(8, 0.4, 0);
+    for (const [x, z] of [[-13.5, 0], [13.5, 0], [-13.5, 10], [-6.5, 1.5]]) { box(root, 1.2, 0.2, 1.2, '#8d6e63', x, 0.1, z); for (let k = 0; k < 4; k++) box(root, 0.2, 0.3, 0.2, ['#f48fb1', '#fff176', '#ce93d8', '#ff8a65'][k], x - 0.3 + (k % 2) * 0.6, 0.3, z - 0.3 + Math.floor(k / 2) * 0.6); }
+    for (const [x, z] of [[-13.5, 11], [13.5, -11], [-13.5, -11]]) { voxelTree(root, x, 0, z, mulberry32(Math.round(x * 7 + z)), 0.9); round(x, z, 0.6); }
+    lampPost(-2.5, 1.5); lampPost(2.5, 1.5);
+    box(root, 1, 4, 1, '#ffffff', 22, 2, -22); box(root, 1.02, 0.6, 1.02, '#e53935', 22, 1.2, -22); box(root, 1.02, 0.6, 1.02, '#e53935', 22, 3, -22); box(root, 0.8, 0.6, 0.8, M.lamp, 22, 4.3, -22);
     return h.out({ anim: (t) => { mill.rotation.z = t * 1.2; } });
   }
 
-  // ----- the Sunday flea market (outdoors, on the park square) -----
+  // ----- the Sunday flea market (outdoors): stalls with awnings, crates and rugs full of old things -----
   function buildFleaPlace(root) {
-    const h = hall(root, { w: 26, d: 22, floor: ['#cfc2a8', '#c2b397', '#d6cab2'], walls: false, outside: '#7cc56a', outside2: '#6db85c',
-      tone: (x, z) => ((Math.floor(x) + Math.floor(z)) % 3 === 0 ? '#bfae93' : null), env: { sky: null }, loop: { x: 7, z0: 0, z1: 7 } });
-    const { station, staff, solid, round } = h;
-    const stall = (x, z, a, b, wares, seller) => {
-      for (let s = 0; s < 8; s++) box(root, 0.5, 0.1, 2.4, s % 2 ? b : a, x - 1.75 + s * 0.5, 2.5, z);
-      for (const dx of [-2, 2]) for (const dz of [-1, 1]) box(root, 0.12, 2.5, 0.12, '#8d6e4f', x + dx, 1.25, z + dz);
-      box(root, 4, 0.9, 1.2, '#a5713f', x, 0.45, z + 0.6);
-      wares.forEach((t, k) => { const g = buildItem(t); g.position.set(x - 1.3 + k * 1.3, 0.9, z + 0.6); g.scale.setScalar(0.6); root.add(g); });
-      staff(x, z - 0.5, 0, seller[0], seller[1]);
-      solid(x - 2.1, z - 1.1, x + 2.1, z + 1.25);
+    const h = hall(root, { w: 28, d: 24, floor: ['#cfc2a8', '#c2b397', '#d6cab2'], walls: false, outside: '#7cc56a', outside2: '#6db85c',
+      tone: (x, z) => ((Math.floor(x) + Math.floor(z)) % 3 === 0 ? '#bfae93' : null), env: { sky: null }, loop: { x: 7, z0: 0, z1: 7.5 } });
+    const { station, staff, solid, round, sign, bench, lampPost } = h;
+    const stall = (x, z, a, b, wares, seller, label) => {
+      for (let s = 0; s < 9; s++) box(root, 0.5, 0.1, 2.6, s % 2 ? b : a, x - 2 + s * 0.5, 2.6, z);
+      for (let s = 0; s < 9; s++) box(root, 0.5, 0.25, 0.06, s % 2 ? b : a, x - 2 + s * 0.5, 2.45, z + 1.3);
+      for (const dx of [-2.1, 2.1]) for (const dz of [-1.1, 1.1]) box(root, 0.12, 2.6, 0.12, '#8d6e4f', x + dx, 1.3, z + dz);
+      box(root, 4.2, 0.9, 1.2, '#a5713f', x, 0.45, z + 0.6); box(root, 4.3, 0.04, 1.3, a === '#ffffff' ? b : a, x, 0.92, z + 0.6);
+      wares.forEach((t, k) => { const g = buildItem(t); g.position.set(x - 1.4 + k * 1.4, 0.94, z + 0.6); g.scale.setScalar(0.55); root.add(g); box(root, 0.2, 0.12, 0.02, '#fff8e1', x - 1.4 + k * 1.4 + 0.3, 1.0, z + 1.22); });
+      for (let k = 0; k < 3; k++) box(root, 0.6, 0.45, 0.5, '#8d6e4f', x - 1.5 + k * 1.5, 0.22, z - 0.6);
+      staff(x, z - 0.4, 0, seller[0], seller[1]);
+      sign(label, x, 3.2, z + 1.3, 0.38);
+      solid(x - 2.2, z - 1.2, x + 2.2, z + 1.3);
     };
-    stall(-8, -6, '#e5484d', '#ffffff', ['brasslamp', 'grandclock', 'vradio'], ['#b39ddb', '#d6d6d6']);
-    stall(0, -7, '#3d7fd6', '#ffffff', ['globe', 'gramophone', 'vtrunk'], ['#8d6e4f', '#4e342e']);
-    stall(8, -6, '#f5c542', '#ffffff', ['rocker', 'velvetchair', 'lamp'], ['#4db6ac', '#1a1a1a']);
-    station('stalls', 0, -4.2, '🧺 Browse the stalls', 3.2);
-    // rugs on the ground with odds and ends, crates, bunting
-    for (const [x, z, c] of [[-9, 3, '#7b2d5a'], [9, 3, '#2f4a8a']]) { box(root, 3, 0.04, 2, c, x, 0.02, z); for (let k = 0; k < 4; k++) box(root, 0.3, 0.3, 0.3, ['#c9a227', '#8d5a34', '#90caf9', '#e8d7b0'][k], x - 1 + k * 0.6, 0.17, z); }
-    for (const [x, z] of [[-11, -1], [11, -1], [-4, 6], [4, 6]]) { box(root, 0.8, 0.6, 0.8, '#a5713f', x, 0.3, z); round(x, z, 0.5); }
-    for (let k = 0; k < 18; k++) box(root, 0.3, 0.3, 0.04, ['#e5484d', '#f5c542', '#3d7fd6', '#3fbf7f'][k % 4], -12 + k * 1.4, 3.2 - Math.sin((k / 17) * Math.PI) * 0.3, -9.5);
-    for (const [x, z] of [[-12.5, 9.5], [12.5, 9.5], [-12.5, -10], [12.5, -10]]) { voxelTree(root, x, 0, z, mulberry32(Math.round(x * 3 + z * 5)), 1); round(x, z, 0.6); }
-    const sign = textSprite('🧺 Sunday flea market', 0.6); sign.position.set(0, 2.6, 11.4); root.add(sign);
+    stall(-9, -7, '#e5484d', '#ffffff', ['brasslamp', 'grandclock', 'vradio'], ['#b39ddb', '#d6d6d6'], 'Oma Gertrud');
+    stall(0, -8, '#3d7fd6', '#ffffff', ['globe', 'gramophone', 'vtrunk'], ['#8d6e4f', '#4e342e'], 'Herr Brandt');
+    stall(9, -7, '#f5c542', '#ffffff', ['rocker', 'velvetchair', 'lamp'], ['#4db6ac', '#1a1a1a'], 'Jules');
+    for (const x of [-9, 0, 9]) station('stalls', x, x ? -4.6 : -5.6, x ? '' : '🧺 Browse the stalls', 3.6, [x, x ? -7 : -8, 4.4, 2.6, 2.8]);
+    // smaller stalls for looks: records, books, a coffee cart
+    const table = (x, z, c, goods) => { box(root, 2.4, 0.8, 1, '#8d6e4f', x, 0.4, z); box(root, 2.5, 0.04, 1.1, c, x, 0.82, z); goods(x, z); solid(x - 1.25, z - 0.55, x + 1.25, z + 0.55); };
+    table(-10, 1.5, '#7b2d5a', (x, z) => { for (let k = 0; k < 10; k++) box(root, 0.36, 0.36, 0.04, ['#212121', '#c0504d', '#3d7fd6', '#f5c542'][k % 4], x - 1 + (k % 5) * 0.48, 1.0, z - 0.2 + Math.floor(k / 5) * 0.3); });
+    sign('🎵 Records', -10, 1.8, 1.5, 0.3);
+    table(10, 1.5, '#2f4a8a', (x, z) => { for (let k = 0; k < 12; k++) box(root, 0.18, 0.28, 0.36, ['#c0504d', '#3d7fd6', '#5f8a5c', '#e9a400', '#8a5cf6'][k % 5], x - 1.05 + k * 0.19, 0.98, z); });
+    sign('📚 Old books', 10, 1.8, 1.5, 0.3);
+    box(root, 1.6, 1.0, 1, '#6d4128', 0, 0.5, 9); box(root, 1.7, 0.08, 1.1, '#f2e3c8', 0, 1.04, 9); box(root, 0.5, 0.5, 0.4, '#b0bec5', -0.4, 1.3, 9); for (const s of [-0.75, 0.75]) box(root, 0.08, 1.4, 0.08, '#6d4128', s, 1.7, 8.5); box(root, 1.8, 0.1, 1.2, '#ef9a9a', 0, 2.4, 9);
+    for (const wx of [-0.6, 0.6]) box(root, 0.3, 0.3, 0.06, '#37474f', wx, 0.15, 9.55);
+    sign('☕ Coffee', 0, 2.9, 9, 0.32); solid(-0.9, 8.4, 0.9, 9.6); staff(0, 8.1, 0, '#8d6e4f', '#3b2a1e');
+    // rugs with odds and ends, crates, bunting, lamp posts, trees
+    for (const [x, z, c] of [[-6, 4.5, '#7b2d5a'], [6, 4.5, '#2f4a8a']]) { box(root, 3, 0.04, 2, c, x, 0.02, z); box(root, 2.6, 0.045, 1.6, '#e8d7b0', x, 0.025, z); for (let k = 0; k < 5; k++) box(root, 0.3, 0.25 + (k % 2) * 0.15, 0.3, ['#c9a227', '#8d5a34', '#90caf9', '#e8d7b0', '#ef9a9a'][k], x - 1.1 + k * 0.55, 0.17, z); }
+    for (const [x, z] of [[-12.5, -2], [12.5, -2], [-4.5, 9.5], [4.5, 9.5]]) { box(root, 0.8, 0.6, 0.8, '#a5713f', x, 0.3, z); box(root, 0.7, 0.5, 0.7, '#8d6e4f', x, 0.85, z); round(x, z, 0.5); }
+    for (const zz of [-10.5, -3.5]) for (let k = 0; k < 40; k++) box(root, 0.7, 0.03, 0.03, '#f4efe6', -13 + k * 0.69 + 0.35, 3.45 - Math.sin((k / 39) * Math.PI) * 0.4, zz);
+    for (const zz of [-10.5, -3.5]) for (let k = 0; k < 20; k++) box(root, 0.3, 0.3, 0.04, ['#e5484d', '#f5c542', '#3d7fd6', '#3fbf7f'][k % 4], -13 + k * 1.38, 3.3 - Math.sin((k / 19) * Math.PI) * 0.4, zz);
+    lampPost(-6, -2); lampPost(6, -2); lampPost(-6, 9.5); lampPost(6, 9.5);
+    bench(-3, 4.5, 0); bench(3, 4.5, 0);
+    for (const [x, z] of [[-13.5, 10.5], [13.5, 10.5], [-13.5, -11], [13.5, -11]]) { voxelTree(root, x, 0, z, mulberry32(Math.round(x * 3 + z * 5)), 1); round(x, z, 0.6); }
+    sign('🧺 Sunday flea market', 0, 2.8, 12.4, 0.6);
+    for (const x of [-1.8, 1.8]) { box(root, 0.24, 2.4, 0.24, '#8d6e4f', x, 1.2, 12.1); }
+    box(root, 3.8, 0.4, 0.2, '#e5484d', 0, 2.3, 12.1);
     return h.out();
   }
 
