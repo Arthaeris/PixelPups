@@ -689,7 +689,7 @@ window.VP_DATA = (function () {
   // ===================================================================
   const LOCATIONS = {
     park: {
-      name: 'Neighborhood Park', icon: '🌳', desc: 'Sniff spots, a fountain and a pond. Where it all began.',
+      name: 'Neighborhood Park', icon: '🌳', desc: 'A fountain plaza, a pond with ducks, a playground and a hill with a view. Where it all began.',
       unlock: null, dirt: { dry: 'grass', wet: 'mud' }, walkers: [3, 5], loop: { x: 11, z0: -11, z1: 11 },
       loot: { coins: 62, find: 12, ingredient: 16, toy: 10 }, ingredients: ['berries', 'apple', 'honey', 'carrot'],
     },
@@ -1583,7 +1583,7 @@ window.VP_DATA = (function () {
   // Meetups: now and then a neighbor asks you to meet them somewhere. [name, x, z, hidden spot that must be found first]
   // ===================================================================
   const MEET_SPOTS = {
-    park: [['the lookout on the hill', 36, -14.5], ['the pond steps', -0.6, -4], ['the bench by the gate', 4, 14], ['the east meadow', 33, -3.5], ['the rose garden', -24.5, -4, 'roses']],
+    park: [['the pavilion on the hill', 34.4, -13.6], ['the jetty', -16, -3.2], ['the fountain', 2.2, 15.4], ['the picnic tables', 33.6, 6.6], ['the rose garden', -29, -8.2, 'roses']],
     oldtown: [['the fountain', 0, 7.6], ['the canal steps', 21, -13], ['the café tables', -11.8, 9.4], ['the courtyard', 9.6, -21.5, 'courtyard']],
     forest: [['the west glade', -15.6, 2], ['the bench on the terrace', 24, -17.6], ['the pond', -5, -2.4], ['the hollow tree', -25.5, -1, 'hollowtree']],
     beach: [['the lighthouse', 28.5, -8], ['the boardwalk', 0, 9.2], ['the ice cream kiosk', -12, 5], ['the dunes', -8, 15.6]],
