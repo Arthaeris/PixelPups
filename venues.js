@@ -292,17 +292,29 @@ window.PPVenues = function (G) {
       if (!drag.moved && Math.hypot(dx, dy) > 7) drag.moved = true;
       if (drag.moved) { mapPan.x = drag.px + dx; mapPan.y = drag.py + dy; applyPan(); }
     });
+    // the browser still sends a click for this same tap after pointerup; on Android and desktop it can land on
+    // whatever just opened under the finger (the walk picker's backdrop), so swallow that one click
+    const eatClick = () => {
+      const t0 = performance.now();
+      const eat = (ev) => { window.removeEventListener('click', eat, true); if (performance.now() - t0 < 600) { ev.stopPropagation(); ev.preventDefault(); } };
+      window.addEventListener('click', eat, true);
+      setTimeout(() => window.removeEventListener('click', eat, true), 650);
+    };
     const up = () => {
       if (!drag) return;
       const d = drag;
       drag = null;
       if (d.moved) return;
+      eatClick();
       if (d.pin) tapPin(d.pin.dataset.id);
       else selectPin(null);
     };
     view.addEventListener('pointerup', up);
     view.addEventListener('pointercancel', () => { drag = null; });
-    $('wmPack').addEventListener('click', (e) => { if (e.target.id === 'wmPack') closePack(); });
+    // tapping the dark backdrop closes the picker, but only a tap that also started there
+    let backDown = false;
+    $('wmPack').addEventListener('pointerdown', (e) => { backDown = e.target.id === 'wmPack'; });
+    $('wmPack').addEventListener('click', (e) => { if (e.target.id === 'wmPack' && backDown && performance.now() - packAt > 400) closePack(); backDown = false; });
   }
   function applyPan() {
     const view = $('wmView'), W = MW * SC, H = MH * SC;
@@ -459,7 +471,7 @@ window.PPVenues = function (G) {
     if (h % 1000 >= 25) return null;
     return STAY[(h >> 10) % STAY.length];
   }
-  let packFor = null, packPick = new Set();
+  let packFor = null, packPick = new Set(), packAt = 0;
   function openPack(id) {
     packFor = id;
     const dogs = G.dogs, sit = G.sitter;
@@ -468,6 +480,7 @@ window.PPVenues = function (G) {
     const useLast = Array.isArray(last) && (!last.length || last.some((k) => dogs.some((d) => d.id === k)));
     for (const d of dogs) if (!stayReason(d) && (!useLast || last.includes(d.id))) packPick.add(d.id);
     if (sit) packPick.add('sit');
+    packAt = performance.now();
     renderPack();
     $('wmPack').classList.remove('hidden');
   }
