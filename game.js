@@ -4755,34 +4755,12 @@
     if (pos) confetti(pos.clone().add(new V3(0, 1, 0)));
     save();
   }
-  // auto-feeders and fountains fill up again a few seconds after a dog empties them
-  const fillAnims = [];
   function autoRefill() {
-    if (visit) return;
-    const wait = (CONFIG.AUTO_REFILL_SECONDS || 15) * 1000 / (houseTier() >= 3 ? 2 : 1);
+    const mins = CONFIG.AUTO_REFILL_MINUTES * 60000 / (houseTier() >= 3 ? 2 : 1);
     for (const f of state.furniture) {
       if (!D.ITEMS[f.type].auto || f.filled) continue;
-      if (!f.emptiedAt || f.emptiedAt > Date.now()) f.emptiedAt = Date.now();
-      if (Date.now() - f.emptiedAt >= wait) { f.filled = true; f.emptiedAt = 0; refillAnim(f); }
-    }
-  }
-  function refillAnim(f) {
-    refreshBowl(f);
-    const r = furnRT.get(f), c = r && r.group.userData.content;
-    if (c) { c.scale.y = 0.05; fillAnims.push({ c, t: 0 }); }
-    if (place === 'home') {
-      const water = D.ITEMS[f.type].role === 'water';
-      const at = tileCenter(f);
-      for (let k = 0; k < 5; k++) setTimeout(() => spawnEmoji(water ? '💧' : '🟤', at.clone().add(new V3(rand(-0.15, 0.15), 1.1, rand(-0.15, 0.15))), { size: 0.22, life: 0.6, vy: -1.4 }), k * 110);
-      sfx(water ? 'plip' : 'bounce');
-    }
-  }
-  function updateFillAnims(dt) {
-    for (let k = fillAnims.length - 1; k >= 0; k--) {
-      const A = fillAnims[k];
-      A.t += dt;
-      A.c.scale.y = Math.min(1, 0.05 + A.t / 0.8);
-      if (A.t >= 0.8) { A.c.scale.y = 1; fillAnims.splice(k, 1); }
+      if (!f.emptiedAt) f.emptiedAt = Date.now();
+      if (Date.now() - f.emptiedAt >= mins) { f.filled = true; f.emptiedAt = 0; refreshBowl(f); }
     }
   }
 
@@ -8296,58 +8274,10 @@
   const joyWake = () => { joyBase.classList.remove('fade'); clearTimeout(joyFadeT); joyFadeT = setTimeout(() => joyBase.classList.add('fade'), 1100); };
   const MODALS = ['weather', 'creator', 'hub', 'shop', 'start', 'bag', 'confirm', 'litter', 'settings', 'trickBook', 'bath', 'kitchen', 'meals', 'wardrobe', 'comfort', 'giftModal', 'map', 'daily', 'album', 'photoPreview', 'ranks', 'dogSheet', 'house', 'people', 'bathFull', 'journal', 'away', 'inbox', 'playSheet', 'bedSheet', 'courseSheet', 'tourney', 'paint', 'mail', 'tmapSheet', 'nameAsk', 'bake', 'stall', 'museum', 'critters', 'gazette', 'friends', 'mpPlayer'];
   // sheets: a soft sound when they open and close; tips step aside while one is open
-  // ----- going back: a menu opened from another menu returns there when you close it -----
-  const NAV = { parent: {}, lastClose: null, userClose: null, backing: false };
-  const NAV_SKIP = new Set(['confirm', 'start', 'nameAsk', 'photoPreview', 'bathFull', 'away', 'tourney', 'mpPlayer', 'giftModal']);
-  function navReopen(id) {
-    const tab = setTab;
-    const R = {
-      hub: openHub, settings: () => { openSettings(); setSettingsTab(tab); }, friends: openFriends, bag: openBag, house: openHouse, people: openPeople,
-      album: openAlbum, daily: openDaily, ranks: openRanks, shop: () => openShop(shopVendor), mail: openMail, critters: openCritters, museum: openMuseum,
-      playSheet: () => { if (playDog) openPlay(playDog); }, dogSheet: () => { if (sheetDog) openDogSheet(sheetDog); }, inbox: openInbox,
-    }[id];
-    NAV.backing = true;
-    try { if (R) R(); else $(id).classList.remove('hidden'); } catch (_) { $(id).classList.remove('hidden'); }
-    setTimeout(() => { NAV.backing = false; }, 0);
-  }
-  function setBackIcon(id, back) {
-    const x = $(id) && $(id).querySelector('.sheetHead .x');
-    if (!x) return;
-    if (back && !x.dataset.orig) { x.dataset.orig = x.innerHTML; x.innerHTML = IC('left'); x.setAttribute('aria-label', 'Back'); x.classList.add('back'); }
-    else if (!back && x.dataset.orig) { x.innerHTML = x.dataset.orig; delete x.dataset.orig; x.setAttribute('aria-label', 'Close'); x.classList.remove('back'); }
-  }
-  function navOpened(id) {
-    if (NAV_SKIP.has(id)) return;
-    if (!NAV.backing) {
-      const lc = NAV.lastClose;
-      if (lc && !lc.user && lc.id !== id && Date.now() - lc.at < 700 && !NAV_SKIP.has(lc.id) && NAV.parent[lc.id] !== id) NAV.parent[id] = lc.id;
-      else delete NAV.parent[id];
-    }
-    setBackIcon(id, !!NAV.parent[id]);
-  }
-  const NAV_OFF = /[?&]nonav\b/.test(location.search);   // for automated tests of single sheets
-  function navClosed(id) {
-    if (NAV_SKIP.has(id) || NAV_OFF) return;
-    const user = NAV.userClose && NAV.userClose.id === id && Date.now() - NAV.userClose.at < 700;
-    NAV.lastClose = { id, at: Date.now(), user };
-    if (!user) return;
-    NAV.userClose = null;
-    const p = NAV.parent[id];
-    delete NAV.parent[id];
-    setBackIcon(id, false);
-    if (p) setTimeout(() => { if (!modalOpen() && !title && (mode === 'normal' || p === 'hub')) navReopen(p); }, 30);
-  }
-  // a tap on a close button (or next to a sheet) is you closing it yourself
-  document.addEventListener('click', (e) => {
-    const t = e.target;
-    if (!t || !t.closest) return;
-    const m = t.classList && t.classList.contains('modal') ? t : (t.closest('.sheetHead .x, [data-act^="close"]') || { closest: () => null }).closest('.modal');
-    if (m && m.id) NAV.userClose = { id: m.id, at: Date.now() };
-  }, true);
   const modalWatch = new MutationObserver((muts) => {
     for (const m of muts) {
       const was = (m.oldValue || '').includes('hidden'), now = m.target.classList.contains('hidden');
-      if (was !== now) { sfx(now ? 'close' : 'open'); if (now) navClosed(m.target.id); else navOpened(m.target.id); }
+      if (was !== now) sfx(now ? 'close' : 'open');
     }
     document.body.classList.toggle('sheetOpen', modalOpen());
   });
@@ -10997,7 +10927,7 @@
     if (lostDog) P.push([lostDog.pos.x, lostDog.pos.z, 'lost']);
     return P;
   }
-  const MM_LABEL = { exit: 'Way home', shop: 'Shop', sniff: 'Sniff spot', gold: 'Something shiny', magic: 'Magic', special: 'Something to do', ticket: 'Game booth', flag: 'Checkpoint', lost: 'Lost dog', you: 'You', dog: 'Your dogs', walker: 'Neighbors', online: 'Other players', friend: 'Friends online' };
+  const MM_LABEL = { exit: 'Way home', shop: 'Shop', sniff: 'Sniff spot', gold: 'Something shiny', magic: 'Magic', special: 'Something to do', ticket: 'Game booth', flag: 'Checkpoint', lost: 'Lost dog', you: 'You', dog: 'Your dogs', walker: 'Neighbors' };
   function mmGlyph(x, k, px, py, s) {
     x.save();
     x.translate(px, py);
@@ -11041,14 +10971,6 @@
     const used = new Set(['you']);
     for (const [px, pz, kind] of mmPoints()) { mmGlyph(x, kind, toPx(px), toPz(pz), kind === 'sniff' ? s * 0.8 : s); used.add(kind); }
     for (const w of walkers) { const p = w.parts.root.position; x.fillStyle = 'rgba(80,70,110,0.75)'; x.beginPath(); x.arc(toPx(p.x), toPz(p.z), s * 0.55, 0, TAU); x.fill(); used.add('walker'); }
-    // other players online: a bright ring, green for friends, so they never look like neighbors
-    for (const P of LIVE.others.values()) {
-      const p = P.parts.root.position, fr = (onl().friends[P.uid] || {}).st === 'friend';
-      x.fillStyle = fr ? '#2ecc71' : '#00b8d4'; x.strokeStyle = '#ffffff'; x.lineWidth = Math.max(1.5, s * 0.3);
-      x.beginPath(); x.arc(toPx(p.x), toPz(p.z), s * 0.8, 0, TAU); x.fill(); x.stroke();
-      x.fillStyle = '#ffffff'; x.beginPath(); x.arc(toPx(p.x), toPz(p.z), s * 0.28, 0, TAU); x.fill();
-      used.add(fr ? 'friend' : 'online');
-    }
     for (const d of dogs) {
       const p = d.root.position, C = ART.coatOf(d.breed, d.coat);
       x.fillStyle = C.body; x.strokeStyle = '#fff'; x.lineWidth = s * 0.3;
@@ -11495,8 +11417,6 @@
       if (!tiredWarned && dogs.some((d) => d.energy < CRITICAL)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
     } else {
       for (const r of furnRT.values()) if (r.group.userData.anim) r.group.userData.anim(animT);
-      updateFillAnims(dt);
-      if (!visit && state.furniture.some((f) => D.ITEMS[f.type].auto && !f.filled)) autoRefill();
       if (mode === 'normal') setCtx(funCtx());
       buildInnerWalls();
     }
@@ -14514,8 +14434,6 @@
       const N = D.NEIGHBORS.find((x) => x.owner === T.owner);
       news({ title: `${T.owner} is back`, text: `${T.owner} is waiting at your front door to pick up ${N.dog.name}.`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
     }
-    // after a day the owner always takes their dog back: if nobody comes to the door, they let themselves in
-    if (T.ready && place === 'home' && !visit && Date.now() > T.until + D.SIT.grace * 60000) { finishSitting(true); return; }
     if (T.ready && place === 'home' && !sitOwner) {
       const N = D.NEIGHBORS.find((x) => x.owner === T.owner);
       sitOwner = ART.buildPlayer({ shirt: N.shirt, hair: N.hair });
@@ -14526,7 +14444,7 @@
     }
   }
   const nearSitOwner = (pp) => sitOwner && place === 'home' && flatDist(sitOwner.root.position, pp) < 2.4;
-  function finishSitting(auto) {
+  function finishSitting() {
     const T = state.sitting, N = T && D.NEIGHBORS.find((x) => x.owner === T.owner);
     if (!T || !N) return;
     const d = sitDog || { happy: (T.data || {}).happy || 60, hunger: (T.data || {}).hunger || 60 };
@@ -14543,8 +14461,7 @@
     state.stats.sits = (state.stats.sits || 0) + 1;
     progress('sitting');
     const misses = [T.walks < 1 && 'a walk', T.petted < 3 && 'more cuddles', !(d.hunger >= 45) && 'a full bowl'].filter(Boolean);
-    if (auto) news({ title: `${T.owner} picked up ${N.dog.name}`, text: `${T.owner} came by and took ${N.dog.name} home. ${nfill(pick(D.SIT_THANKS), N)} (+🪙 ${coins})`, th: `<img class="th" src="${ART.personPortraitURL(N)}" alt="">` });
-    else toast(`${T.owner}: ${nfill(pick(D.SIT_THANKS), N)} +🪙 ${coins}`);
+    toast(`${T.owner}: ${nfill(pick(D.SIT_THANKS), N)} +🪙 ${coins}`);
     if (misses.length) setTimeout(() => toast(`Next time ${N.dog.name} would like ${misses.join(' and ')}`), 2600);
     confetti(player.root.position.clone().add(new V3(0, 1.4, 0)), 4);
     state.sitting = null;
