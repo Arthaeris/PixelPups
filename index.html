@@ -132,10 +132,22 @@
   <div id="toyPicker" class="glass hidden"></div>
 
   <div id="photoBar" class="hidden">
-    <button class="roundBtn glass" id="photoMe" aria-label="Show or hide yourself"><i data-i="dog"></i></button>
-    <button class="roundBtn glass off hidden" id="photoName" aria-label="Show your name in the photo"><i data-i="person"></i></button>
-    <button id="shutter" aria-label="Take photo"><span></span></button>
-    <button class="roundBtn glass" id="photoExit" aria-label="Leave photo mode"><i data-i="x"></i></button>
+    <div id="photoGrid" class="hidden"><i></i><i></i><i></i><i></i></div>
+    <div class="phTop">
+      <button class="roundBtn glass" id="photoExit" aria-label="Leave photo mode"><i data-i="x"></i></button>
+      <span class="phHint" id="photoHint">Drag to move around · pinch to zoom · two fingers to pan</span>
+      <button class="roundBtn glass" id="photoHide" aria-label="Hide the controls"><i data-i="expand"></i></button>
+    </div>
+    <div class="phPanel glass" id="photoPanel">
+      <div class="segs phTabs" id="photoTabs"><button class="seg sel" data-pt="cam">Camera</button><button class="seg" data-pt="look">Look</button><button class="seg" data-pt="pose">Pose</button><button class="seg" data-pt="frame">Frame</button></div>
+      <div class="phBody" id="photoBody"></div>
+    </div>
+    <div class="phShoot">
+      <button class="roundBtn glass" id="photoMe" aria-label="Show or hide yourself"><i data-i="person"></i></button>
+      <button class="roundBtn glass off hidden" id="photoName" aria-label="Show your name in the photo"><i data-i="note"></i></button>
+      <button id="shutter" aria-label="Take photo"><span></span></button>
+      <button class="roundBtn glass" id="photoSubject" aria-label="Look at the next dog"><i data-i="dog"></i></button>
+    </div>
   </div>
   <div id="photoFlash"></div>
   <div id="photoPreview" class="modal center hidden">
@@ -648,6 +660,9 @@
         <label class="toggle"><span>Sound effects</span><input type="checkbox" id="optSfx"><i></i></label>
         <label class="toggle"><span>Jukebox music</span><input type="checkbox" id="optMusic"><i></i></label>
         <p class="sub small">Music plays at home while a Jukebox is switched on.</p>
+        <div id="gfxBox"><div class="section"><i data-i="sparkle"></i>Graphics</div>
+        <div class="segs gfxSegs" id="optGfx"><button class="seg" data-gfx="auto">Automatic</button><button class="seg" data-gfx="2">Full</button><button class="seg" data-gfx="1">Balanced</button><button class="seg" data-gfx="0">Light</button></div>
+        <p class="sub small" id="gfxInfo">Shadows and outlines. Automatic turns them down if your phone needs it.</p></div>
         <div class="section"><i data-i="hand"></i>Comfort</div>
         <label class="toggle"><span>Little buzzes</span><input type="checkbox" id="optHaptics"><i></i></label>
         <p class="sub small">A short buzz when you throw, catch, pet and find things, on phones that can do it.</p>
@@ -732,9 +747,49 @@
     </div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
-    ['data.js', 'art.js', 'venues.js', 'game.js'].forEach(function (f) { document.write('<script src="' + f + (window.PP_BUST || '') + '"><\/script>'); });
+    // three.js r186 comes in as a module; if that ever fails, the game falls back to the older r128 and its old look
+    (function () {
+      var done = false;
+      function start() {
+        if (done) return;
+        done = true;
+        ['data.js', 'art.js', 'venues.js', 'game.js'].forEach(function (f) {
+          var s = document.createElement('script');
+          s.src = f + (window.PP_BUST || '');
+          s.async = false;
+          document.body.appendChild(s);
+        });
+      }
+      function classic() {
+        if (done || window.PP_CLASSIC) return;
+        window.PP_CLASSIC = true;
+        var s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+        s.onload = start;
+        document.head.appendChild(s);
+      }
+      // the new three.js needs WebGL 2 (every phone from the last years has it); without it, the older version
+      var gl2 = typeof window.WebGL2RenderingContext !== 'undefined';
+      if (!gl2) { classic(); return; }
+      var slow = setTimeout(classic, 12000);
+      var CDN = 'https://cdn.jsdelivr.net/npm/three@0.186.0/build/';
+      try {
+        var imp = new Function('u', 'return import(u)');
+        // the small (minified) build first, the full one if that isn't there
+        imp(CDN + 'three.module.min.js').catch(function () { return imp(CDN + 'three.module.js'); }).then(function (T) {
+          clearTimeout(slow);
+          if (done || window.PP_CLASSIC) return;
+          if (!T || !T.WebGLRenderer) { classic(); return; }
+          var THREE = Object.assign({}, T);
+          // painted textures (floors, signs, labels, pictures) hold normal colours, not raw light values
+          THREE.CanvasTexture = class extends T.CanvasTexture { constructor(...a) { super(...a); this.colorSpace = T.SRGBColorSpace; } };
+          THREE.Texture = class extends T.Texture { constructor(...a) { super(...a); this.colorSpace = T.SRGBColorSpace; } };
+          window.THREE = THREE;
+          start();
+        }, function () { clearTimeout(slow); classic(); });
+      } catch (e) { clearTimeout(slow); classic(); }
+    })();
   </script>
 </body>
 </html>
