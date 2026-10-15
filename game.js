@@ -89,7 +89,7 @@
     return l;
   }
   const pairKey = (a, b) => [a, b].sort().join('|');
-  const GLYPH = { T: 'tap', H: 'hold', S: 'press', u: 'up', d: 'down', l: 'left', r: 'right', O: 'circle' };
+  const GLYPH = { T: 'tap', H: 'hold', S: 'press', u: 'up', d: 'down', l: 'left', r: 'right', O: 'circle', A: 'arch', U: 'dip', Z: 'zigzag', L: 'lshape' };
   const seqGlyphs = (seq) => `<span class="seq">${seq.split('').map((c) => IC(GLYPH[c] || 'sparkle')).join('')}</span>`;
 
   // =====================================================================
@@ -303,6 +303,175 @@
   const sunLight = new THREE.DirectionalLight(0xffffff, 0.55);
   sunLight.position.set(6, 12, 8);
   world.add(sunLight);
+
+  // ----- the look (three.js r186): real light units, soft sun shadows, a gentle outline and a colour grade -----
+  // With the older fallback library (or in tests) all of this stays off and the game looks as it used to.
+  const NEW3 = !!(THREE.NeutralToneMapping !== undefined && THREE.DepthTexture && THREE.ShaderMaterial && THREE.WebGLRenderTarget && renderer.getDrawingBufferSize);
+  const LUX = NEW3 ? Math.PI : 1;           // light strengths are in real units now (the old ones times pi)
+  const HEMI_K = NEW3 ? 0.75 : 1, SUN_K = NEW3 ? 1.25 : 1;
+  // quality 2 = full, 1 = smaller shadow map, 0 = no shadows and no outline. Chosen in Settings → Graphics (saved with the
+  // other preferences); "Automatic" starts at full and steps down for good if the phone can't keep up.
+  const look = { quality: 2, raw: false, slow: 0, watch: 0 };
+  const DEBUG_RUN = /[?&]debug/.test(location.search);
+  const prefsNow = () => { try { return prefs; } catch (_) { return {}; } };   // the preferences are set up further down
+  function gfxPref() { const p = prefsNow(); return p.gfx == null ? 'auto' : p.gfx; }
+  function gfxLevel() {
+    const g = gfxPref();
+    if (g !== 'auto') return +g;
+    const p = prefsNow();
+    return p.gfxAuto != null ? p.gfxAuto : 2;
+  }
+  // automatic: if frames take too long for a few seconds in a row, use the next lighter level
+  function watchFrames(dt) {
+    if (!NEW3 || DEBUG_RUN || gfxPref() !== 'auto' || document.hidden) { look.slow = 0; look.watch = 0; return; }
+    look.watch += dt;
+    if (look.watch < 4) return;            // let things settle after start and scene changes
+    if (dt > 1 / 34) look.slow += dt; else look.slow = Math.max(0, look.slow - dt * 0.5);
+    if (look.slow > 2.5 && gfxLevel() > 0) {
+      prefs.gfxAuto = gfxLevel() - 1;
+      savePrefs();
+      look.slow = 0; look.watch = 0;
+    }
+  }
+  const SUN_DIR = new THREE.Vector3(-0.35, 1.4, 0.15).normalize();   // high, from the left: shadows fall to the right without darkening whole rooms
+  if (NEW3) {
+    renderer.toneMapping = THREE.NeutralToneMapping;
+    renderer.toneMappingExposure = 1.18;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    sunLight.shadow.bias = -0.0004;
+    sunLight.shadow.normalBias = 0.03;
+    world.add(sunLight.target);
+  }
+  function placeSun(focus, span) {
+    if (!NEW3) return;
+    const C = sunLight.shadow.camera;
+    // snap to shadow-map texels so shadow edges don't shimmer while the camera glides
+    const step = (span * 2) / sunLight.shadow.mapSize.x;
+    const fx = Math.round(focus.x / step) * step, fz = Math.round(focus.z / step) * step;
+    sunLight.target.position.set(fx, focus.y, fz);
+    sunLight.position.set(fx, focus.y, fz).addScaledVector(SUN_DIR, 40);
+    if (C.right !== span) { C.left = -span; C.right = span; C.top = span; C.bottom = -span; C.near = 1; C.far = 100; C.updateProjectionMatrix(); }
+  }
+  // everything solid casts and catches shadows; see-through things (water, glass, glows, blob shadows) don't
+  let shadowTick = 0;
+  function shadowize() {
+    world.traverse((o) => {
+      if (!o.isMesh || o.userData.shDone) return;
+      o.userData.shDone = true;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      const lit = !!m && (m.isMeshLambertMaterial || m.isMeshStandardMaterial || m.isMeshPhongMaterial);
+      o.castShadow = lit && !m.transparent && !o.userData.noShadow;
+      o.receiveShadow = lit;
+    });
+  }
+  // the outline and colour pass: draw the scene into a texture, darken where depth jumps, grade the colour, then tone map
+  const post = NEW3 ? (() => {
+    const size = new THREE.Vector2();
+    let rt = null;
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { tColor: { value: null }, tDepth: { value: null }, texel: { value: new THREE.Vector2() }, cnear: { value: 0.5 }, cfar: { value: 300 }, ink: { value: 0.62 }, grade: { value: new THREE.Vector3(1, 1, 1) }, sat: { value: 1 }, edges: { value: 1 },
+        // photo mode: depth of field, vignette, grain, contrast, black & white, sepia
+        dof: { value: 0 }, focusD: { value: 10 }, aper: { value: 0 }, px: { value: new THREE.Vector2() }, vig: { value: 0 }, grain: { value: 0 }, contrast: { value: 1 }, mono: { value: 0 }, sepia: { value: 0 }, lift: { value: 0 }, seed: { value: 0 }, aspect: { value: 0.5 } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: [
+        'uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 texel; uniform float cnear; uniform float cfar; uniform float ink; uniform vec3 grade; uniform float sat; uniform float edges;',
+        'uniform float dof; uniform float focusD; uniform float aper; uniform vec2 px; uniform float vig; uniform float grain; uniform float contrast; uniform float mono; uniform float sepia; uniform float lift; uniform float seed; uniform float aspect;',
+        'varying vec2 vUv;',
+        'float lin(vec2 uv) { float z = texture2D(tDepth, uv).x * 2.0 - 1.0; return 2.0 * cnear * cfar / (cfar + cnear - z * (cfar - cnear)); }',
+        'float coc(float d) { return clamp(abs(d - focusD) / focusD * aper, 0.0, 1.0); }',
+        'void main() {',
+        '  vec4 c = texture2D(tColor, vUv);',
+        '  vec3 col = c.rgb;',
+        '  float blur = 0.0;',
+        '  if (dof > 0.5) {',
+        '    float dc = lin(vUv); blur = coc(dc);',
+        '    vec3 acc = col; float wsum = 1.0;',
+        '    for (int i = 1; i < 24; i++) {',
+        '      float fi = float(i); float a = fi * 2.39996; float r = sqrt(fi / 24.0);',
+        '      vec2 uv2 = vUv + vec2(cos(a), sin(a)) * r * px * 13.0 * blur;',
+        '      float ds = lin(uv2);',
+        // a sharp subject in front doesn't smear into the blurred background behind it
+        "      float w = ds < dc - 0.05 ? coc(ds) : 1.0;",
+        '      acc += texture2D(tColor, uv2).rgb * w; wsum += w;',
+        '    }',
+        '    col = acc / wsum;',
+        '  }',
+        '  if (edges > 0.5) {',
+        '    float d0 = lin(vUv);',
+        '    float dl = lin(vUv - vec2(texel.x, 0.0)), dr = lin(vUv + vec2(texel.x, 0.0));',
+        '    float dd = lin(vUv - vec2(0.0, texel.y)), du = lin(vUv + vec2(0.0, texel.y));',
+        '    float far = max(max(dl, dr), max(dd, du)) - d0;',
+        '    float sil = smoothstep(0.035, 0.07, far / d0);',
+        '    float crease = smoothstep(0.004, 0.012, (abs(dl + dr - 2.0 * d0) + abs(dd + du - 2.0 * d0)) / d0);',
+        '    float e = max(sil, crease * 0.7);',
+        '    if (d0 > cfar * 0.98) e = 0.0;',
+        '    col *= 1.0 - ink * e * (1.0 - blur);',
+        '  }',
+        '  float l = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+        '  col = mix(vec3(l), col, sat) * grade;',
+        '  col = max(vec3(0.0), (col - 0.18) * contrast + 0.18);',
+        '  col = col * (1.0 - lift) + lift * 0.12;',
+        '  l = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+        '  col = mix(col, vec3(l), mono);',
+        '  col = mix(col, vec3(l) * vec3(1.18, 0.95, 0.66), sepia);',
+        '  if (vig > 0.0) { vec2 q = (vUv - 0.5) * vec2(aspect, 1.0) * 1.6; col *= mix(1.0, smoothstep(1.15, 0.25, length(q)), vig); }',
+        '  if (grain > 0.0) { float n = fract(sin(dot(vUv * 913.7 + seed, vec2(12.9898, 78.233))) * 43758.5453); col *= 1.0 + (n - 0.5) * grain; }',
+        '  gl_FragColor = vec4(col, 1.0);',
+        '  #include <tonemapping_fragment>',
+        '  #include <colorspace_fragment>',
+        '}',
+      ].join('\n'),
+      depthTest: false, depthWrite: false,
+    });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    quad.frustumCulled = false;
+    const scene = new THREE.Scene();
+    scene.add(quad);
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const make = (w, h) => {
+      if (rt) rt.dispose();
+      // half-float keeps dark colours smooth; phones that can't render to it fall back to normal 8-bit
+      const ext = renderer.extensions;
+      const half = !!(ext && ext.has && (ext.has('EXT_color_buffer_half_float') || ext.has('EXT_color_buffer_float')));
+      rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: half ? THREE.HalfFloatType : THREE.UnsignedByteType, depthTexture: new THREE.DepthTexture(w, h) });
+      mat.uniforms.tColor.value = rt.texture;
+      mat.uniforms.tDepth.value = rt.depthTexture;
+    };
+    return {
+      mat,
+      render(sc, camr) {
+        renderer.getDrawingBufferSize(size);
+        if (!rt || rt.width !== size.x || rt.height !== size.y) make(size.x, size.y);
+        const k = Math.max(1, renderer.getPixelRatio() * 0.75);   // about 1.5 screen pixels thick on a phone
+        mat.uniforms.texel.value.set(k / size.x, k / size.y);
+        mat.uniforms.px.value.set(renderer.getPixelRatio() / size.x, renderer.getPixelRatio() / size.y);
+        mat.uniforms.aspect.value = size.x / size.y;
+        mat.uniforms.seed.value = (mat.uniforms.seed.value + 0.37) % 100;
+        if (typeof photoFX === 'function') photoFX(mat.uniforms, camr);
+        mat.uniforms.cnear.value = camr.near; mat.uniforms.cfar.value = camr.far;
+        mat.uniforms.edges.value = look.quality > 0 ? 1 : 0;
+        renderer.setRenderTarget(rt);
+        renderer.render(sc, camr);
+        renderer.setRenderTarget(null);
+        renderer.render(scene, cam);
+      },
+    };
+  })() : null;
+  // a gentle colour grade by time of day: warm mornings and evenings, cool blue nights
+  const GRADE = [[0, [0.86, 0.92, 1.12], 0.9], [5.5, [0.9, 0.93, 1.08], 0.92], [7, [1.06, 1.0, 0.92], 1.04], [9, [1.0, 1.0, 1.0], 1.05], [16.5, [1.0, 1.0, 1.0], 1.05], [18.2, [1.08, 0.98, 0.88], 1.06], [19.6, [0.96, 0.92, 1.04], 0.98], [21, [0.86, 0.92, 1.12], 0.9], [24, [0.86, 0.92, 1.12], 0.9]];
+  function setGrade(hour, indoors) {
+    if (!post) return;
+    let i = 0;
+    while (i < GRADE.length - 2 && hour >= GRADE[i + 1][0]) i++;
+    const a = GRADE[i], b = GRADE[i + 1], t = clamp((hour - a[0]) / (b[0] - a[0]), 0, 1);
+    const k = indoors ? 0.5 : 1;   // indoors the grade is half as strong
+    const g = post.mat.uniforms.grade.value;
+    g.set(...[0, 1, 2].map((n) => 1 + ((a[1][n] + (b[1][n] - a[1][n]) * t) - 1) * k));
+    post.mat.uniforms.sat.value = 1 + ((a[2] + (b[2] - a[2]) * t) - 1) * k;
+  }
 
   const homeRoot = pivot(world);
   const roomGroup = pivot(homeRoot);
@@ -532,7 +701,8 @@
   function applyEnvironment() {
     const W = localWeather();
     // indoors, the weather outside doesn't dim or fog up your rooms; only the time of day shows
-    const L = ART.daylight(clockNow.hour, place === 'home' ? D.WEATHER.sun : curWeather());
+    const hourNow = photoHour() != null ? photoHour() : clockNow.hour;
+    const L = ART.daylight(hourNow, place === 'home' ? D.WEATHER.sun : curWeather());
     nightLevel = L.night;
     const E = place === 'park' && S && S.env ? S.env : null;
     world.background.copy(L.sky);
@@ -540,8 +710,9 @@
     if (lightning) world.background.lerp(new THREE.Color('#ffffff'), 0.5);
     // nights are properly dark, so lamps, lanterns and flashlights make a difference
     const deep = E && (E.dark || E.lit) ? 0 : L.night * (place === 'home' ? 0.42 : 0.38);
-    hemiLight.intensity = (E && E.hemi != null ? E.hemi * (E.dark || E.lit ? 1 : 1 - 0.4 * L.night) : L.hemi) * (1 - deep) + lightning * 0.8;
-    sunLight.intensity = (E && E.sun != null ? E.sun * (E.dark || E.lit ? 1 : 1 - 0.5 * L.night) : L.sun) * (1 - deep) + lightning * 1.2;
+    hemiLight.intensity = LUX * HEMI_K * ((E && E.hemi != null ? E.hemi * (E.dark || E.lit ? 1 : 1 - 0.4 * L.night) : L.hemi) * (1 - deep) + lightning * 0.8);
+    sunLight.intensity = LUX * SUN_K * ((E && E.sun != null ? E.sun * (E.dark || E.lit ? 1 : 1 - 0.5 * L.night) : L.sun) * (1 - deep) + lightning * 1.2);
+    setGrade(hourNow, place === 'home' || !!(E && (E.dark || E.lit)));
     ART.M.lamp.emissiveIntensity = 0.65 + (E && E.dark ? 1 : L.night) * 0.9;
     ART.M.window.color.copy(dayWindow).lerp(nightWindow, L.night);
     playerLight.visible = !!(E && E.dark);
@@ -553,7 +724,8 @@
         fog.far = W.fog ? 20 : (S.fog ? S.fog.far : 50);
       }
       fog.near += fogPush; fog.far += fogPush;
-      world.fog = fog;
+      // fog only when it's actually foggy (or the place itself is misty, like the caves)
+      world.fog = W.fog || (E && E.fog) ? fog : null;
     } else {
       world.fog = null;
     }
@@ -717,7 +889,18 @@
   }
   function drawWorld() {
     const on = shiftUp();
-    renderer.render(world, camera);
+    if (NEW3) {
+      look.quality = gfxLevel();
+      const sh = look.quality > 0;
+      if (renderer.shadowMap.enabled !== sh) { renderer.shadowMap.enabled = sh; world.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); }); }
+      if (sh) {
+        if (++shadowTick % 20 === 1) shadowize();
+        const ms = look.quality >= 2 ? 2048 : 1024;
+        if (sunLight.shadow.mapSize.x !== ms) { sunLight.shadow.mapSize.set(ms, ms); if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; } }
+        placeSun(camLook, 8 + camDist * 0.55);
+      }
+      if (look.raw) renderer.render(world, camera); else post.render(world, camera);
+    } else renderer.render(world, camera);
     if (on) shiftBack();
   }
   function withShift(fn) {
@@ -1601,6 +1784,7 @@
     const cell = G.map.get(Math.floor(x / 2) * 4096 + Math.floor(z / 2));
     if (cell) for (const c of cell) if (hit(c)) return true;
     for (const c of G.dyn) if (hit(c)) return true;
+    if (gateSolid(x, z)) return true;
     return quirkSolid(x, z);
   }
   // colliders sorted into 2 x 2 buckets, so big shaped places stay quick (cows and the rover move, so they are checked on their own)
@@ -1925,7 +2109,7 @@
   const player = Object.assign(ART.buildPlayer(), { moveTarget: null, phase: 0, blend: 0, face: 0, throwT: 0 });
   world.add(player.root);
   // a lantern glow around you in dark places
-  const playerLight = new THREE.PointLight(0xffe2b0, 2.2, 16, 1.2);
+  const playerLight = new THREE.PointLight(0xffe2b0, 2.2 * LUX, 16, 1.2);
   playerLight.position.set(0, 1.8, 0.4);
   playerLight.visible = false;
   player.root.add(playerLight);
@@ -1966,6 +2150,7 @@
 
   function updatePlayer(dt) {
     if (quirk.sled) return; // sledding moves you
+    if (tspots.anim) return; // mid-hop
     const pos = player.root.position;
     let ix = 0, iy = 0;
     if (joy.active) { ix = joy.x; iy = joy.y; }
@@ -2021,7 +2206,8 @@
     if (mag > 0.05 && !player.moveTarget && playerStairPush(mx, mz)) return;
     if (mag > 0.05) {
       const ox = pos.x, oz = pos.z;
-      moveWithCollision(pos, mx * 3.3 * mag * dt, mz * 3.3 * mag * dt, 0.25);
+      const tug = place === 'park' ? leashTug(mx, mz) : 1;
+      moveWithCollision(pos, mx * 3.3 * mag * tug * dt, mz * 3.3 * mag * tug * dt, 0.25);
       moved = Math.hypot(pos.x - ox, pos.z - oz);
       if (moved < 0.0005 && player.moveTarget) player.moveTarget = null;
       player.face = Math.atan2(mx, mz);
@@ -2055,6 +2241,356 @@
   const tmpA = new V3(), tmpB = new V3(), tmpC = new V3();
   const BUBBLE_ICON = { hunger: '🍖', thirst: '💧', energy: '😴', happy: '💔', clean: '🧼' };
   const RESTING = ['idle', 'sit', 'sleep', 'lounge'];
+
+
+  // =====================================================================
+  // Petting by touch: put a finger on a dog near you and stroke. Where you stroke matters: behind the ears gets a
+  // happy lean and a thumping back leg, under the chin a lifted head and closed eyes, along the back a wagging lean.
+  // Keep going and many dogs roll over for a belly rub. A quick tap is still a quick pat.
+  // =====================================================================
+  const petRay = new THREE.Raycaster(), petNdc = new THREE.Vector2();
+  function petHit(d, cx, cy) {
+    if (!petRay.intersectObject || !petRay.setFromCamera) return null;
+    petNdc.set((cx / window.innerWidth) * 2 - 1, -(cy / window.innerHeight) * 2 + 1);
+    petRay.setFromCamera(petNdc, camera);
+    const hits = withShift(() => petRay.intersectObject(d.root, true));
+    return hits && hits.length ? hits[0].point : null;
+  }
+  function petDogAt(cx, cy) {
+    if (photo || title || modalOpen()) return null;
+    const pp = player.root.position;
+    const cand = dogs.concat(sitDog ? [sitDog] : []).filter((d) => d.root.visible && d.root.position.distanceTo(pp) < 2.6 && !['fetch', 'return', 'trick', 'bath', 'towel', 'meet', 'play', 'greet', 'scuffle'].includes(d.state));
+    for (const d of cand) if (petHit(d, cx, cy)) return d;
+    return null;
+  }
+  function petPartAt(d, p) {
+    // the touched point in the dog's own frame: +z is forward
+    const q = d.root.worldToLocal ? d.root.worldToLocal(p.clone()) : p.clone().sub(d.root.position);
+    const D2 = d.dims || {};
+    const front = (D2.tL || 0.8) / 2 - 0.05, headY = d.headBaseY || 0.6;
+    if (q.z > front - 0.02) return q.y > headY + (D2.hH || 0.3) * 0.05 ? 'ears' : 'chin';
+    if (q.y < (D2.bodyY || 0.4) - (D2.tH || 0.3) * 0.25) return 'belly';
+    return 'back';
+  }
+  function petMove(P, e) {
+    const d = P.d;
+    const dx = e.clientX - P.lx, dy = e.clientY - P.ly;
+    P.lx = e.clientX; P.ly = e.clientY;
+    const hit = petHit(d, e.clientX, e.clientY);
+    petHand(e.clientX, e.clientY, !!hit);
+    if (!hit) { P.run = Math.max(0, P.run - 6); return; }
+    P.part = petPartAt(d, hit);
+    P.side = dx >= 0 ? 1 : -1;
+    P.run += Math.hypot(dx, dy);
+    if (P.run > 62) { P.run = 0; petStroke(P); }
+  }
+  function petStroke(P) {
+    const d = P.d;
+    P.strokes++;
+    if (d.state === 'sleep' || d.state === 'hide') d.wake();
+    d.releaseClaim(); d.dropSpot(); d.zoomLeft = 0; d.path = null; d.onArrive = null;
+    if (d.state !== 'petted') { d.petGain = 0; d.petStrokes = 0; d.face = d.root.rotation.y; }
+    d.setState('petted', 2.2);
+    d.petPart = P.part; d.petSide = P.side; d.petT = 1.2; d.petStrokes = (d.petStrokes || 0) + 1;
+    d.petFast = (performance.now() - (P.lastStroke || 0)) < 260 ? 0.6 : 0;
+    P.lastStroke = performance.now();
+    // a long, happy session: over it goes for a belly rub
+    if (!d.belly && d.petStrokes >= 7 && !d.isPuppy() && (P.part === 'back' || P.part === 'belly') && d.energy > 10) { d.belly = true; d.cheer(1); sfx('pet'); }
+    if (d.an) d.an.bliss = 1.2;
+    const gain = Math.min(1.6 * d.mod('petJoy'), 22 - (d.petGain || 0));
+    if (gain > 0) { d.happy = Math.min(d.missing() ? CONFIG.MISS_CAP : 100, d.happy + gain); d.petGain = (d.petGain || 0) + gain; }
+    if (d.petStrokes % 5 === 0) d.addBond(1);
+    if (P.strokes % 3 === 1) spawnEmoji(d.belly ? '💗' : '❤️', d.headWorld(0.3), { size: 0.32, life: 0.9 });
+    if (P.strokes % 2 === 1) sfx('pet');
+    if (P.strokes === 1) { tutEvent('pet'); progress('pet'); }
+    haptic(8);
+  }
+  function petEnd(P) {
+    const d = P.d;
+    d.timer = Math.min(d.timer, 1.4);
+    if (P.strokes >= 4) journalAdd(d, 'pet:long', '🤲', 'Had a long, lovely petting session');
+    if (d.belly) journalAdd(d, 'pet:belly', '💗', 'Rolled over for its first belly rub');
+  }
+  // a soft glowing hand where your finger is
+  function petHand(x, y, on) {
+    let h = document.getElementById('petHand');
+    if (!h) { h = document.createElement('div'); h.id = 'petHand'; h.innerHTML = IC('hand'); document.body.appendChild(h); }
+    if (x == null) { h.classList.remove('on'); return; }
+    h.style.transform = `translate(${x}px, ${y}px)`;
+    h.classList.add('on');
+    h.classList.toggle('touch', !!on);
+  }
+
+  // ----- following one dog with the camera: tap a dog twice -----
+  let lastDogTap = { d: null, t: 0 };
+  function followDog(d) {
+    camFocus = { dog: d, t: Infinity, follow: true };
+    let c = document.getElementById('followChip');
+    if (!c) {
+      c = document.createElement('button');
+      c.id = 'followChip';
+      c.className = 'glass';
+      document.body.appendChild(c);
+      c.addEventListener('click', () => { camFocus = null; c.classList.add('hidden'); sfx('tap'); });
+    }
+    c.innerHTML = `${IC('camera')} Watching ${esc(d.name)} <span>${IC('x')}</span>`;
+    c.classList.remove('hidden');
+  }
+  function followTick() {
+    const c = document.getElementById('followChip');
+    if (c && !c.classList.contains('hidden') && !(camFocus && camFocus.follow)) c.classList.add('hidden');
+  }
+
+
+  // =====================================================================
+  // A home that's alive: now and then a dog shows what it would like (an empty bowl nudged, a toy brought to
+  // you, the leash fetched to the door), naps in the sunbeam that moves across the floor, watches the world from
+  // the window, carries toys to its favourite place, or makes off with a sock. Not often: the meters still tell you
+  // everything, this just lets the dogs say it too.
+  // =====================================================================
+  const homeLife = { cool: 40, sun: null };
+  function carry(d, kind, type) {
+    drop(d);
+    let m;
+    if (kind === 'toy') m = ART.buildToy(type || state.toy || 'tennis');
+    else {
+      m = new THREE.Group();
+      if (kind === 'sock') { box(m, 0.09, 0.07, 0.26, '#f5f5f5', 0, 0, 0.05); box(m, 0.095, 0.075, 0.06, '#e57373', 0, 0, 0.12); box(m, 0.095, 0.075, 0.06, '#64b5f6', 0, 0, -0.02); }
+      else { box(m, 0.05, 0.05, 0.34, '#c0392b', 0, -0.02, 0.06); box(m, 0.16, 0.05, 0.05, '#c0392b', 0, -0.02, 0.22); box(m, 0.07, 0.07, 0.07, '#b0bec5', 0, -0.02, -0.12); }
+    }
+    m.scale.setScalar(kind === 'toy' ? 0.8 : 1);
+    d.mouth.add(m);
+    d.carrying = { kind, type, m };
+  }
+  function drop(d) {
+    if (!d.carrying) return null;
+    const c = d.carrying;
+    if (c.m.parent) c.m.parent.remove(c.m);
+    d.carrying = null;
+    return c;
+  }
+  // a toy (from the clutter) put down on a tile near a point
+  function putToyNear(p, type) {
+    const i0 = Math.floor(p.x), j0 = Math.floor(p.z);
+    for (const [di, dj] of [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1]]) {
+      const i = i0 + di, j = j0 + dj;
+      if (!passable(i, j) || furnitureAt(i, j) || state.clutter.some((c) => c.i === i && c.j === j)) continue;
+      if (state.clutter.filter((c) => c.kind === 'toy').length >= D.CLUTTER_MAX) return false;
+      state.clutter.push({ kind: 'toy', type: type || pick(state.toys), i, j, ox: rand(-0.2, 0.2), oz: rand(-0.2, 0.2), rot: rand(0, TAU) });
+      renderClutter();
+      return true;
+    }
+    return false;
+  }
+  const groundFloor = (d) => !isUpX(d.root.position.x);
+  function homeLifeIdea(d) {
+    if (visit || place !== 'home' || !groundFloor(d) || d.isPuppy() && Math.random() < 0.5) return false;
+    d.lifeCool = (d.lifeCool || 0);
+    if (performance.now() < d.lifeCool || homeLife.cool > 0) return false;
+    const go = (ms) => { d.lifeCool = performance.now() + ms; homeLife.cool = rand(25, 45); return true; };
+    const pp = player.root.position, night = isNight();
+    // ----- needs, shown -----
+    if (d.hunger < 35 || d.thirst < 35) {
+      const role = d.thirst < d.hunger ? 'water' : 'food';
+      const bowl = home().furniture.find((f) => roleOf(f) === role && !f.filled && floorOfX(f.i) === 0);
+      if (bowl && Math.random() < 0.6) {
+        const at = frontOf(bowl);
+        if (at) {
+          let t = 0;
+          d.doAct('sniff', (dt, D2) => {
+            if (t === 0 && D2.stepTo(at.x, at.z, 2.2, dt) > 0.15) return true;
+            t += dt; D2.faceTo(tileCenter(bowl));
+            if (t > 2.6) { D2.faceTo(pp); D2.glance(player.root.position.clone().add(new V3(0, 1.4, 0)), 2); D2.tiltHead(1.3); return t < 4.5; }
+            return true;
+          }, 'Nudging the empty bowl');
+          return go(rand(240, 420) * 1000);
+        }
+      }
+    }
+    if (d.happy < 50 && d.energy > 40 && state.toys.length && Math.random() < 0.5) {
+      // bored: a toy brought to your feet, and a play bow
+      const type = pick(state.toys);
+      carry(d, 'toy', type);
+      let t = 0, walk = 0, tgt = null;
+      d.doAct(null, (dt, D2) => {
+        const p2 = player.root.position;
+        // somewhere free right by your feet (it re-aims if you move)
+        if (!tgt || flatDist(tgt, p2) > 1.4) tgt = freeNear(p2.x + 0.55, p2.z + 0.55);
+        walk += dt;
+        if (t === 0 && walk < 9 && D2.stepTo(tgt.x, tgt.z, 2.8, dt) > 0.35) return true;
+        if (t === 0) { drop(D2); putToyNear(D2.root.position, type); D2.faceTo(p2); startFidget(D2, 'bow', 1.6); D2.cheer(0.8); }
+        t += dt;
+        return t < 1.8;
+      }, 'Brought you a toy');
+      return go(rand(300, 480) * 1000);
+    }
+    const sinceWalk = (Date.now() - (state.lastWalkAt || 0)) / 3600000;
+    const door = doorInside();
+    if (door && !night && sinceWalk > 3 && d.energy > 55 && Math.random() < 0.35) {
+      // would love a walk: the leash, fetched to the front door
+      carry(d, 'leash');
+      let t = 0;
+      d.doAct('sit', (dt, D2) => {
+        if (t === 0 && D2.stepTo(door.x, door.z, 2.6, dt) > 0.3) { D2.act.pose = null; return true; }
+        D2.act.pose = 'sit'; D2.act.wag = true;
+        t += dt; D2.faceTo(player.root.position);
+        if (t > 14) { drop(D2); return false; }
+        return true;
+      }, 'Waiting by the door with the leash');
+      return go(rand(420, 720) * 1000);
+    }
+    // ----- the living home -----
+    const r = Math.random();
+    const sun = homeLife.sun;
+    if (sun && sun.visible && d.energy < 85 && r < 0.3) {
+      const at = new V3(sun.position.x, 0, sun.position.z);
+      if (!isSolid(at.x, at.z)) {
+        let t = 0, dur = rand(12, 22);
+        d.doAct(null, (dt, D2) => {
+          if (t === 0 && D2.stepTo(at.x, at.z, 1.6, dt) > 0.2) return true;
+          D2.act.pose = 'nap'; t += dt;
+          return t < dur && homeLife.sun && homeLife.sun.visible;
+        }, 'Napping in the sunbeam');
+        return go(rand(120, 240) * 1000);
+      }
+    }
+    if (!night && r < 0.55) {
+      // at the window, front paws up on the sill, watching the world (or the rain) go by
+      const w = windowSpot();
+      if (w) {
+        let t = 0, dur = rand(6, 10);
+        d.doAct(null, (dt, D2) => {
+          if (t === 0 && D2.stepTo(w.x, w.z, 2, dt) > 0.15) return true;
+          D2.face = w.face; D2.act.pose = 'beg'; D2.act.wag = Math.sin(t * 0.7) > 0.3;
+          t += dt;
+          if (Math.random() < dt * 0.35) spawnEmoji(localWeather().precip === 'rain' ? '🌧️' : pick(['🐦', '🦋', '🍃']), new V3(w.x + Math.sin(w.face) * 1.2, 1.8, w.z + Math.cos(w.face) * 1.2), { size: 0.35, life: 1.2 });
+          return t < dur;
+        }, 'Watching from the window');
+        return go(rand(150, 300) * 1000);
+      }
+    }
+    const toy = state.clutter.find((c) => c.kind === 'toy' && floorOfX(c.i) === 0);
+    if (toy && r < 0.75) {
+      // carrying a toy off to its favourite place, and settling down to chew it
+      const fav = d.favSpotTarget ? d.favSpotTarget() : null;
+      const to = fav && !isSolid(fav.x, fav.z) ? fav : randomFreePoint();
+      let phase = 0, t = 0;
+      d.doAct(null, (dt, D2) => {
+        if (phase === 0) { if (D2.stepTo(toy.i + 0.5, toy.j + 0.5, 2, dt) > 0.4) return true; const k = state.clutter.indexOf(toy); if (k < 0) return false; state.clutter.splice(k, 1); renderClutter(); carry(D2, 'toy', toy.type); phase = 1; }
+        if (phase === 1) { if (D2.stepTo(to.x, to.z, 1.8, dt) > 0.3) return true; phase = 2; }
+        D2.act.pose = 'lie'; t += dt;
+        if (t > 9) { drop(D2); putToyNear(D2.root.position, toy.type); return false; }
+        return true;
+      }, 'Chewing a toy');
+      return go(rand(150, 300) * 1000);
+    }
+    if (d.energy > 55 && r > 0.93 && (state.sockDay || '') !== clockNow.dateKey) {
+      // a sock! off it goes, round and round, very pleased with itself
+      state.sockDay = clockNow.dateKey;
+      carry(d, 'sock');
+      const c = d.root.position.clone();
+      let t = 0;
+      d.doAct(null, (dt, D2) => {
+        t += dt;
+        const a = t * 2.4;
+        D2.stepTo(c.x + Math.sin(a) * 1.3, c.z + Math.cos(a) * 1.3, 4.2, dt);
+        D2.zoomLeft = 1; D2.cheer(0.05);
+        if (t > 7) { D2.zoomLeft = 0; drop(D2); return false; }
+        return true;
+      }, 'Ran off with a sock!');
+      journalAdd(d, 'sock', '🧦', 'Stole a sock and would not give it back');
+      return go(rand(300, 600) * 1000);
+    }
+    return false;
+  }
+  // a spot by a wall at the back of the house, looking out (the walls you can see have the windows)
+  function windowSpot() {
+    const C = CHUNK, list = [];
+    for (const [cx, cz] of home().chunks) {
+      if (cx >= UPC) continue;
+      for (let u = 1; u < C - 1; u++) {
+        const i = cx * C + u, j = cz * C;
+        if (!isHomeTile(i, j - 1) && passable(i, j)) list.push({ x: i + 0.5, z: j + 0.45, face: Math.PI });
+        const i2 = cx * C, j2 = cz * C + u;
+        if (!isHomeTile(i2 - 1, j2) && passable(i2, j2)) list.push({ x: i2 + 0.45, z: j2 + 0.5, face: -Math.PI / 2 });
+      }
+    }
+    return list.length ? pick(list) : null;
+  }
+  // the sunbeam: a patch of warm light that drifts across the floor by the back wall through the day
+  function updateSunbeam(dt) {
+    homeLife.cool = Math.max(0, homeLife.cool - dt);
+    if (place !== 'home') { if (homeLife.sun) homeLife.sun.visible = false; return; }
+    if (!homeLife.sun) { homeLife.sun = lightPool('#ffe2a0'); homeLightGroup.parent.add(homeLife.sun); }
+    const sun = homeLife.sun, h = clockNow.hour, W = curWeather();
+    const day = clamp(Math.min((h - 7.5) / 1.5, (17.5 - h) / 1.5), 0, 1) * (W.precip || W.fog ? 0.15 : (W.light || 1));
+    const ch = home().chunks.find(([cx]) => cx < UPC);
+    sun.visible = !!ch && day > 0.05 && !visit;
+    if (!sun.visible) return;
+    const C = CHUNK, u = clamp((h - 7.5) / 10, 0, 1);
+    const x = ch[0] * C + 1 + u * (C - 2), z = ch[1] * C + 1.3;
+    sun.position.set(x, POOL_Y + 0.005, z);
+    sun.scale.set(1.9, 1.3, 1);
+    sun.rotation.z = 0.35;
+    sun.material.opacity = 0.32 * day;
+  }
+  // coming home: the dogs who stayed rush to greet you
+  function homecoming(list) {
+    list.forEach((d, i) => setTimeout(() => {
+      if (place !== 'home' || !dogs.includes(d)) return;
+      let t = 0;
+      d.doAct(null, (dt, D2) => {
+        const p2 = player.root.position;
+        if (t === 0 && D2.stepTo(p2.x + 0.6 * (i % 2 ? 1 : -1), p2.z + 0.7, 4.4, dt) > 0.45) { D2.zoomLeft = 1; return true; }
+        D2.zoomLeft = 0;
+        t += dt; D2.faceTo(p2);
+        D2.act.pose = 'hop'; D2.act.wag = true; D2.cheer(0.2);
+        if (t > 0.4 && t < 0.5) spawnEmoji('💕', D2.headWorld(0.35), { size: 0.4 });
+        return t < 1.8;
+      }, 'So happy you’re back!');
+    }, 500 + i * 350));
+  }
+
+  // ----- dog animation: personality style and little idle moments -----
+  function dogStyle(d) {
+    const has = (t) => d.traits && d.traits.includes(t);
+    const S = { stride: 1, knee: 1, bounce: 1, wag: 1, look: 1, headUp: 1, fidget: 1, shy: false, w: { look: 3, sniffg: 2, tilt: 1, stretch: 1, yawn: 1, scratch: 1, shake: 0.6, bow: 0.6, sitdown: 1.5, flop: 0.5 }, flair: 'wiggle' };
+    const add = (o) => { for (const [k, v] of Object.entries(o)) S.w[k] = Math.max(0, S.w[k] + v); };
+    if (has('zoomies')) { S.bounce = 1.3; S.stride = 1.08; S.wag = 1.25; S.fidget = 1.35; add({ bow: 2.5, shake: 1, flop: -0.4 }); S.flair = 'spin'; }
+    if (has('couch')) { S.bounce = 0.7; S.stride = 0.92; S.knee = 0.8; S.wag = 0.8; S.fidget = 0.8; add({ flop: 3, yawn: 2, sitdown: 1, bow: -0.4 }); S.flair = 'sigh'; }
+    if (has('brainiac')) { add({ tilt: 3, look: 1 }); S.flair = 'tilt'; }
+    if (has('shy')) { S.shy = true; S.headUp = 0.6; add({ look: 2, tilt: 0.5, bow: -0.4 }); S.flair = 'shy'; }
+    if (has('social')) { add({ bow: 1.5 }); S.wag *= 1.15; S.flair = 'wiggle'; }
+    if (has('digger')) { add({ sniffg: 2, scratch: 1 }); }
+    if (has('foodie')) { add({ sniffg: 2 }); S.flair = 'lick'; }
+    if (has('water')) { add({ shake: 2 }); }
+    if (has('pampered')) { S.knee = 1.3; S.headUp = 1.8; add({ shake: 0.5, sitdown: 1.5 }); S.flair = 'proud'; }
+    if (d.traits && d.traits[0]) {   // the primary trait decides the trick flourish
+      const F = { zoomies: 'spin', couch: 'sigh', brainiac: 'tilt', shy: 'shy', foodie: 'lick', pampered: 'proud' }[d.traits[0]];
+      if (F) S.flair = F;
+    }
+    return S;
+  }
+  function newAnim(d) {
+    return { style: dogStyle(d), x: {}, v: {}, excite: 0, bliss: 0, blink: rand(1, 4), fid: null, fidCool: rand(3, 8), flair: null, look: new V3(), eye: new V3(), lookT: 0 };
+  }
+  function startFidget(d, k, dur) {
+    const an = d.an;
+    an.fid = { k, t: 0, dur, side: Math.random() < 0.5 ? -1 : 1, sit: Math.random() < 0.5 };
+  }
+  const FID_DUR = { look: 2.4, sniffg: 1.8, tilt: 1.4, stretch: 2.6, yawn: 1.7, scratch: 1.9, shake: 1.0, bow: 1.6, sitdown: 4.5, flop: 5 };
+  function pickFidget(d) {
+    const an = d.an, w = Object.assign({}, an.style.w);
+    if (d.energy < 40) { w.yawn += 2; w.flop += 1.5; w.bow *= 0.3; }
+    if (d.happy > 80) w.bow += 1;
+    if (d.clean < 50 || (d.dirt && (d.dirt.mud > 0.3))) w.shake += 1.5;
+    if (place !== 'park') w.sniffg *= 0.5;
+    if (d.state === 'stay' || d.state === 'attend') { w.flop = 0; w.stretch = 0; w.sitdown = 0; }
+    const tot = Object.values(w).reduce((a, b) => a + b, 0);
+    let r = Math.random() * tot, k = 'look';
+    for (const [kk, v] of Object.entries(w)) { r -= v; if (r <= 0) { k = kk; break; } }
+    startFidget(d, k, FID_DUR[k] || 1.5);
+  }
 
   class Dog {
     constructor(data) {
@@ -2316,6 +2852,7 @@
     faceTo(p) { this.face = Math.atan2(p.x - this.root.position.x, p.z - this.root.position.z); }
     setState(s, timer = 0) {
       if (s === 'splash' && this.state !== 'splash' && this.root.visible) sfx('splash');
+      if (s === 'sniff' && this.state !== 'sniff') this.sniffT = 0;
       this.state = s; this.timer = timer; this.stateTime = 0;
     }
     idle(t) {
@@ -2465,6 +3002,7 @@
       return 'good';
     }
     statusText() {
+      if (this.wish && place === 'park') return wishLine(this);
       switch (this.state) {
         case 'sleep': return 'Sleeping 💤';
         case 'eat': return 'Eating 😋';
@@ -2542,6 +3080,7 @@
 
     // ----- main update -----
     update(dt) {
+      if (photo && this.photoPose && !this.npc) { photoHold(this, dt); return; }
       this.stateTime += dt;
       this.moving = false;
       this.tickNeeds(dt);
@@ -2628,10 +3167,28 @@
           this.timer -= dt;
           if (this.timer <= 0) this.finishConsume();
           break;
-        case 'sniff':
+        case 'sniff': {
+          // wait while your dog sniffs and it keeps going, up to about six seconds: the scent swirl grows and the find gets better
+          this.sniffT = (this.sniffT || 0) + dt;
+          const still = place === 'park' && player.blend < 0.2 && !this.npc && !!this.spot;
           this.timer -= dt;
-          if (this.timer <= 0) this.finishSniff();
+          if (this.timer <= 0 && (!still || this.sniffT >= 6)) this.finishSniff();
           break;
+        }
+        case 'pull': this.updatePull(dt); break;
+        case 'petted':
+          this.petT = Math.max(0, (this.petT || 0) - dt);
+          // it stays put under your hand (turning round would slide its head out from under your finger)
+          this.timer -= dt;
+          if (this.timer <= 0) {
+            const was = this.belly;
+            this.belly = false;
+            this.idle();
+            if (was && this.an) startFidget(this, 'shake', 1.0);
+            this.cheer(0.5);
+          }
+          break;
+        case 'meet': break;   // a dog meeting drives this (see the meeting scenes)
         case 'dig':
           this.timer -= dt;
           if (Math.random() < dt * 6) spawnEmoji('🟫', this.headWorld(-0.4), { size: 0.18, life: 0.5, vy: 1.2 });
@@ -2662,7 +3219,7 @@
         case 'act': {
           // scripted: pastimes drive the dog with a little function (false = done)
           const A = this.act;
-          if (!A || A.fn(dt, this) === false) { this.act = null; this.idle(); }
+          if (!A || A.fn(dt, this) === false) { this.act = null; if (this.carrying) { const c = drop(this); if (c && c.kind === 'toy' && place === 'home') putToyNear(this.root.position, c.type); } this.idle(); }
           break;
         }
         default: this.idle();
@@ -2727,6 +3284,7 @@
         const spot = frontOf(tb);
         if (spot) { this.goTo(spot, 2, () => pullToyOut(this, tb), 0.45); return; }
       }
+      if (!visit && Math.random() < 0.35 && homeLifeIdea(this)) return;
       if (!visit && this.happy < 78 && Math.random() < 0.6 && cheerUpIdea(this)) return;
       if (!visit && gardenDogIdea(this)) return;
       if (!visit && critterChaseIdea(this)) return;
@@ -2846,7 +3404,38 @@
         return;
       }
       const spot = nearestSpot(pos, 4.5);
-      if (spot && Math.random() < 0.6) this.visitSpot(spot, 3);
+      if (spot && Math.random() < 0.6) { this.visitSpot(spot, 3); return; }
+      // the nose leads: a scent a little further off makes the dog pull that way (you can still walk wherever you like)
+      if (!this.npc && !this.wishBusy) {
+        const far = nearestSpot(pos, 8, true);
+        const nose = (this.flag('digs') || this.mod('sniffCoins') > 1 ? 1.4 : 1) * (this.flag('lounges') ? 0.6 : 1);
+        if (far && flatDist(far.pos, pp) > 3.2 && (!terrainOn() || lineClear(pos.x, pos.z, far.pos.x, far.pos.z, pos.y)) && Math.random() < 0.35 * nose) this.startPull(far);
+      }
+    }
+    startPull(spot) {
+      spot.taken = this;
+      this.pullSpot = spot;
+      this.pullGive = 0;
+      this.pullBest = Infinity;
+      this.pullStall = 0;
+      this.cheer(0.4);
+      this.setState('pull');
+    }
+    updatePull(dt) {
+      const spot = this.pullSpot, pos = this.root.position, pp = player.root.position;
+      const end = (look) => { if (spot && spot.taken === this) spot.taken = null; this.pullSpot = null; this.pulling = false; if (look && spot) this.glance(spot.pos, 1.3); this.setState('follow'); };
+      if (!spot || spot.cooldown > 0 || spot.active === false || this.offLeash) { end(false); return; }
+      if (flatDist(pos, spot.pos) < 0.7) { this.pulling = false; this.pullSpot = null; this.spot = spot; this.faceTo(spot.pos); this.setState('sniff', 2.2); return; }
+      this.moveTowards(spot.pos.x, spot.pos.z, 2.6, dt);
+      this.pulling = pos.distanceTo(pp) > 2.9;
+      // no headway (a rock, a ledge), or you've stood still a while: it lets it go
+      const left = flatDist(pos, spot.pos);
+      if (left < this.pullBest - 0.05) { this.pullBest = left; this.pullStall = 0; } else this.pullStall += dt;
+      if ((this.pullStall > 2.2 && !this.pulling) || (this.pulling && player.blend < 0.1 && this.pullStall > 5)) { end(true); return; }
+      // you keep walking the other way: after a couple of seconds the dog gives in and trots after you
+      const away = this.pulling && player.blend > 0.3 && flatDist(pp, spot.pos) > flatDist(pos, spot.pos) + 1;
+      this.pullGive = away ? this.pullGive + dt : Math.max(0, this.pullGive - dt * 0.5);
+      if (this.pullGive > 2.2 || this.stateTime > 16) end(true);
     }
     visitSpot(spot, speed) {
       spot.taken = this;
@@ -2958,6 +3547,7 @@
       if (this.timer <= 0) this.afterTrick();
     }
     afterTrick() {
+      if (this.trickId && this.an && !['spin', 'chase', 'roll', 'moonwalk'].includes(this.trickId)) this.an.flair = { k: this.an.style.flair, t: 0 };
       if (this.trickId && this.spinY !== undefined && this.trickId !== 'moonwalk') this.face = this.trickFace;
       this.trickId = null;
       this.spinY = undefined;
@@ -2966,7 +3556,7 @@
     }
 
     applyLeash() {
-      if (this.offLeash || this.free || this.returning || this.state === 'fetch' || this.state === 'return') return;
+      if (this.offLeash || this.free || this.returning || this.state === 'fetch' || this.state === 'return' || (this.state === 'meet' && meetScene && !meetScene.called)) return;
       const pp = player.root.position, pos = this.root.position;
       const dx = pos.x - pp.x, dz = pos.z - pp.z, d = Math.hypot(dx, dz);
       // on hills the leash goes round corners: a dog walking the long way up the slope gets some slack
@@ -2986,7 +3576,8 @@
         this.face = Math.atan2(-dx, -dz);
         this.moving = true;
         this.curSpeed = 3;
-        if (this.state !== 'follow' && this.state !== 'zoom' && d > L + 0.3) {
+        if (this.state !== 'follow' && this.state !== 'zoom' && this.state !== 'pull' && this.state !== 'meet' && d > L + 0.3) {
+          if (this.state === 'sniff' && this.spot && this.an) { this.glance(this.spot.pos, 1.4); this.an.sulk = 1.4; }
           this.dropSpot();
           this.onArrive = null;
           this.setState('follow');
@@ -3023,14 +3614,20 @@
     }
     finishSniff() {
       const spot = this.spot;
+      const deep = clamp(((this.sniffT || 0) - 2.2) / 3.6, 0, 1);
+      this.sniffT = 0;
+      if (this.wish && this.wish.k === 'scent' && this.wish.spot === spot) fulfilWish(this);
       if (spot && spot.cooldown <= 0) {
         spot.cooldown = 45 / (starsOf(loc) >= 2 ? 1.3 : 1);
-        this.happy = Math.min(100, this.happy + 10);
-        walkLoot(this, spot);
+        this.happy = Math.min(100, this.happy + 10 + Math.round(deep * 6));
+        if (deep > 0.5) this.cheer(0.6 * deep);
+        walkLoot(this, spot, deep);
         if (spot.kind === 'pine') addDirt(this, 'sap', 6);
         progress('sniff');
       }
       this.dropSpot();
+      if (this.resumeFetch && ball.active && !ball.held) { this.resumeFetch = false; this.setState('fetch'); return; }
+      this.resumeFetch = false;
       this.setState('follow');
     }
     finishDig() {
@@ -3076,15 +3673,26 @@
       this.onArrive = null;
       this.path = null;
       this.zoomLeft = 0;
+      this.dropTried = false;
+      this.resumeFetch = false;
+      this.cheer(0.8);
       this.setState('fetch');
     }
     updateFetch(dt) {
       if (!ball.active || (ball.held && ball.held !== this)) { this.idle(); return; }
+      // run to where the toy will land while it flies, then after it as it bounces and rolls
       const bp = ball.flying ? ball.to : ball.mesh.position;
       const sp = 4.3 * this.mod('fetchSpeed') * (this.energy < CRITICAL ? 0.6 : 1) * (this.isPuppy() ? 0.85 : 1);
-      const d = this.moveTowards(bp.x, bp.z, sp, dt);
-      if (!ball.flying && d < 0.35) { ball.held = this; this.setState('return'); }
-      else if (this.stateTime > 12) { resetBall(); this.idle(); }
+      let d = this.moveTowards(bp.x, bp.z, sp, dt);
+      const mp = ball.mesh.position, pos = this.root.position;
+      if (ball.flying) {
+        // close and low enough: snap it out of the air
+        const hd = Math.hypot(mp.x - pos.x, mp.z - pos.z), hy = mp.y - (pos.y + this.headBaseY);
+        if (hd < 0.5 && hy < 0.35 && hy > -0.5 && ball.vel.y < 0) { ball.held = this; ball.flying = false; this.cheer(1); if (this.an) this.an.flair = { k: 'wiggle', t: 0 }; spawnEmoji('✨', this.headWorld(0.3), { size: 0.4 }); this.setState('return'); return; }
+      } else d = Math.hypot(mp.x - pos.x, mp.z - pos.z);
+      if (!ball.flying && !ball.water && d < 0.4 && Math.hypot(ball.vel.x, ball.vel.z) < 2.2) { ball.held = this; this.setState('return'); }
+      else if (ball.water) { if (d < 1.4) this.faceTo(mp); if (this.stateTime > 30) { resetBall(); this.idle(); } }
+      else if (this.stateTime > 14) { resetBall(); this.idle(); }
     }
     updateReturn(dt) {
       const pp = player.root.position;
@@ -3097,8 +3705,28 @@
       }
       this.moveTowards(tx, tz, 3.6, dt);
       const d = this.root.position.distanceTo(pp);
+      // now and then a good smell on the way back is too much to resist: the toy gets put down for a quick sniff
+      if (!this.dropTried && place === 'park' && this.stateTime > 0.6 && d > 2.2) {
+        this.dropTried = true;
+        const sp = nearestSpot(this.root.position, 2.2, true);
+        const chance = 0.1 + (this.flag('digs') ? 0.12 : 0) + (this.mod('sniffCoins') > 1 ? 0.12 : 0);
+        if (sp && Math.random() < chance) {
+          ball.held = null;
+          ball.flying = false;
+          ball.water = false;
+          ball.vel.set(0, 0, 0);
+          ball.rest = true;
+          const bp = this.root.position;
+          ball.mesh.position.set(bp.x + Math.sin(this.root.rotation.y) * 0.45, groundAtY(bp.x, bp.z, bp.y) + (D.TOYS[ball.type] || D.TOYS.tennis).restY, bp.z + Math.cos(this.root.rotation.y) * 0.45);
+          this.resumeFetch = true;
+          this.path = null;
+          this.visitSpot(sp, 2.6);
+          return;
+        }
+      }
       if (d < 1.0 || this.stateTime > 15) {
         const type = ball.type, snow = ball.snow;
+        if (this.wish && this.wish.k === 'fetch') fulfilWish(this);
         const def = D.TOYS[type] || D.TOYS.tennis;
         resetBall();
         this.path = null;
@@ -3132,21 +3760,35 @@
       treatDog = null;
       this.faceTo(player.root.position);
       this.setState('happy', 1.5);
+      this.cheer(0.6);
       for (let i = 0; i < 3; i++) setTimeout(() => spawnEmoji('❤️', this.headWorld(0.35), { size: 0.4 }), i * 180);
     }
 
     // ----- animation -----
+    // Layers, from the bottom up: the pose of the current state (sit, lie, tricks, activities), the gait while moving
+    // (walk, trot, gallop with knees), then the living layer on top: mood in the tail and ears, looking at you and at
+    // interesting things, blinking, breathing, panting, and now and then a little idle moment (stretch, yawn, scratch,
+    // shake off, play bow, head tilt). Personality sets how often and how bouncy. Joints settle on springs.
+    cheer(n = 0.5) { const an = this.an; if (an) an.excite = Math.min(1, an.excite + n); }
+    glance(p, dur = 1.5) { const an = this.an; if (an && p) { an.look.copy(p); an.lookT = dur; } }
+    tiltHead(dur = 1.3) { const an = this.an; if (an && !an.fid) startFidget(this, 'tilt', dur); }
     animate(dt) {
       this.t += dt;
+      const an = this.an || (this.an = newAnim(this));
+      const sty = an.style;
       this.walkBlend = lerp(this.walkBlend, this.moving ? 1 : 0, damp(0.0005, dt));
-      if (this.moving) this.phase += dt * (4 + this.curSpeed * 3.2);
-      const s = Math.sin(this.phase) * 0.75 * this.walkBlend;
+      const sp = this.curSpeed || 0;
+      const gallop = this.moving && (sp > 3.7 || this.zoomLeft > 0);
+      if (this.moving) this.phase += dt * (4 + sp * 3.2) * (gallop ? 0.82 : 1);
       const st = this.state;
       const k = damp(0.003, dt);
       const hb = this.headBaseY;
+      const amp = (0.62 + clamp(sp - 1.5, 0, 2.5) * 0.12) * sty.stride;
+      const s = Math.sin(this.phase) * amp * this.walkBlend;
 
       let poseY = 0, bodyRX = 0, bodyRZ = 0, headRX = 0, headY = hb, hop = 0;
       let legT = [s, -s, -s, s];
+      let kneeT = [0, 0, 0, 0], headYaw = 0, headTilt = 0, perk = 0, earsBack = 0, jawT = 0, lidT = 0, tailLift = null, bodyRY = 0;
       let posed = false;
       if (st === 'sleep' || st === 'lounge' || st === 'hide' || st === 'watch') {
         poseY = -0.21; legT = [-1.45, -1.45, 1.45, 1.45]; headRX = 0.15; headY = hb - 0.06; posed = true;
@@ -3213,26 +3855,209 @@
           default: break;
         }
       }
+
+      // ----- being petted -----
+      let bellyUp = false;
+      if (st === 'petted') {
+        const sd = this.petSide || 1, live = (this.petT || 0) > 0;
+        perk = 0.15; earsBack = 0.3; this.an.bliss = Math.max(this.an.bliss, 0.25);
+        if (this.belly) {
+          // on its back, paws paddling, a big upside-down grin
+          bellyUp = true;
+          const D2 = this.dims || {};
+          poseY = 0.06 + 0.955 * ((D2.bodyY || 0.4) + (D2.tH || 0.3) / 2);
+          const w = live ? 1 : 0.35;
+          legT = [-0.5 + Math.sin(this.t * 9) * 0.3 * w, -0.5 - Math.sin(this.t * 9) * 0.3 * w, 0.5 + Math.sin(this.t * 8 + 1) * 0.35 * w, 0.5 - Math.sin(this.t * 8 + 1) * 0.35 * w];
+          kneeT = [0.9, 0.9, -1.1, -1.1];
+          headRX = -0.35; jawT = 0.32; lidT = 0.5; posed = true;
+          this.an.excite = Math.max(this.an.excite, 0.6);
+        } else if (this.petPart === 'ears') {
+          headTilt = 0.38 * sd; lidT = 0.9; headRX += 0.1;
+          // a fast scratch behind the ear sets a back leg thumping
+          if (live && (this.petFast || 0) > 0) { poseY = -0.06; bodyRX = -0.45; legT = [0.5, 0.5, -1.1, -1.1]; kneeT = [0.1, 0.1, 2.2, 2.2]; legT[sd > 0 ? 3 : 2] = -1.25 + Math.sin(this.t * 26) * 0.25; posed = true; }
+        } else if (this.petPart === 'chin') { headRX -= 0.5; lidT = 0.95; jawT = 0.12; }
+        else { bodyRZ = 0.08 * sd; lidT = 0.6; this.an.excite = Math.max(this.an.excite, live ? 0.7 : 0.4); }
+      }
+      // ----- walks: pulling toward a scent, meeting another dog, a little sulk after being dragged off a smell -----
+      if (st === 'pull') { headRX = 0.32 + Math.sin(this.t * 20) * 0.04; perk = 1; if (this.pulling) { bodyRX += 0.1; tailLift = this.tailUp + 0.15; } }
+      if (st === 'sniff' && (this.sniffT || 0) > 2.2) this.an.excite = Math.max(this.an.excite, clamp((this.sniffT - 2.2) / 3, 0, 0.8));
+      if (st === 'meet' && this.encPose) {
+        switch (this.encPose) {
+          case 'meet': headRX = 0.42 + Math.sin(this.t * 22) * 0.04; perk = 1; break;
+          case 'circle': headRX = 0.5 + Math.sin(this.t * 22) * 0.04; perk = 0.8; break;
+          case 'bow': bodyRX = 0.45; legT = [-1.2, -1.2, 0, 0]; headY = hb - 0.1; headRX = 0.1; hop = Math.abs(Math.sin(this.t * 10)) * 0.06; posed = true; perk = 1; jawT = 0.25; break;
+          case 'chase': perk = 0.3; break;
+          case 'wrestle': { const r = Math.abs(Math.sin(this.t * 7)); poseY = -0.02; bodyRX = -0.85 * r; legT = [-1.4 * r, -1.2 * r, -1.2 * r, -1.2 * r]; headRX = 0.2; hop = r * 0.08; posed = true; jawT = 0.35; break; }
+          case 'part': perk = 0.6; break;
+          default: break;
+        }
+      }
+      if (this.an.sulk > 0) { this.an.sulk -= dt; earsBack = Math.max(earsBack, 0.6); headRX += 0.18; tailLift = this.tailDown * 0.6 + this.tailUp * 0.4; }
+      // ----- gait: the knees lift on the forward swing; a gallop moves the front and back pairs together -----
+      if (this.moving && !posed) {
+        const ph = this.phase, wb = this.walkBlend;
+        const PH = gallop ? [ph, ph - 0.35, ph - 2.4, ph - 2.75] : [ph, ph + Math.PI, ph + Math.PI, ph];
+        if (gallop) { legT = PH.map((p) => Math.sin(p) * 1.05 * wb); bodyRX += Math.sin(ph + 0.6) * 0.1 * wb; headRX += Math.sin(ph + 1.2) * 0.08 * wb; }
+        const kAmp = (0.55 + clamp(sp - 1.5, 0, 3) * 0.12) * sty.knee;
+        kneeT = PH.map((p) => Math.max(0, Math.cos(p)) * kAmp * wb);
+        headY += Math.sin(ph * 2) * 0.012 * wb;
+        headRX -= 0.06 * wb * sty.headUp;
+      }
+      // folded legs: knees tuck in when sitting or lying
+      if (posed && (st === 'sleep' || st === 'lounge' || st === 'hide' || st === 'watch' || poseY < -0.15)) kneeT = [0.25, 0.25, -2.2, -2.2];
+      else if (posed && bodyRX < -0.3 && poseY > -0.1 && poseY < 0) kneeT = [0.1, 0.1, 2.2, 2.2];
+
+      // ----- the living layer -----
+      an.excite = Math.max(0, an.excite - dt * 0.12);
+      an.bliss = Math.max(0, an.bliss - dt);
+      const sleeping = st === 'sleep' || (st === 'act' && this.act && this.act.pose === 'nap');
+      const resting = sleeping || st === 'hide' || (st === 'act' && this.act && this.act.pose === 'hide');
+      const busy = st === 'trick' || st === 'act' || st === 'bath' || st === 'towel' || st === 'eat' || st === 'drink' || st === 'dig' || resting;
+      // idle moments: only while standing about with nothing else going on
+      const calm = !this.moving && (st === 'idle' || st === 'attend' || st === 'follow' || st === 'stay' || st === 'watch') && this.stateTime > 1.2 && !this.isRemote;
+      an.fidCool -= dt;
+      if (!an.fid && calm && an.fidCool <= 0) pickFidget(this);
+      if (an.fid && (!calm && an.fid.k !== 'tilt' || this.moving)) an.fid = null;
+      if (an.fid) {
+        const F = an.fid;
+        F.t += dt;
+        const u = clamp(F.t / F.dur, 0, 1), bell = Math.sin(u * Math.PI);
+        const SIT = () => { poseY = -0.06; bodyRX = -0.5; legT = [0.5, 0.5, -1.1, -1.1]; kneeT = [0.1, 0.1, 2.2, 2.2]; posed = true; };
+        switch (F.k) {
+          case 'stretch':
+            if (u < 0.55) { const w = Math.sin(clamp(u / 0.55, 0, 1) * Math.PI); bodyRX = 0.42 * w; legT = [-1.25 * w, -1.25 * w, 0.05, 0.05]; kneeT = [0, 0, 0, 0]; headY = hb - 0.1 * w; headRX = 0.05; posed = true; jawT = Math.max(0, Math.sin(clamp((u - 0.12) / 0.35, 0, 1) * Math.PI)) * 0.85; lidT = jawT > 0.2 ? 1 : 0; }
+            else { const w = Math.sin(clamp((u - 0.55) / 0.45, 0, 1) * Math.PI); bodyRX = -0.12 * w; legT = [-0.2 * w, -0.2 * w, 0.85 * w, 0.85 * w]; posed = true; headRX = -0.15 * w; }
+            break;
+          case 'yawn': jawT = bell * 0.9; lidT = bell > 0.35 ? 1 : 0; headRX = -0.35 * bell; earsBack = 0.4 * bell; if (F.sit) SIT(); break;
+          case 'scratch': {
+            SIT(); const sd = F.side; const leg = sd > 0 ? 3 : 2;
+            legT[leg] = -1.5 + Math.sin(this.t * 32) * 0.3 * bell; kneeT[leg] = 0.6; headTilt = 0.38 * sd * bell; headRX = 0.25; lidT = 0.55 * bell; bodyRZ = -0.08 * sd * bell; break;
+          }
+          case 'shake': bodyRZ = Math.sin(this.t * 40) * 0.36 * bell; perk = -0.4; headTilt = Math.sin(this.t * 40 + 0.6) * 0.3 * bell; lidT = 0.7 * bell; break;
+          case 'look': headYaw = Math.sin(u * TAU) * 0.85; perk = 0.9; break;
+          case 'sniffg': headRX = 0.62 + Math.sin(this.t * 22) * 0.05 * bell; headY = hb - 0.05 * bell; perk = 0.3; break;
+          case 'tilt': headTilt = 0.42 * F.side * Math.min(1, bell * 2.2); perk = 1; break;
+          case 'bow': bodyRX = 0.45 * Math.min(1, bell * 2); legT = [-1.2 * Math.min(1, bell * 2), -1.2 * Math.min(1, bell * 2), 0, 0]; kneeT = [0, 0, 0, 0]; headY = hb - 0.1 * bell; headRX = 0.1; hop = Math.abs(Math.sin(this.t * 10)) * 0.05 * bell; posed = true; perk = 1; jawT = 0.18; an.excite = Math.max(an.excite, 0.7); break;
+          case 'sitdown': SIT(); headRX = 0.3; perk = 0.4; break;
+          case 'flop': { const w = Math.min(1, u * 6); poseY = -0.21 * w; legT = [-1.45, -1.45, 1.45, 1.45]; kneeT = [0.25, 0.25, -2.2, -2.2]; headRX = 0.2; headY = hb - 0.06; posed = true; lidT = 0.55; if (F.t < 0.35) hop = -0.03; break; }
+          default: break;
+        }
+        if (F.t >= F.dur) { an.fid = null; an.fidCool = rand(5, 12) / sty.fidget; }
+      }
+      // trick flair: a little personal flourish right after a trick
+      if (an.flair) {
+        const Fl = an.flair; Fl.t += dt;
+        const u = clamp(Fl.t / 0.9, 0, 1), bell = Math.sin(u * Math.PI);
+        switch (Fl.k) {
+          case 'spin': bodyRY = u * TAU; hop += bell * 0.12; break;
+          case 'proud': headRX -= 0.4 * bell; lidT = Math.max(lidT, 0.45 * bell); break;
+          case 'tilt': headTilt = 0.4 * bell; perk = 1; break;
+          case 'shy': headYaw = 0.55 * bell; earsBack = 0.7 * bell; break;
+          case 'sigh': poseY -= 0.04 * bell; lidT = Math.max(lidT, 0.6 * bell); break;
+          case 'lick': jawT = 0.25 * bell; this.tongue.visible = true; break;
+          case 'wiggle': bodyRZ = Math.sin(this.t * 22) * 0.12 * bell; hop += Math.abs(Math.sin(this.t * 11)) * 0.08 * bell; break;
+          default: break;
+        }
+        if (Fl.t > 0.9) an.flair = null;
+      }
+      // looking: at you when you're close, at a thrown toy, or wherever something just caught its eye
+      an.lookT -= dt;
+      let tgt = null;
+      if (!busy || st === 'attend') {
+        if (an.lookT > 0) tgt = an.look;
+        else if (ball.active && ball.mesh.visible && st !== 'return') tgt = ball.mesh.position;
+        else if (player && player.root.visible && !this.isRemote) {
+          const d = player.root.position.distanceTo(this.root.position);
+          if (d < 3.6 && sp < 2.2) { an.eye.set(player.root.position.x, player.root.position.y + 1.45, player.root.position.z); tgt = an.eye; }
+        }
+      }
+      if (tgt && !resting) {
+        const p = this.root.position, dx = tgt.x - p.x, dz = tgt.z - p.z, dist = Math.hypot(dx, dz);
+        let yaw = Math.atan2(dx, dz) - this.root.rotation.y;
+        yaw = Math.atan2(Math.sin(yaw), Math.cos(yaw));
+        if (Math.abs(yaw) < 1.6 && dist > 0.25) {
+          headYaw += clamp(yaw, -0.9, 0.9);
+          headRX -= clamp(Math.atan2(tgt.y - (p.y + hb), dist) * 0.6, -0.35, 0.5);
+          perk = Math.max(perk, 0.6);
+        }
+      }
+      // ears: forward when interested, back when nervous, asleep or zooming
+      const shyOut = sty.shy && place === 'park';
+      if (st === 'happy' || st === 'play' || st === 'attend' || an.excite > 0.4) perk = Math.max(perk, 0.8);
+      if (resting || st === 'bath' || st === 'towel' || gallop) earsBack = Math.max(earsBack, sleeping ? 0.3 : 0.8);
+      if (shyOut && !this.moving) earsBack = Math.max(earsBack, 0.35);
+      // mouth: panting when hot or after running, barking, howling, chewing; otherwise a little smile when excited
+      const pant = gallop || this.zoomLeft > 0 || (this.moving && sp > 3) || st === 'play' || st === 'happy' || (this.energy < 35 && this.moving);
+      if (pant) jawT = Math.max(jawT, 0.32 + Math.sin(this.t * 15) * 0.08);
+      if (st === 'trick' && this.trickId === 'speak') jawT = Math.abs(Math.sin(this.t * 16)) * 0.7;
+      if ((st === 'trick' && (this.trickId === 'howl' || this.trickId === 'sing')) || (st === 'act' && this.act && this.act.pose === 'howl')) jawT = Math.max(jawT, 0.5);
+      if (st === 'eat') jawT = 0.12 + Math.abs(Math.sin(this.t * 14)) * 0.18;
+      if (an.excite > 0.5 && !jawT) jawT = 0.18;
+      // eyes: closed asleep, heavy when tired or blissful, and a blink every few seconds
+      an.blink -= dt;
+      if (an.blink < -0.13) an.blink = rand(1.8, 5.5);
+      const blink = an.blink < 0 ? 1 : 0;
+      if (sleeping) lidT = 1;
+      else lidT = Math.max(lidT, blink, an.bliss > 0 ? 0.85 : 0, st === 'lounge' ? 0.55 : 0, this.energy < 22 ? 0.4 : 0);
+      // breathing while still
+      if (!this.moving) poseY += Math.sin(this.t * (sleeping ? 1.6 : 2.4)) * (sleeping ? 0.008 : 0.005);
+
+      // ----- apply, with springs on the head and ears so they settle naturally -----
+      const fdt = Math.min(dt, 0.05), steps = Math.ceil(fdt / 0.012), h = fdt / steps;
+      const spr = (key, target, w = 13, z = 0.72) => {
+        let x = an.x[key], v = an.v[key] || 0;
+        if (x === undefined || !isFinite(x)) { x = target; v = 0; }
+        for (let n = 0; n < steps; n++) { v += (w * w * (target - x) - 2 * z * w * v) * h; x += v * h; }
+        an.v[key] = v; an.x[key] = x;
+        return x;
+      };
       if (this.tumbleT > 0) bodyRZ = Math.sin((0.7 - this.tumbleT) / 0.7 * Math.PI) * 1.3;
 
       this.poseY = lerp(this.poseY, poseY, k);
       if (place === 'park' && LOC().lowGravity) hop += Math.abs(Math.sin(this.phase * 0.5)) * 0.3 * this.walkBlend; // bouncy moon steps
-      this.body.position.y = this.poseY + Math.abs(Math.sin(this.phase)) * 0.05 * this.walkBlend + hop;
+      const bounce = gallop ? (1 - Math.cos(this.phase * 2)) * 0.035 : Math.abs(Math.sin(this.phase)) * 0.05 * sty.bounce;
+      this.body.position.y = this.poseY + bounce * this.walkBlend + hop;
       this.body.rotation.x = lerp(this.body.rotation.x, bodyRX, k);
-      const snapZ = this.tumbleT > 0 || ['towel', 'hide', 'confused', 'scuffle'].includes(st) || (st === 'trick' && ['shake', 'roll', 'dead'].includes(this.trickId)) || (st === 'act' && this.act && ['shake', 'hide', 'tilt'].includes(this.act.pose));
-      this.body.rotation.z = snapZ ? bodyRZ : lerp(this.body.rotation.z, 0, k * 2);
-      this.legs.forEach((l, i) => { l.rotation.x = posed ? lerp(l.rotation.x, legT[i], k * (st === 'dig' ? 4 : 1)) : lerp(l.rotation.x, legT[i], 0.5); });
-      this.head.rotation.x = lerp(this.head.rotation.x, headRX, k * 1.5);
+      const snapZ = this.tumbleT > 0 || (st === 'petted' && !bellyUp) || ['towel', 'hide', 'confused', 'scuffle'].includes(st) || (st === 'trick' && ['shake', 'roll', 'dead'].includes(this.trickId)) || (st === 'act' && this.act && ['shake', 'hide', 'tilt'].includes(this.act.pose)) || (an.fid && (an.fid.k === 'shake' || an.fid.k === 'scratch')) || (an.flair && an.flair.k === 'wiggle');
+      if (bellyUp) this.body.rotation.z = lerp(this.body.rotation.z, (Math.PI - 0.3) * (this.petSide || 1), k * 1.2);
+      else this.body.rotation.z = snapZ ? bodyRZ : lerp(this.body.rotation.z, 0, k * 2);
+      this.body.rotation.y = an.flair && an.flair.k === 'spin' ? bodyRY : lerp(this.body.rotation.y, 0, k * 2);
+      const legK = posed ? k * (st === 'dig' ? 4 : 1.4) : damp(0.00001, dt);
+      this.legs.forEach((l, i) => { l.rotation.x = lerp(l.rotation.x, legT[i], legK); });
+      if (this.knees) this.knees.forEach((n, i) => { n.rotation.x = lerp(n.rotation.x, kneeT[i], posed ? k * 1.4 : damp(0.00001, dt)); });
+      this.head.rotation.x = spr('hx', headRX);
+      this.head.rotation.y = spr('hy', headYaw * sty.look, 11);
+      this.head.rotation.z = spr('hz', headTilt, 11, 0.6);
       this.head.position.y = lerp(this.head.position.y, headY, k);
 
-      const resting = st === 'sleep' || st === 'hide' || (st === 'act' && this.act && (this.act.pose === 'nap' || this.act.pose === 'hide'));
-      const wag = resting ? 1 : 5 + (this.happy / 100) * 14 + (st === 'happy' ? 8 : 0) + (st === 'act' && this.act && this.act.wag ? 14 : 0);
-      this.tail.rotation[this.wagAxis] = Math.sin(this.t * wag) * (resting ? 0.1 : 0.55);
-      this.tail.rotation.x = lerp(this.tail.rotation.x, this.happy < LOW || st === 'hide' || (st === 'act' && this.act && this.act.pose === 'hide') ? this.tailDown : this.tailUp, k);
+      // tail: speed and swing follow the mood; the tip trails behind the base
+      const mood = this.happy / 100;
+      const wag = resting ? 1.2 : (4 + mood * 7 + an.excite * 13 + (st === 'happy' ? 6 : 0) + (st === 'act' && this.act && this.act.wag ? 12 : 0)) * sty.wag;
+      const wAmp = resting ? 0.08 : 0.16 + mood * 0.24 + an.excite * 0.3;
+      this.tail.rotation[this.wagAxis] = Math.sin(this.t * wag) * wAmp;
+      if (this.tailTip) this.tailTip.rotation[this.wagAxis === 'y' ? 'y' : 'z'] = Math.sin(this.t * wag - 0.9) * wAmp * 0.8;
+      const low = this.happy < LOW || st === 'hide' || (st === 'act' && this.act && this.act.pose === 'hide') || (shyOut && !this.moving && an.excite < 0.3);
+      this.tail.rotation.x = spr('tx', tailLift != null ? tailLift : low ? this.tailDown : this.tailUp + (an.excite > 0.5 ? 0.12 : 0), 10, 0.8);
+
+      // ears
       const flap = (Math.sin(this.phase * 2) * 0.22 * this.walkBlend + (st === 'happy' ? Math.sin(this.t * 18) * 0.2 : 0)) * this.earFlap;
-      this.earL.rotation.z = -0.12 + flap;
-      this.earR.rotation.z = 0.12 - flap;
-      this.tongue.visible = st === 'happy' || st === 'drink' || st === 'zoom' || st === 'play' || st === 'attend' || this.zoomLeft > 0 || (this.moving && this.curSpeed > 3 && st !== 'return');
+      const pk = spr('ep', perk, 12, 0.55), bk = spr('eb', earsBack, 10, 0.8);
+      if (this.earFlap < 1) {   // standing ears turn forward and back
+        this.earL.rotation.x = this.earR.rotation.x = pk * 0.3 - bk * 0.75;
+        this.earL.rotation.z = -0.12 + flap - bk * 0.2;
+        this.earR.rotation.z = 0.12 - flap + bk * 0.2;
+      } else {                   // floppy ears lift when interested and flatten back when not
+        this.earL.rotation.x = this.earR.rotation.x = bk * 0.45 - pk * 0.15;
+        this.earL.rotation.z = -0.12 + flap - pk * 0.32;
+        this.earR.rotation.z = 0.12 - flap + pk * 0.32;
+      }
+      // mouth and eyes
+      if (this.jaw) this.jaw.rotation.x = spr('jw', jawT, 18, 0.8);
+      this.tongue.visible = st === 'drink' || jawT > 0.2 || (an.flair && an.flair.k === 'lick');
+      if (this.lids) {
+        const l = clamp(spr('lid', lidT, 26, 1), 0, 1);
+        for (const lid of this.lids) { lid.scale.y = Math.max(0.001, l); lid.visible = l > 0.04; }
+      }
     }
 
     updateBubble() {
@@ -3423,7 +4248,9 @@
     const pa = a.root.position, pb = b.root.position;
     const center = new V3((pa.x + pb.x) / 2, 0, (pa.z + pb.z) / 2);
     const ang = Math.atan2(pa.x - center.x, pa.z - center.z);
-    [[a, b, ang], [b, a, ang + Math.PI]].forEach(([d, o, an]) => {
+    const scene = place === 'park' && kind !== 'scuffle' && !meetScene && [a, b].filter((d) => !d.npc).length === 1;
+    if (scene) startMeetScene(a.npc ? b : a, a.npc ? a : b, kind);
+    else [[a, b, ang], [b, a, ang + Math.PI]].forEach(([d, o, an]) => {
       d.releaseClaim();
       d.dropSpot();
       d.onArrive = null;
@@ -3437,6 +4264,7 @@
     });
     encCooldown.set(pairKey(a.id, b.id), animT + 25);
     const mine = [a, b].filter((d) => !d.npc);
+    for (const d of mine) if (d.wish && d.wish.k === 'friend' && (d.wish.obj === a || d.wish.obj === b)) fulfilWish(d);
     if (kind !== 'scuffle') mine.forEach((d) => addSpec(d, 'charmer', 4));
     if (kind === 'play' && mine.length === 1) { const npc = [a, b].find((d) => d.npc); if (npc) setTimeout(() => storyPlay(npc), 1200); }
     if (kind === 'play') addRivalry(a, b, -D.RIVAL.play);
@@ -3457,6 +4285,440 @@
       });
     }
   }
+
+
+  // =====================================================================
+  // Tricks in the world: spots where a trick does something, like hopping across a creek or bowing to the street
+  // musician. A spot can also be a gate: a way that stays shut until a dog who knows the right trick opens it
+  // (like the old HMs). Places list their spots here, or bring their own as S.trickSpots.
+  //   { id, trick, x, z, r, kind, text, to (hop target id), daily, walk, gate: { x0, x1, z0, z1 } }
+  // =====================================================================
+  const TRICK_SPOTS = {
+    park: [
+      { id: 'creekW', trick: 'jump', x: -17.7, z: -11, r: 1.1, kind: 'hop', to: 'creekE', text: 'Hop across' },
+      { id: 'creekE', trick: 'jump', x: -14.6, z: -11, r: 1.1, kind: 'hop', to: 'creekW', text: 'Hop across' },
+      { id: 'oak', trick: 'paw', x: 5.4, z: -0.95, r: 1.2, kind: 'oak', text: 'Paw at the hollow', daily: true },
+    ],
+    oldtown: [
+      { id: 'busk', trick: 'bow', x: 7.4, z: -6.8, r: 1.3, kind: 'busk', text: 'Bow to the music', walk: true },
+      { id: 'bakery', trick: 'beg', x: -9.3, z: 13.1, r: 1.2, kind: 'bakery', text: 'Sit pretty', daily: true },
+      { id: 'well', trick: 'speak', x: 7.4, z: -28.15, r: 1.2, kind: 'well', text: 'Bark down the well', daily: true },
+    ],
+  };
+  const tspots = { list: [], markers: [], walkUsed: new Set(), anim: null };
+  const tsKey = (sp) => `${loc}:${sp.id}`;
+  function tsUsedToday(sp) { return sp.daily && (state.tspots || {})[tsKey(sp)] === clockNow.dateKey; }
+  function gateOpen(sp) { return !!(state.gatesOpen || {})[tsKey(sp)]; }
+  function gateSolid(x, z) {
+    if (place !== 'park') return false;
+    for (const sp of tspots.list) if (sp.gate && !gateOpen(sp) && x > sp.gate.x0 && x < sp.gate.x1 && z > sp.gate.z0 && z < sp.gate.z1) return true;
+    return false;
+  }
+  const knowsTrick = (d, t) => d.trickLvl(t) >= 1;
+  // set up the spots and their little markers when a walk starts
+  function setupTrickSpots() {
+    for (const m of tspots.markers) if (m.parent) m.parent.remove(m);
+    tspots.markers = [];
+    tspots.walkUsed = new Set();
+    tspots.list = place === 'park' && S ? [...(TRICK_SPOTS[loc] || []), ...(S.trickSpots || [])].filter((sp) => !S.inside || S.inside(sp.x, sp.z) || sp.gate) : [];
+    for (const sp of tspots.list) {
+      const g = new THREE.Group();
+      const T = ALL_TRICKS[sp.trick];
+      const ring = new THREE.Mesh(THREE.RingGeometry ? new THREE.RingGeometry(0.42, 0.52, 28) : geo(0.9, 0.02, 0.9), new THREE.MeshBasicMaterial({ color: '#ffd24d', transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.04;
+      ring.userData.noShadow = true;
+      g.add(ring);
+      const ic = emojiSprite(T ? T.icon : '✨', 0.42);
+      ic.position.y = 1.15;
+      g.add(ic);
+      g.position.set(sp.x, groundAt(sp.x, sp.z), sp.z);
+      g.userData = { sp, ring, ic };
+      g.visible = false;
+      world.add(g);
+      tspots.markers.push(g);
+      if (sp.gate && S.gateMesh && S.gateMesh[sp.id]) S.gateMesh[sp.id].visible = !gateOpen(sp);
+    }
+  }
+  // the markers show when you're near; gold if one of your dogs can do it, pale if not yet
+  function updateTrickSpots(dt) {
+    if (!tspots.list.length) return;
+    if (venueId) { for (const g of tspots.markers) g.visible = false; return; }
+    const pp = player.root.position;
+    for (const g of tspots.markers) {
+      const { sp, ring, ic } = g.userData;
+      const near = Math.hypot(pp.x - sp.x, pp.z - sp.z) < 7;
+      const done = tsUsedToday(sp) || (sp.walk && tspots.walkUsed.has(sp.id)) || (sp.gate && gateOpen(sp));
+      g.visible = near && !done && !photo;
+      if (!g.visible) continue;
+      const can = dogs.some((d) => d.root.visible && knowsTrick(d, sp.trick));
+      ring.material.color.set(can ? '#ffd24d' : '#d9d4e6');
+      ring.material.opacity = (can ? 0.55 : 0.35) + Math.sin(animT * 3 + sp.x) * 0.2;
+      ic.material.opacity = can ? 1 : 0.5;
+      ic.position.y = 1.15 + Math.sin(animT * 2.2 + sp.z) * 0.06;
+      ring.scale.setScalar(1 + Math.sin(animT * 3) * 0.06);
+    }
+    if (tspots.anim) stepHop(dt);
+  }
+  function trickSpotNear(pp) {
+    let best = null, bd = Infinity;
+    for (const sp of tspots.list) {
+      if (tsUsedToday(sp) || (sp.walk && tspots.walkUsed.has(sp.id)) || (sp.gate && gateOpen(sp))) continue;
+      const d = Math.hypot(pp.x - sp.x, pp.z - sp.z);
+      if (d < sp.r && d < bd) { bd = d; best = sp; }
+    }
+    return best;
+  }
+  function trickSpotCtx(pp) {
+    if (venueId) return null;
+    const sp = trickSpotNear(pp);
+    if (!sp) return null;
+    const k = 'ts:' + sp.id, T = ALL_TRICKS[sp.trick];
+    CTX[k] = [ { jump: 'up', paw: 'paw', bow: 'dog', beg: 'heart', speak: 'echo' }[sp.trick] || 'sparkle', sp.text ];
+    return k;
+  }
+  function useTrickSpot(id) {
+    const sp = tspots.list.find((x) => x.id === id);
+    if (!sp || tspots.anim) return;
+    const T = ALL_TRICKS[sp.trick];
+    const pp = player.root.position;
+    const d = dogs.filter((x) => x.root.visible && knowsTrick(x, sp.trick) && canPlay(x)).sort((a, b) => a.root.position.distanceTo(pp) - b.root.position.distanceTo(pp))[0];
+    if (!d) {
+      const who = dogs.some((x) => knowsTrick(x, sp.trick)) ? 'Your dog is too busy or tired right now' : `A dog who knows ${T.icon} ${T.name} could do something here`;
+      toast(who);
+      return;
+    }
+    // the dog comes to the spot and does the trick; what happens next depends on the spot
+    d.releaseClaim(); d.dropSpot(); d.zoomLeft = 0; d.path = null;
+    const at = new V3(sp.x, groundAt(sp.x, sp.z), sp.z);
+    d.goTo(at, 3, () => {
+      d.faceTo(sp.kind === 'busk' ? new V3(8.8, 0, -6.8) : sp.kind === 'well' ? new V3(7.4, 0, -29.5) : sp.kind === 'oak' ? new V3(5.4, 0, -1.8) : player.root.position);
+      d.trickId = sp.trick;
+      d.trickFace = d.root.rotation.y;
+      d.setState('trick', T.dur);
+      sfx('trick');
+      setTimeout(() => trickSpotEffect(sp, d), T.dur * 700);
+    }, 0.45);
+  }
+  function trickSpotEffect(sp, d) {
+    if (place !== 'park') return;
+    const st = (state.tspots = state.tspots || {});
+    if (sp.daily) st[tsKey(sp)] = clockNow.dateKey;
+    if (sp.walk) tspots.walkUsed.add(sp.id);
+    if (sp.gate) { (state.gatesOpen = state.gatesOpen || {})[tsKey(sp)] = true; colGrid = null; if (S.gateMesh && S.gateMesh[sp.id]) S.gateMesh[sp.id].visible = false; sfx('find'); }
+    d.addBond(1);
+    d.cheer(0.8);
+    const head = d.headWorld(0.45);
+    switch (sp.kind) {
+      case 'hop': startHop(sp, d); break;
+      case 'oak': spawnEmoji('🍂', new V3(5.4, groundAt(5.4, -1.8) + 2.2, -1.8), { size: 0.5, life: 1.4 }); walkLoot(d, null, 0.7); journalAdd(d, 'ts:oak', '🌳', 'Found something in the old oak’s hollow'); break;
+      case 'busk': spawnEmoji('🎶', new V3(8.8, 2.4, -6.8), { size: 0.6, life: 1.6 }); setTimeout(() => spawnEmoji('🎵', new V3(8.6, 2.6, -6.6), { size: 0.5, life: 1.4 }), 400); addCoins(4, d.root.position); d.happy = Math.min(100, d.happy + 8); journalAdd(d, 'ts:busk', '🎻', 'Took a bow for the street musician'); break;
+      case 'bakery': spawnEmoji('🥐', head, { size: 0.5 }); d.hunger = Math.min(100, d.hunger + 12); d.happy = Math.min(100, d.happy + 8); journalAdd(d, 'ts:bakery', '🥐', 'Sat so prettily the baker gave it a treat'); break;
+      case 'well': sfx('howl'); setTimeout(() => { spawnEmoji('✨', new V3(7.4, OTH_COURT() + 1.2, -29.5), { size: 0.5, life: 1.2 }); addCoins(3, new V3(7.4, 0, -28.8)); if (Math.random() < 0.25) walkLoot(d, null, 1); }, 650); journalAdd(d, 'ts:well', '💬', 'Barked down the old well and heard it bark back'); break;
+      default: break;
+    }
+    progress('worldtrick');
+    save();
+  }
+  const OTH_COURT = () => (S && S.height ? S.height(7.4, -28.2) : 0);
+  // hopping across: you and your dogs leap in a little arc to the other side
+  function startHop(sp, d) {
+    const to = tspots.list.find((x) => x.id === sp.to);
+    if (!to) return;
+    const pp = player.root.position;
+    const from = pp.clone(), dest = new V3(to.x, groundAt(to.x, to.z), to.z);
+    tspots.anim = { t: 0, dur: 0.85, from, dest, dogs: dogs.filter((x) => x.root.visible).map((x) => ({ d: x, from: x.root.position.clone() })) };
+    player.moveTarget = null;
+    sfx('throw');
+    journalAdd(d, 'ts:hop', '🦘', 'Hopped across the creek with you');
+  }
+  function stepHop(dt) {
+    const A = tspots.anim;
+    A.t += dt;
+    const u = clamp(A.t / A.dur, 0, 1), arc = Math.sin(u * Math.PI);
+    const pp = player.root.position;
+    pp.set(lerp(A.from.x, A.dest.x, u), lerp(A.from.y, A.dest.y, u) + arc * 0.9, lerp(A.from.z, A.dest.z, u));
+    player.face = Math.atan2(A.dest.x - A.from.x, A.dest.z - A.from.z);
+    A.dogs.forEach(({ d, from }, i) => {
+      const v = clamp((A.t - 0.08 * (i + 1)) / A.dur, 0, 1), a2 = Math.sin(v * Math.PI);
+      const off = new V3(-Math.sin(player.face) * (0.7 + i * 0.4), 0, -Math.cos(player.face) * (0.7 + i * 0.4));
+      const dx = A.dest.x + off.x, dz = A.dest.z + off.z;
+      d.root.position.set(lerp(from.x, dx, v), lerp(from.y, groundAt(dx, dz), v) + a2 * 0.8, lerp(from.z, dz, v));
+      d.face = player.face;
+      d.moving = v < 1;
+    });
+    if (A.t >= A.dur + 0.1 * A.dogs.length) {
+      tspots.anim = null;
+      pp.y = groundAt(pp.x, pp.z);
+      for (const { d } of A.dogs) { d.root.position.y = groundAt(d.root.position.x, d.root.position.z); d.setState('follow'); d.cheer(0.6); }
+      spawnEmoji('💨', pp.clone().add(new V3(0, 0.3, 0)), { size: 0.5, life: 0.7 });
+    }
+  }
+  // =====================================================================
+  // Dog meetings on walks: a little scene. Nose to nose, a polite sniff round the back, and then, if they get on
+  // (or you let them), a play bow and a chase. You can call your dog back at any point, or give them a bit longer.
+  // =====================================================================
+  let meetScene = null;
+  const MEET_T = { meet: 1.3, circle: 1.7, bow: 0.9, chase: 3.6, wrestle: 1.0, part: 1.1 };
+  // (shared with other players in the same online room: see netThrow / netMeet further down)
+  function startMeetScene(mine, other, kind, opts = {}) {
+    const pm = mine.root.position, po = other.root.position;
+    const center = opts.center || new V3((pm.x + po.x) / 2, 0, (pm.z + po.z) / 2);
+    const sc = meetScene = { a: mine, b: other, kind, phase: 'meet', t: 0, center, axis: opts.axis != null ? opts.axis : Math.atan2(po.x - pm.x, po.z - pm.z), extra: 0, chosen: null, called: false, psi: 0, dir: 1, swaps: 0, mirror: !!opts.mirror, remote: !!other.isRemote };
+    // with another player's dog, each game moves its own dog (the mirror side plays the other dog's part)
+    for (const d of other.isRemote ? [mine] : [mine, other]) {
+      d.releaseClaim(); d.dropSpot(); d.onArrive = null; d.path = null; d.zoomLeft = 0;
+      if (d.pullSpot) { d.pullSpot.taken = null; d.pullSpot = null; }
+      d.partner = d === mine ? other : mine;
+      d.setState('meet');
+      d.encPose = 'meet';
+      d.cheer(0.5);
+      if (d.walker) d.walker.pause = Math.max(d.walker.pause, 12);
+    }
+    meetBar(sc);
+    netMeet(sc, 'start');
+  }
+  function meetPhase(sc, ph) {
+    sc.phase = ph; sc.t = 0;
+    for (const d of [sc.a, sc.b]) d.encPose = ph;
+    if (ph === 'bow') { sc.a.cheer(1); sc.b.cheer(1); }
+    if (ph === 'chase') { sc.psi = sc.mirror ? sc.axis - Math.PI : sc.axis; for (const d of [sc.a, sc.b]) if (d.walker) d.walker.pause = Math.max(d.walker.pause, MEET_T.chase + sc.extra + 4); }
+    meetBar(sc);
+    netMeet(sc, ph);
+  }
+  function endMeetScene(called) {
+    const sc = meetScene;
+    if (!sc) return;
+    meetScene = null;
+    meetBar(null);
+    netMeet(sc, called ? 'call' : 'end');
+    for (const d of sc.remote ? [sc.a] : [sc.a, sc.b]) {
+      d.encPose = null; d.partner = null; d.encCenter = null;
+      if (d.state === 'meet') { if (d.npc) d.idle(); else d.setState('follow'); }
+      if (d.walker) d.walker.pause = Math.min(d.walker.pause, 0.6);
+    }
+    if (called) { sc.a.returning = true; sc.a.glance(sc.b.root.position, 1.2); }
+  }
+  function updateMeetScene(dt) {
+    const sc = meetScene;
+    if (!sc) return;
+    const { a, b, center } = sc;
+    if (place !== 'park' || a.state !== 'meet' || (!sc.remote && b.state !== 'meet') || (sc.remote && !b.root.parent)) { endMeetScene(false); return; }
+    // you walked off: your dog trots after you
+    if (flatDist(player.root.position, center) > 5.5) { endMeetScene(true); return; }
+    sc.t += dt;
+    const fx = Math.sin(sc.axis), fz = Math.cos(sc.axis);
+    const go = (d, x, z, sp, face) => { if (d.isRemote) return 0; const r = d.moveTowards(x, z, sp, dt); if (r < 0.08 && face) d.faceTo(face); return r; };
+    switch (sc.phase) {
+      case 'meet':
+        go(a, center.x - fx * 0.38, center.z - fz * 0.38, 1.6, b.root.position);
+        go(b, center.x + fx * 0.38, center.z + fz * 0.38, 1.6, a.root.position);
+        if (sc.t > MEET_T.meet) meetPhase(sc, 'circle');
+        break;
+      case 'circle': {
+        // your dog walks round to sniff the other's back; the other turns its head to keep an eye on things
+        const u = clamp(sc.t / MEET_T.circle, 0, 1);
+        const th = sc.axis + Math.PI + u * Math.PI * 0.95;
+        const bp = b.root.position;
+        if (sc.mirror) { a.faceTo(b.root.position); a.glance(b.root.position, 0.3); }
+        else {
+          go(a, bp.x + Math.sin(th) * 0.72, bp.z + Math.cos(th) * 0.72, 2.0);
+          a.faceTo(bp);
+          if (!b.isRemote) { b.faceTo(new V3(bp.x - fx, 0, bp.z - fz)); b.glance(a.root.position, 0.3); }
+        }
+        if (sc.t > MEET_T.circle) meetPhase(sc, sc.kind === 'play' || sc.chosen === 'play' ? 'bow' : 'part');
+        break;
+      }
+      case 'bow':
+        a.faceTo(b.root.position); b.faceTo(a.root.position);
+        if (sc.t > MEET_T.bow) meetPhase(sc, 'chase');
+        break;
+      case 'chase': {
+        // round and round: one chases, the other runs; now and then they swap
+        sc.psi += dt * 3.4 * sc.dir;
+        const R = 1.15;
+        const oa = sc.mirror ? 0.95 * sc.dir : 0, ob = sc.mirror ? 0 : 0.95 * sc.dir;
+        go(a, center.x + Math.sin(sc.psi + oa) * R, center.z + Math.cos(sc.psi + oa) * R, 4.6);
+        go(b, center.x + Math.sin(sc.psi + ob) * R, center.z + Math.cos(sc.psi + ob) * R, 4.6);
+        if (sc.t > 1.8 * (sc.swaps + 1) && sc.swaps < 4) { sc.swaps++; sc.dir *= -1; }
+        if (Math.random() < dt * 1.2) spawnEmoji('💕', a.headWorld(0.3), { size: 0.3, life: 0.8 });
+        if (sc.t > MEET_T.chase + sc.extra) meetPhase(sc, 'wrestle');
+        break;
+      }
+      case 'wrestle':
+        go(a, center.x - fx * 0.3, center.z - fz * 0.3, 2.4, b.root.position);
+        go(b, center.x + fx * 0.3, center.z + fz * 0.3, 2.4, a.root.position);
+        if (sc.t > MEET_T.wrestle) meetPhase(sc, 'part');
+        break;
+      case 'part':
+        a.faceTo(player.root.position); b.glance(a.root.position, 0.5);
+        if (sc.t > MEET_T.part) endMeetScene(false);
+        break;
+      default: endMeetScene(false);
+    }
+  }
+  function meetChoice(k) {
+    const sc = meetScene;
+    if (!sc) return;
+    sfx('tap');
+    if (k === 'call') { endMeetScene(true); return; }
+    if (k === 'play' && !sc.chosen) {
+      sc.chosen = 'play';
+      netMeet(sc, 'play');
+      if (sc.kind !== 'play') { addFriendship(sc.a, sc.b, 5); sc.a.happy = Math.min(100, sc.a.happy + 6); progress('play'); }
+      if (sc.phase === 'part') meetPhase(sc, 'bow');
+      else meetBar(sc);
+    }
+    if (k === 'more' && sc.phase === 'chase' && sc.extra < 6) {
+      sc.extra += 3; sc.a.happy = Math.min(100, sc.a.happy + 3); addFriendship(sc.a, sc.b, 1);
+      sc.swaps = Math.max(0, sc.swaps - 2);
+      meetBar(sc);
+    }
+  }
+  function meetBar(sc) {
+    let bar = document.getElementById('meetBar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'meetBar';
+      bar.className = 'meetBar hidden';
+      document.body.appendChild(bar);
+      bar.addEventListener('click', (e) => { const b2 = e.target.closest('[data-meet]'); if (b2) meetChoice(b2.dataset.meet); });
+    }
+    if (!sc) { bar.classList.add('hidden'); return; }
+    const btns = [];
+    const early = sc.phase === 'meet' || sc.phase === 'circle';
+    if (early && sc.kind !== 'play' && !sc.chosen) btns.push(`<button class="glass" data-meet="play">${IC('paw')} Let them play</button>`);
+    if (sc.phase === 'chase' && sc.extra < 6) btns.push(`<button class="glass" data-meet="more">${IC('heart')} A bit longer</button>`);
+    if (sc.phase !== 'part') btns.push(`<button class="glass" data-meet="call">${IC('left')} Call ${esc(sc.a.name)} back</button>`);
+    bar.innerHTML = `<small>${esc(sc.a.name)} meets ${esc(sc.b.name)}</small><div>${btns.join('')}</div>`;
+    bar.classList.toggle('hidden', !btns.length);
+  }
+
+  // =====================================================================
+  // Wishes: now and then a dog would love to do something on the walk. It shows: it stops to look that way, ears up
+  // and tail going, with a little picture of the wish above its head. Tap the dog to see it spelled out.
+  // =====================================================================
+  let wishCool = 50;
+  const WISH_TEXT = { ducks: 'would love to go and see the ducks', splash: 'would love a splash in the water', friend: 'would love to say hello to {o}',
+    scent: 'smells something interesting over there', view: 'would love to see the view from up high', fetch: 'would love a game of fetch', rest: 'would like a little sit-down' };
+  function wishLine(d) {
+    const W = d.wish;
+    return `${(WISH_TEXT[W.k] || 'has a wish').replace('{o}', W.obj ? W.obj.name : 'a friend')} ${W.icon}`;
+  }
+  function updateWishes(dt) {
+    if (place !== 'park' || venueId || mode !== 'normal') return;
+    const d = dogs.find((x) => x.wish);
+    if (d) { tickWish(d, dt); return; }
+    wishCool -= dt;
+    if (wishCool > 0) return;
+    wishCool = rand(70, 140);
+    const cand = dogs.filter((x) => x.state === 'follow' && !x.offLeash && x.energy > 15 && x.root.visible);
+    if (cand.length) makeWish(pick(cand));
+  }
+  function makeWish(d) {
+    const pos = d.root.position, opts = [];
+    const far = (p) => { const f = flatDist(p, pos); return f > 6 && f < 24; };
+    if (S.ponds && S.ponds.length) {
+      const e = pondEdge(new V3(pos.x + rand(-10, 10), 0, pos.z + rand(-10, 10)));
+      if (e && far(e)) { if (D.DUCK_PLACES.includes(loc)) opts.push(['ducks', e, '🦆', 2]); if (d.flag('splashes')) opts.push(['splash', e, '💦', 2]); }
+    }
+    const w = walkers.filter((x) => !x.noDog && x.dog && far(x.dog.root.position)).sort((p, q) => flatDist(p.dog.root.position, pos) - flatDist(q.dog.root.position, pos))[0];
+    if (w) opts.push(['friend', w.dog.root.position, '🐕', d.flag('lonely') ? 3 : 1.4, w.dog]);
+    const spots = sniffSpots.filter((sp) => sp.cooldown <= 0 && !sp.taken && sp.active !== false && far(sp.pos));
+    if (spots.length) { const sp = pick(spots); opts.push(['scent', sp.pos, '👃', 1.6, null, sp]); }
+    if (S.lookout) { const L = S.lookout, c = new V3((L.x0 + L.x1) / 2, 0, (L.z0 + L.z1) / 2); if (far(c)) opts.push(['view', c, '🌄', 0.9]); }
+    if (d.energy > 40) opts.push(['fetch', null, '🎾', 1.4]);
+    if (d.energy < 50) opts.push(['rest', null, '🪑', 1.6]);
+    if (!opts.length) return;
+    let r = Math.random() * opts.reduce((t, o) => t + o[3], 0), o = opts[0];
+    for (const x of opts) { r -= x[3]; if (r <= 0) { o = x; break; } }
+    d.wish = { k: o[0], pos: o[1], icon: o[2], obj: o[4] || null, spot: o[5] || null, t: 0, show: 0.5, bubble: 0 };
+    if (!d.wishSprite) {
+      d.wishSprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, opacity: 0 }));
+      d.wishSprite.scale.set(0.44, 0.44, 1);
+      d.root.add(d.wishSprite);
+    }
+    d.wishSprite.material.map = emojiTexture(o[2]);
+    d.wishSprite.material.needsUpdate = true;
+  }
+  function tickWish(d, dt) {
+    const W = d.wish;
+    W.t += dt;
+    if (W.t > 150 || place !== 'park') { clearWish(d); return; }
+    W.show -= dt;
+    W.bubble = Math.max(0, W.bubble - dt);
+    if (W.show <= 0 && (d.state === 'follow' || d.state === 'idle')) {
+      W.show = rand(6, 10);
+      W.bubble = 2.6;
+      d.glance(W.pos || player.root.position, 2.4);
+      d.cheer(0.5);
+      if (W.k === 'fetch' || W.k === 'rest') d.faceTo(player.root.position);
+    }
+    const show = W.bubble > 0 || selected === d;
+    const m = d.wishSprite.material;
+    m.opacity = lerp(m.opacity, show ? 0.95 : 0, damp(0.002, dt));
+    d.wishSprite.visible = m.opacity > 0.02;
+    d.wishSprite.position.y = d.headBaseY + 0.72 + Math.sin(d.t * 2.4) * 0.04;
+    const pp = player.root.position, dp = d.root.position;
+    let done = false;
+    if (W.k === 'ducks' || W.k === 'splash') done = flatDist(dp, W.pos) < 2.4 && flatDist(pp, W.pos) < 4.5;
+    else if (W.k === 'view') done = atLookout();
+    else if (W.k === 'rest') done = !!(player.pose || (fun && fun.still));
+    if (done) fulfilWish(d);
+  }
+  function clearWish(d) {
+    d.wish = null;
+    if (d.wishSprite) { d.wishSprite.visible = false; d.wishSprite.material.opacity = 0; }
+  }
+  function fulfilWish(d) {
+    if (!d.wish) return;
+    const W = d.wish;
+    clearWish(d);
+    wishCool = rand(80, 150);
+    d.happy = Math.min(100, d.happy + 12);
+    d.addBond(2);
+    d.cheer(1);
+    if (d.an) d.an.flair = { k: 'wiggle', t: 0 };
+    spawnEmoji('💖', d.headWorld(0.45), { size: 0.5 });
+    if (W.k === 'splash' && d.state === 'follow') { const e = pondEdge(d.root.position); if (e) d.goTo(e, 3.2, () => { d.faceTo(e.center || e); d.setState('splash', 1.8); }, 0.5); }
+    journalAdd(d, 'wish1', '💖', 'Got its very first wish on a walk');
+    progress('wish');
+  }
+
+  // a dog pulling toward a scent slows you down a touch when you walk the other way
+  function leashTug(mx, mz) {
+    const p = player.root.position;
+    for (const d of dogs) {
+      if (d.state !== 'pull' || !d.pulling) continue;
+      const q = d.root.position, dx = q.x - p.x, dz = q.z - p.z, l = Math.hypot(dx, dz) || 1;
+      if ((mx * dx + mz * dz) / l < -0.2) return 0.86;
+    }
+    return 1;
+  }
+  // the scent swirl around a sniffing dog's nose grows the longer it gets to sniff
+  const SWIRL_MAT = new THREE.MeshBasicMaterial({ color: '#ffd36b', transparent: true, opacity: 0.85, depthWrite: false });
+  function updateSwirl(d) {
+    const on = d.state === 'sniff' && (d.sniffT || 0) > 0.8 && d.root.visible;
+    if (!on) { if (d.swirl) d.swirl.visible = false; return; }
+    if (!d.swirl) {
+      d.swirl = new THREE.Group();
+      for (let i = 0; i < 12; i++) { const m = new THREE.Mesh(geo(0.055, 0.055, 0.055), SWIRL_MAT); d.swirl.add(m); }
+      world.add(d.swirl);
+    }
+    const deep = clamp(((d.sniffT || 0) - 1.2) / 4.4, 0, 1);
+    const at = d.spot ? d.spot.pos : d.root.position;
+    d.swirl.visible = true;
+    d.swirl.position.set(at.x, groundAt(at.x, at.z), at.z);
+    const n = 4 + Math.round(deep * 8), R = 0.22 + deep * 0.32;
+    d.swirl.children.forEach((m, i) => {
+      m.visible = i < n;
+      const f = (d.t * 0.55 + i / 12) % 1, a = d.t * 2.6 + i * (TAU / 12);
+      m.position.set(Math.sin(a) * R * (1 - f * 0.4), 0.12 + f * (0.45 + deep * 0.7), Math.cos(a) * R * (1 - f * 0.4));
+      const sc = (1 - f) * (0.8 + deep * 0.7);
+      m.scale.setScalar(Math.max(0.01, sc));
+    });
+  }
+
   function checkEncounters() {
     if (mode === 'trick') return;
     const ready = (a, b) => (encCooldown.get(pairKey(a.id, b.id)) || 0) < animT;
@@ -3468,6 +4730,20 @@
           if (w.noDog || n.state !== 'follow' || !ready(d, n)) continue;
           const dist = d.root.position.distanceTo(n.root.position);
           if (dist < (d.offLeash ? 2.0 : 1.4) && Math.random() < (d.offLeash ? 0.6 : 0.35)) { startEncounter(d, n); return; }
+        }
+        if (meetScene || !NET.uid) continue;
+        for (const P of LIVE.others.values()) {
+          if (!(NET.uid < P.uid)) continue;
+          for (const R of P.dogs) {
+            const n = R.dog;
+            if (!n || !['', 'u', 'h'].includes(R.code || '') || (encCooldown.get(pairKey(d.id, n.id)) || 0) > animT) continue;
+            if (d.root.position.distanceTo(n.root.position) < (d.offLeash ? 2.0 : 1.4) && Math.random() < 0.4) {
+              encCooldown.set(pairKey(d.id, n.id), animT + 40);
+              n.remoteUid = P.uid;
+              startMeetScene(d, n, Math.random() < 0.55 ? 'play' : 'greet');
+              return;
+            }
+          }
         }
       }
     } else if (mode === 'normal') {
@@ -3505,6 +4781,7 @@
       if (d > L) { pos.x = wp.x + (dx / d) * L; pos.z = wp.z + (dz / d) * L; this.moving = true; this.curSpeed = 2.5; }
     }
     updateState(dt) {
+      if (this.state === 'meet') return;   // a meeting scene moves this dog
       if (this.state === 'play') { this.updatePlay(dt); return; }
       if (this.state === 'greet' || this.state === 'scuffle') { super.updateState(dt); return; }
       // their owner sat down on a bench with you: lie down at their feet
@@ -3831,7 +5108,7 @@
     $('tmPortrait').src = ART.portraitURL(d.breed, d.coat);
     $('tmName').textContent = d.name;
     $('tmSeq').textContent = ''; $('tmSeq').dataset.seq = '';
-    $('tmHint').textContent = d.obedience() ? 'Swipe, tap, hold or draw a circle · the book lists every trick' : 'Try swiping down to ask for Sit · the book lists every trick';
+    $('tmHint').textContent = d.obedience() ? 'Swipe, tap, hold or draw the trick · the book shows how' : 'Try swiping down to ask for Sit · the book lists every trick';
     $('trickMode').classList.remove('hidden');
     refreshUI();
     if (place === 'park') refreshLeashBtn();
@@ -3957,6 +5234,11 @@
     d.addBond(1);
     tm.focus = Math.min(100, tm.focus + TF.success);
     const head = d.headWorld(0.45);
+    if (tm && tm.dog === d) {
+      tmCam.push = 1;
+      const el = $('trickMode');
+      el.classList.remove('win'); void el.offsetWidth; el.classList.add('win');
+    }
     const fx = { speak: '💬', shake: '💦', howl: '🌕', dance: '🎶', chase: '🌀', dead: '💫', sing: '🎵' }[id];
     if (fx) spawnEmoji(fx, head, { size: 0.45, life: 1.4 });
     if (id === 'sing') { sfx('howl'); setTimeout(() => spawnEmoji('🎶', d.headWorld(0.5), { size: 0.4 }), 500); }
@@ -4614,14 +5896,59 @@
     if (!tm) return;
     tm.seq.push(tok);
     if (tok === 'T') tm.taps.push(performance.now());
-    $('tmSeq').innerHTML = tm.seq.map((c) => IC(GLYPH[c])).join('');
+    $('tmSeq').innerHTML = tm.seq.map((c, i) => `<span class="g${i === tm.seq.length - 1 ? ' pop' : ''}">${IC(GLYPH[c])}</span>`).join('');
     $('tmSeq').dataset.seq = tm.seq.join('');
+    tm.dog.cheer(0.15);
+  }
+  // the finger's trail: a soft glowing line that fades out
+  const trail = { c: null, pts: [], fade: 0 };
+  function trailCanvas() {
+    if (!trail.c) {
+      trail.c = document.createElement('canvas');
+      trail.c.id = 'tmTrail';
+      tmEl.insertBefore(trail.c, tmEl.firstChild);
+    }
+    const r = window.devicePixelRatio || 1, W = Math.round(window.innerWidth * r), H = Math.round(window.innerHeight * r);
+    if (trail.c.width !== W || trail.c.height !== H) { trail.c.width = W; trail.c.height = H; }
+    return trail.c;
+  }
+  function drawTrail() {
+    const c = trailCanvas(), x = c.getContext('2d'), r = window.devicePixelRatio || 1;
+    x.clearRect(0, 0, c.width, c.height);
+    if (trail.pts.length < 2 || trail.fade <= 0) return;
+    x.lineCap = 'round'; x.lineJoin = 'round';
+    for (const [w, a] of [[16, 0.18], [8, 0.4], [3.5, 0.95]]) {
+      x.strokeStyle = `rgba(255, 236, 170, ${a * trail.fade})`;
+      x.lineWidth = w * r;
+      x.beginPath();
+      trail.pts.forEach(([px, py], i) => (i ? x.lineTo(px * r, py * r) : x.moveTo(px * r, py * r)));
+      x.stroke();
+    }
+  }
+  function fadeTrail() {
+    trail.fade -= 0.06;
+    drawTrail();
+    if (trail.fade > 0) requestAnimationFrame(fadeTrail);
+    else trail.pts = [];
+  }
+  // where on the ground is the finger? the dog's eyes follow it
+  const _ray = new THREE.Raycaster(), _ndc = new THREE.Vector2();
+  function fingerWorld(cx, cy) {
+    if (!tm || !_ray.setFromCamera || !_ray.ray) return null;
+    _ndc.set((cx / window.innerWidth) * 2 - 1, -(cy / window.innerHeight) * 2 + 1);
+    _ray.setFromCamera(_ndc, camera);
+    const o = _ray.ray.origin, d = _ray.ray.direction, y = tm.dog.root.position.y + 0.4;
+    if (Math.abs(d.y) < 1e-3) return null;
+    const t = (y - o.y) / d.y;
+    if (t < 0 || t > 40) return null;
+    return new V3(o.x + d.x * t, y, o.z + d.z * t);
   }
   tmEl.addEventListener('pointerdown', (e) => {
     if (!tm || e.target.closest('button')) return;
     e.preventDefault();
     if (tm.dog.state !== 'attend' && !tm.seq.length) { if (tm.dog.state === 'move') toast(`${tm.dog.name} is still coming over…`); return; }
     tm.ptr = { id: e.pointerId, t0: performance.now(), pts: [[e.clientX, e.clientY]], moved: false, holdFirst: false, moveStart: 0 };
+    trail.pts = [[e.clientX, e.clientY]]; trail.fade = 1; drawTrail();
     try { tmEl.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     ringEl.style.left = e.clientX + 'px';
     ringEl.style.top = e.clientY + 'px';
@@ -4636,6 +5963,8 @@
     const P = tm && tm.ptr;
     if (!P || e.pointerId !== P.id) return;
     P.pts.push([e.clientX, e.clientY]);
+    trail.pts.push([e.clientX, e.clientY]); trail.fade = 1; drawTrail();
+    if (P.pts.length % 3 === 0) { try { const w = fingerWorld(e.clientX, e.clientY); if (w) tm.dog.glance(w, 0.5); } catch (_) { /* fine */ } }
     const [x0, y0] = P.pts[0];
     if (!P.moved && Math.hypot(e.clientX - x0, e.clientY - y0) > 16) {
       P.moved = true;
@@ -4649,6 +5978,7 @@
     if (!P || e.pointerId !== P.id) return;
     tm.ptr = null;
     tm.lastUp = performance.now();
+    requestAnimationFrame(fadeTrail);
     holdTimers.forEach(clearTimeout);
     ringEl.className = '';
     if (e.type === 'pointercancel') return;
@@ -4677,8 +6007,41 @@
       for (let k = 0; k < loops; k++) pushToken('O');
       return;
     }
+    const shape = strokeShape(pts, { sx, sy, ex, ey, minX, maxX, minY, maxY, size });
+    if (shape) { pushToken(shape); return; }
     const dx = ex - sx, dy = ey - sy;
     pushToken(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'd' : 'u'));
+  }
+  // drawn shapes that look like the trick: a zigzag, an arch (∩), a dip (∪), or an L (down, then along)
+  function strokeShape(pts, B) {
+    const w = B.maxX - B.minX, h = B.maxY - B.minY;
+    if (B.size < 40) return null;
+    // zigzag: mostly sideways, changing direction at least twice
+    let flips = 0, dir = 0, run = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i][0] - pts[i - 1][0];
+      if (Math.abs(dx) < 1) continue;
+      const sgn = Math.sign(dx);
+      if (sgn === dir) run += Math.abs(dx);
+      else { if (dir !== 0 && run > w * 0.22) flips++; dir = sgn; run = Math.abs(dx); }
+    }
+    if (flips >= 2 && w > h * 0.9) return 'Z';
+    // arch and dip: both ends at about the same height, the middle well above (arch) or below (dip)
+    const ends = Math.abs(B.ey - B.sy) < h * 0.55 && Math.abs(B.ex - B.sx) > w * 0.55 && w > 45;
+    if (ends && Math.min(B.sy, B.ey) - B.minY > Math.max(28, w * 0.22)) return 'A';
+    if (ends && B.maxY - Math.max(B.sy, B.ey) > Math.max(28, w * 0.22)) return 'U';
+    // L: a clear corner, a downward first leg and a sideways second leg
+    let ci = 0, cd = 0;
+    const lx = B.ex - B.sx, ly = B.ey - B.sy, ll = Math.hypot(lx, ly) || 1;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d = Math.abs((pts[i][0] - B.sx) * ly - (pts[i][1] - B.sy) * lx) / ll;
+      if (d > cd) { cd = d; ci = i; }
+    }
+    if (ci > 0 && cd > B.size * 0.22) {
+      const c = pts[ci], ax = c[0] - B.sx, ay = c[1] - B.sy, bx = B.ex - c[0], by = B.ey - c[1];
+      if (ay > 30 && ay > Math.abs(ax) * 1.6 && Math.abs(bx) > 30 && Math.abs(bx) > Math.abs(by) * 1.6) return 'L';
+    }
+    return null;
   }
   tmEl.addEventListener('pointerup', endGesture);
   tmEl.addEventListener('pointercancel', endGesture);
@@ -5302,8 +6665,8 @@
       r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
       r.setClearColor(0x000000, 0);
       const sc = new THREE.Scene();
-      sc.add(new THREE.HemisphereLight(0xffffff, 0xa8b8c8, 0.95));
-      const sun = new THREE.DirectionalLight(0xffffff, 0.55);
+      sc.add(new THREE.HemisphereLight(0xffffff, 0xa8b8c8, 0.95 * LUX * 0.85));
+      const sun = new THREE.DirectionalLight(0xffffff, 0.55 * LUX * 0.85);
       sun.position.set(2, 4, 3);
       sc.add(sun);
       const cam = new THREE.PerspectiveCamera(40, 1, 0.1, 40);
@@ -6025,6 +7388,50 @@
     toast(`🎁 You got ${giftLabel(f.gift)}! It's waiting in your own game`);
   }
 
+  // Another player's dog on a live walk: it moves where their game says and shows what it's doing (sit, tricks,
+  // belly rubs, play bows, a toy in its mouth) with the same animation as yours. It has no needs and no mind of its own.
+  class RemoteDog extends Dog {
+    constructor(breed, coat, id) {
+      super({ id, breed, coat, name: '', born: Date.now() - 400 * DAY, grown: true, revealed: true, happy: 85, hunger: 90, thirst: 90, energy: 85, clean: 90, npc: true });
+      this.npc = true;
+      this.isRemote = true;
+      this.leash.visible = false;
+      this.code = '';
+    }
+    tickNeeds() { /* not ours */ }
+    addBond() { /* not ours */ }
+    updateBubble() { /* no need bubbles */ }
+    update() { /* moved by remoteTick */ }
+    onLeash() { return false; }
+    remoteTick(dt, moved, code) {
+      this.stateTime += dt;
+      this.moving = moved > 0.002;
+      this.curSpeed = dt > 0 ? moved / dt : 0;
+      this.face = this.root.rotation.y;
+      if (code !== this.code) {
+        this.code = code;
+        this.stateTime = 0;
+        this.trickId = null; this.encPose = null; this.act = null; this.belly = false;
+        const [k, x] = code.split(':');
+        const S2 = { s: 'sit', l: 'lounge', z: 'sleep', h: 'happy', n: 'sniff', d: 'dig', w: 'splash', p: 'petted', pb: 'petted', u: 'pull' }[k];
+        if (k === 'k' && ALL_TRICKS[x]) { this.state = 'trick'; this.trickId = x; this.timer = ALL_TRICKS[x].dur; }
+        else if (k === 'm') { this.state = 'meet'; this.encPose = x || 'meet'; }
+        else if (k === 'a') { this.state = 'act'; this.act = { pose: x || null, fn: () => true }; }
+        else if (k === 'r') { this.state = 'return'; }
+        else this.state = S2 || 'idle';
+        if (k === 'pb') this.belly = true;
+        if (k === 'p' || k === 'pb') { this.petPart = 'back'; this.petT = 1; }
+        if (k === 'r') { if (!this.carrying) carry(this, 'toy', D.TOYS[x] ? x : 'tennis'); } else if (this.carrying) drop(this);
+        if (k === 'h' || k === 'k') this.cheer(0.5);
+      }
+      if (this.state === 'trick') this.timer -= dt;
+      if (this.state === 'petted') this.petT = 1;
+      if (this.state === 'sniff') this.sniffT = this.stateTime;
+      this.animate(dt);
+      updateSwirl(this);
+    }
+  }
+
   // Visiting: show a friend's home with their dogs wandering around
   class GuestDog extends Dog {
     constructor(data) {
@@ -6049,7 +7456,9 @@
   // =====================================================================
   // Throwing toys
   // =====================================================================
-  const ball = { mesh: new THREE.Group(), type: null, active: false, flying: false, t: 0, from: new V3(), to: new V3(), held: null, bounce: 0 };
+  // the toy flies for real: gravity, bounces that depend on the toy, rolling down slopes, bumping off walls,
+  // and floating on water until it drifts ashore. ball.to is where it will next touch the ground.
+  const ball = { mesh: new THREE.Group(), type: null, active: false, flying: false, t: 0, from: new V3(), to: new V3(), held: null, bounce: 0, vel: new V3(), rest: false, water: false };
   ball.mesh.visible = false;
   world.add(ball.mesh);
   function setBallToy(type) {
@@ -6066,7 +7475,40 @@
   }
   const canPlay = (d) => d.energy > 8 && !['sleep', 'eat', 'drink', 'fetch', 'return', 'towel', 'wait', 'hide', 'attend', 'trick', 'confused', 'play', 'greet', 'scuffle', 'bath', 'stay'].includes(d.state);
 
-  function throwBall() {
+  const BALL_G = 15;
+  const isWaterAt = (x, z) => place === 'park' && S && (S.isWater ? S.isWater(x, z) : S.ponds && inPond(x, z, 0));
+  const ballGround = (x, z, y) => (terrainOn() ? groundAtY(x, z, y + 0.3) : 0);
+  function toyPhys(def) {
+    const flat = def.spin === 'flat';
+    return { e: 0.22 + (def.bounce || 0) * 0.62, fr: def.spin === 'roll' ? 1.3 : flat ? 4 : 3.4, g: BALL_G * (flat ? 0.5 : 1), drag: flat ? 0.9 : 0.05 };
+  }
+  // where would a throw from p with velocity v first touch the ground? (for the aim preview and for the dog)
+  function predictLanding(p, v, def, out, pts) {
+    const P = toyPhys(def), gk = ball.gK || 1;
+    let x = p.x, y = p.y, z = p.z, vx = v.x, vy = v.y, vz = v.z;
+    const h = 1 / 60;
+    for (let i = 0; i < 360; i++) {
+      vy -= P.g * gk * h;
+      if (P.drag && vy < 0) vy *= 1 - P.drag * h;
+      x += vx * h; y += vy * h; z += vz * h;
+      if (pts && i % 4 === 0) pts.push(x, y, z);
+      if (place === 'home' ? !inBounds(x, z, 0.1) : false) break;
+      const gy = ballGround(x, z, y) + def.restY;
+      if (y <= gy) { y = gy; break; }
+    }
+    out.set(x, y, z);
+    return out;
+  }
+  function throwVelocity(a, power, def, out) {
+    const grav = place === 'park' && LOC().lowGravity ? D.LOW_GRAVITY : null;
+    const P = toyPhys(def);
+    const dist = (1.6 + power * 6.2) * def.dist * windBoost() * (grav ? grav.dist : 1);
+    const th = def.spin === 'flat' ? 0.32 : 0.72;
+    const g = P.g * (grav ? 1 / grav.arc : 1);
+    const v = Math.sqrt((g * dist) / Math.sin(2 * th)) * (def.spin === 'flat' ? 0.92 : 1);
+    return out.set(Math.sin(a) * Math.cos(th) * v, Math.sin(th) * v, Math.cos(a) * Math.cos(th) * v);
+  }
+  function throwBall(aim) {
     if (ball.active) { toast('A toy is already out!'); return; }
     haptic();
     let dog = selected && canPlay(selected) ? selected : null;
@@ -6082,68 +7524,182 @@
     const toyId = snow ? 'snowball' : state.toy;
     const def = D.TOYS[toyId] || D.TOYS.tennis;
     const grav = place === 'park' && LOC().lowGravity ? D.LOW_GRAVITY : null;  // fetch on the moon
-    const p = player.root.position, a = player.root.rotation.y;
-    let dist = rand(3.5, 5.5) * def.dist * windBoost() * (grav ? grav.dist : 1), tx = 0, tz = 0, ok = false;
-    for (; dist > 0.9; dist -= 0.4) {
-      tx = p.x + Math.sin(a) * dist;
-      tz = p.z + Math.cos(a) * dist;
-      if (inBounds(tx, tz, 0.3) && !isSolid(tx, tz) && (place === 'home' || !inPond(tx, tz, 0.3)) && (!terrainOn() || lineClear(p.x, p.z, tx, tz))) { ok = true; break; }
-    }
-    if (!ok) { toast('No room to throw — turn around!'); return; }
+    const a = aim ? aim.a : player.root.rotation.y;
+    if (aim) player.face = player.root.rotation.y = a;
     sfx('throw');
     setBallToy(toyId);
     ball.snow = snow;
-    ball.arcK = grav ? grav.arc : 1;
-    ball.timeK = grav ? grav.time : 1;
+    ball.gK = grav ? 1 / grav.arc : 1;
     player.hand.getWorldPosition(ball.from);
-    ball.gy = groundAt(tx, tz);
-    ball.to.set(tx, def.restY + ball.gy, tz);
+    throwVelocity(a, aim ? aim.power : rand(0.35, 0.6), def, ball.vel);
+    predictLanding(ball.from, ball.vel, def, ball.to);
+    ball.gy = ball.to.y - def.restY;
     ball.t = 0;
     ball.flying = true;
     ball.active = true;
+    ball.rest = false;
+    ball.water = false;
+    ball.bounces = 0;
     ball.held = null;
     ball.mesh.visible = true;
     ball.mesh.position.copy(ball.from);
     ball.mesh.rotation.set(0, a, 0);
     player.throwT = 0.3;
     dog.startFetch();
+    netThrow(toyId, ball.from, ball.vel, a);
   }
+  // one physics step of the toy (also used for toys other players throw)
+  function stepToy(B, def, dt) {
+    const p = B.mesh.position, v = B.vel, P = toyPhys(def);
+    const n = Math.max(1, Math.ceil(dt / 0.01)), h = dt / n;
+    for (let i = 0; i < n; i++) {
+      if (B.water) {
+        // bobbing on the water, drifting gently to the nearest bank
+        const e = pondEdge(p);
+        if (e) { const dx = e.x - p.x, dz = e.z - p.z, l = Math.hypot(dx, dz) || 1; p.x += (dx / l) * 0.45 * h; p.z += (dz / l) * 0.45 * h; }
+        p.y = (B.waterY != null ? B.waterY : p.y) + Math.sin(animT * 3) * 0.015;
+        if (!isWaterAt(p.x, p.z) || !e) { B.water = false; B.rest = true; p.y = ballGround(p.x, p.z, p.y) + def.restY; }
+        continue;
+      }
+      if (B.rest) continue;
+      const air = B.flying;
+      if (air) { v.y -= P.g * (B.gK || 1) * h; if (P.drag && v.y < 0) v.y *= 1 - P.drag * h; }
+      // bump off walls, furniture, rocks and steep steps
+      // (water stops dogs, not toys; and a toy flying high sails over benches, hedges and fences)
+      const wet = (x, z) => isWaterAt(x, z) || isWaterAt(x + 0.07, z) || isWaterAt(x - 0.07, z) || isWaterAt(x, z + 0.07) || isWaterAt(x, z - 0.07);
+      const blocked = (x, z) => { const w = wet(x, z); return !(w || inBounds(x, z, 0.02)) || (terrainOn() && !w && ballGround(x, z, p.y) > p.y + 0.25) ||
+        (isSolid(x, z, p.y) && !w && p.y - ballGround(x, z, p.y) < (place === 'home' ? 2.2 : 0.95)); };
+      let nx = p.x + v.x * h, nz = p.z + v.z * h;
+      if (blocked(nx, p.z)) { v.x = -v.x * 0.45; nx = p.x; if (Math.abs(v.x) > 0.6) toyThud(B, def); }
+      if (blocked(nx, nz)) { v.z = -v.z * 0.45; nz = p.z; if (Math.abs(v.z) > 0.6) toyThud(B, def); }
+      p.x = nx; p.z = nz;
+      const gy = ballGround(p.x, p.z, p.y) + def.restY;
+      if (air) {
+        p.y += v.y * h;
+        if (p.y <= gy) {
+          p.y = gy;
+          if (isWaterAt(p.x, p.z)) {
+            B.water = true; B.flying = false; B.waterY = gy - def.restY * 0.5; v.set(0, 0, 0);
+            sfx('splash');
+            spawnEmoji('💦', p.clone().add(new V3(0, 0.3, 0)), { size: 0.45, life: 0.8 });
+            continue;
+          }
+          if (v.y < -1.6 && (B.bounces || 0) < 6) {
+            v.y = -v.y * P.e; v.x *= 0.8; v.z *= 0.8;
+            B.bounces = (B.bounces || 0) + 1;
+            if (B === ball && def.squeak && B.bounces === 1) spawnEmoji('🎵', p.clone().add(new V3(0, 0.4, 0)), { size: 0.35, life: 0.9 });
+            if (B.bounces === 1) toyThud(B, def);
+            if (B === ball) predictLanding(p, v, def, ball.to);
+          } else { v.y = 0; B.flying = false; }
+        }
+      } else {
+        // rolling: slopes pull it downhill, the ground slows it down
+        p.y = gy;
+        if (terrainOn()) {
+          const sx = (ballGround(p.x + 0.15, p.z, p.y) - ballGround(p.x - 0.15, p.z, p.y)) / 0.3;
+          const sz = (ballGround(p.x, p.z + 0.15, p.y) - ballGround(p.x, p.z - 0.15, p.y)) / 0.3;
+          if (Math.abs(sx) < 1.5 && Math.abs(sz) < 1.5) { v.x -= sx * BALL_G * 0.5 * h; v.z -= sz * BALL_G * 0.5 * h; }
+          // rolled off a ledge: it falls again
+          if (ballGround(p.x, p.z, p.y) < p.y - def.restY - 0.2) B.flying = true;
+        }
+        if (isWaterAt(p.x, p.z)) { B.water = true; B.waterY = gy - def.restY * 0.5; v.set(0, 0, 0); sfx('splash'); continue; }
+        const f = Math.exp(-P.fr * h);
+        v.x *= f; v.z *= f;
+        if (Math.hypot(v.x, v.z) < 0.12) { v.x = 0; v.z = 0; B.rest = true; }
+      }
+    }
+    // spinning, tumbling, rolling
+    const sp = Math.hypot(v.x, v.z);
+    if (B.flying) {
+      if (def.spin === 'flat') { B.mesh.rotation.x = 0; B.mesh.rotation.z = 0; B.mesh.rotation.y += dt * 15; }
+      else if (def.spin === 'tumble') { B.mesh.rotation.x += dt * 9; B.mesh.rotation.z += dt * 6; }
+      else B.mesh.rotation.x += dt * 10;
+    } else if (sp > 0.05) {
+      B.mesh.rotation.y = Math.atan2(v.x, v.z);
+      if (def.spin !== 'flat') B.mesh.rotation.x += (sp / Math.max(0.05, def.restY)) * dt;
+    } else if (def.spin === 'flat' || def.spin === 'tumble') { B.mesh.rotation.x = lerp(B.mesh.rotation.x, 0, 0.2); B.mesh.rotation.z = lerp(B.mesh.rotation.z, 0, 0.2); }
+  }
+  function toyThud(B, def) { if (B === ball && def.squeak) sfx('pet'); }
   function updateBall(dt) {
     if (!ball.active) return;
     const def = D.TOYS[ball.type] || D.TOYS.tennis;
-    if (ball.flying) {
-      ball.t += dt / ((def.time || 0.75) * (ball.timeK || 1));
-      const t = Math.min(1, ball.t);
-      ball.mesh.position.set(
-        lerp(ball.from.x, ball.to.x, t),
-        lerp(ball.from.y, def.restY + (ball.gy || 0), t) + Math.sin(Math.PI * t) * def.arc * (ball.arcK || 1),
-        lerp(ball.from.z, ball.to.z, t));
-      if (def.spin === 'flat') { ball.mesh.rotation.x = 0; ball.mesh.rotation.z = 0; ball.mesh.rotation.y += dt * 15; }
-      else if (def.spin === 'tumble') { ball.mesh.rotation.x += dt * 9; ball.mesh.rotation.z += dt * 6; }
-      else ball.mesh.rotation.x += dt * 10;
-      if (ball.t >= 1) {
-        ball.flying = false;
-        ball.bounce = 0;
-        ball.mesh.rotation.x = 0;
-        ball.mesh.rotation.z = 0;
-        if (def.squeak) spawnEmoji('🎵', ball.mesh.position.clone().add(new V3(0, 0.4, 0)), { size: 0.35, life: 0.9 });
-        if (ball.snow && Math.random() < 0.25) {
-          // snowballs don't always survive the landing
-          spawnEmoji('❄️', ball.mesh.position.clone().add(new V3(0, 0.4, 0)), { size: 0.5 });
-          const d = dogs.find((x) => x.state === 'fetch');
-          resetBall();
-          if (d) { d.setState('confused', 1.2); d.happy = Math.min(100, d.happy + 5); toast(`The snowball burst! ❄️ ${d.name} looks puzzled`); }
-          return;
-        }
-      }
-    } else if (ball.held) {
+    if (ball.held) {
       ball.held.mouth.getWorldPosition(ball.mesh.position);
       ball.mesh.rotation.set(0, ball.held.root.rotation.y, 0);
-    } else {
-      ball.bounce += dt;
-      const fade = Math.max(0, 1 - ball.bounce / (def.decay ? def.decay * 2 : 0.5));
-      ball.mesh.position.y = def.restY + (ball.gy || 0) + Math.abs(Math.sin(ball.bounce * 8)) * def.bounce * fade;
+      return;
     }
+    const was = ball.flying;
+    stepToy(ball, def, dt);
+    if (was && !ball.flying && ball.snow && Math.random() < 0.25) {
+      // snowballs don't always survive the landing
+      spawnEmoji('❄️', ball.mesh.position.clone().add(new V3(0, 0.4, 0)), { size: 0.5 });
+      const d = dogs.find((x) => x.state === 'fetch');
+      resetBall();
+      if (d) { d.setState('confused', 1.2); d.happy = Math.min(100, d.happy + 5); toast(`The snowball burst! ❄️ ${d.name} looks puzzled`); }
+    }
+  }
+  // ----- aiming a throw: drag from the Throw button; the arc and the landing spot show while you drag -----
+  const aimArc = (() => {
+    const g = new THREE.Group();
+    const m = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false });
+    for (let i = 0; i < 22; i++) g.add(new THREE.Mesh(geo(0.07, 0.07, 0.07), m));
+    const ring = new THREE.Mesh(THREE.RingGeometry ? new THREE.RingGeometry(0.28, 0.38, 24) : geo(0.6, 0.02, 0.6), new THREE.MeshBasicMaterial({ color: '#ffd24d', transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2;
+    g.add(ring);
+    g.visible = false;
+    g.renderOrder = 5;
+    world.add(g);
+    return { g, ring, n: 22 };
+  })();
+  let aim = null;
+  function showAim(dx, dy) {
+    const L = Math.hypot(dx, dy);
+    // screen up = away from the camera, like the joystick
+    let mx = camRight.x * dx - camFwd.x * dy, mz = camRight.z * dx - camFwd.z * dy;
+    const l = Math.hypot(mx, mz) || 1; mx /= l; mz /= l;
+    aim.a = Math.atan2(mx, mz);
+    aim.power = clamp((L - 14) / 170, 0.05, 1);
+    const def = D.TOYS[place === 'park' && LOC().snowy ? 'snowball' : state.toy] || D.TOYS.tennis;
+    const grav = place === 'park' && LOC().lowGravity ? D.LOW_GRAVITY : null;
+    ball.gK = grav ? 1 / grav.arc : 1;
+    const from = player.hand.getWorldPosition(new V3());
+    const v = throwVelocity(aim.a, aim.power, def, new V3());
+    const pts = [], land = predictLanding(from, v, def, new V3(), pts);
+    const kids = aimArc.g.children;
+    for (let i = 0; i < aimArc.n; i++) {
+      const k = kids[i], j = i * 3;
+      k.visible = j + 2 < pts.length;
+      if (k.visible) k.position.set(pts[j], pts[j + 1], pts[j + 2]);
+    }
+    aimArc.ring.position.set(land.x, land.y - def.restY + 0.03, land.z);
+    aimArc.g.visible = true;
+    player.face = aim.a;
+  }
+  function endAim(fire) {
+    aimArc.g.visible = false;
+    const A = aim;
+    aim = null;
+    if (fire && A && A.a != null) { aimThrown = performance.now(); throwBall({ a: A.a, power: A.power }); }
+  }
+  let aimThrown = 0;
+  // share a throw with the other players on this walk
+  function netThrow(toyId, from, vel) {
+    if (place !== 'park' || !LIVE.me) return;
+    const f = (v) => (Math.round(v * 100) / 100).toString();
+    liveAct(`th:${toyId},${f(from.x)},${f(from.y)},${f(from.z)},${f(vel.x)},${f(vel.y)},${f(vel.z)},${f(ball.gK || 1)}`);
+  }
+  // a meeting with another player's dog: start it on their side too, and tell them when it ends
+  function netMeet(sc, ph) {
+    if (!sc || !sc.remote || !LIVE.me) return;
+    const R = sc.b, uid = R.remoteUid;
+    if (ph === 'start' && !sc.mirror) {
+      const P = LIVE.others.get(uid);
+      const j = P ? P.dogs.findIndex((x) => x.dog === R) : 0;
+      const f = (v) => (Math.round(v * 100) / 100).toString();
+      liveAct(`mt:${Math.max(0, dogs.indexOf(sc.a))},${uid},${Math.max(0, j)},${sc.kind},${f(sc.center.x)},${f(sc.center.z)},${f(sc.axis)}`);
+    } else if (ph === 'play') liveAct('me:play');
+    else if (ph === 'call') liveAct('me:call');
+    else if (ph === 'end' && sc.phase !== 'part') liveAct('me:end');
   }
   function updateToyIcons() {
     const k = D.TOYS[state.toy] ? state.toy : 'tennis';
@@ -6156,6 +7712,7 @@
   let shortWalk = false;
   let walkInfo = null;     // what the walk was like when it started (for records)
   function recordWalk(wasAt) {
+    state.lastWalkAt = Date.now();
     const st = state.stats;
     st.walks = (st.walks || 0) + 1;
     if (curWeather().precip === 'rain' && !(S.env && S.env.noWeather)) st.rainWalks = (st.rainWalks || 0) + 1;
@@ -6889,10 +8446,26 @@
         const to = frontOf(f) || new V3(f.i + 0.5, 0, f.j + 1.5);
         d.goTo(to, 2.6, () => {
           d.faceTo(new V3(f.i + 0.5, 0, f.j + 0.5));
+          // squeezed in with hardly any room round it? the dog sniffs it and wanders off, unimpressed
+          const free = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([a, b]) => passable(f.i + a, f.j + b) && !furnitureAt(f.i + a, f.j + b)).length;
+          const comfy = it.role === 'bed' || !!D.SEATS[f.type];
+          if (comfy && free <= 1) {
+            d.setState('sniff', 1.4);
+            if (d.an) d.an.sulk = 1.6;
+            spawnEmoji('😕', d.headWorld(0.35), { size: 0.4, life: 1.4 });
+            setTimeout(() => { if (place === 'home') d.goTo(randomFreePoint(), 1.6, null, 0.3); }, 1500);
+            return;
+          }
           d.setState('happy', 1.4);
+          d.cheer(0.8);
           spawnEmoji(R[1], d.headWorld(0.35), { size: 0.45, life: 1.6 });
-          toast(`${d.name} ${R[0]}`);
           if (journalAdd(d, 'furn:' + f.type, it.icon, `Checked out the new ${it.name.toLowerCase()}: ${R[0]}`)) save();
+          // something soft: tried out straight away
+          if (comfy) setTimeout(() => {
+            if (place !== 'home' || d.state !== 'happy' && d.state !== 'idle') return;
+            const c = tileCenter(f);
+            d.goTo(c, 1.4, () => { d.root.position.set(c.x, (it.sleepY || 0.1), c.z); d.setState('lounge', rand(6, 10)); spawnEmoji('😌', d.headWorld(0.3), { size: 0.4 }); }, 0.15);
+          }, 1500);
         }, 0.5);
       }, delay * 1000);
       delay += 1.6;
@@ -6934,6 +8507,8 @@
     if (selected && !dogs.includes(selected)) selected = dogs[0] || null;
   }
   function rejoinDogs() {
+    const greeters = restDogs.filter((d) => d.restAt === 'home');
+    if (greeters.length) setTimeout(() => homecoming(greeters), 200);
     for (const d of restDogs) { d.restAt = null; d.root.visible = true; if (d.ui) d.ui.el.style.display = ''; if (!dogs.includes(d)) dogs.push(d); }
     restDogs.length = 0;
     if (packOrder.length) dogs.sort((a, b) => packOrder.indexOf(a.id) - packOrder.indexOf(b.id));
@@ -7107,6 +8682,7 @@
     spawnParkLoot();
     spawnWalkers();
     startQuirks();
+    setupTrickSpots();
     if (unlockedFeat('calendar')) { startHunts(); startCalDecor(); }
     spawnPatches();
     spawnDucks();
@@ -7144,6 +8720,7 @@
   }
 
   function goHome() {
+    if (tspots.list.length) { tspots.list = []; for (const m of tspots.markers) if (m.parent) m.parent.remove(m); tspots.markers = []; tspots.anim = null; }
     if (tm) exitTrickMode();
     const wasVenue = venueId;
     if (venueId) { if (VEN) VEN.hide(); clearWaitDogs(); venueId = null; }
@@ -7265,14 +8842,14 @@
     save();
   }
   let finder = null;
-  function walkLoot(d, spot) {
+  function walkLoot(d, spot, deep = 0) {
     finder = d;
     d.life.finds++;
     setTimeout(() => { finder = null; }, 0);
     const pos = d.root.position;
     const kind = spot && spot.kind;
     if (spot && spot.golden) { spot.golden = false; if (spot.sparkle) ART.setScentGold(spot.sparkle, false); addCoins(eventOn('golden').coins, pos); confetti(pos.clone().add(new V3(0, 1, 0)), 6); toast(`${d.name} sniffed out the golden spot! 🪙 ${eventOn('golden').coins}`); sfx('find'); return; }
-    if (Math.random() < D.RARE_FIND * (kind === 'glade' ? 4 : 1) * (d.mood() === 'great' ? 1.5 : 1) * (eventOn('meteors') && isNight() ? eventOn('meteors').mult : 1)) { findRare(pos); return; }
+    if (Math.random() < D.RARE_FIND * (1 + deep * 1.5) * (kind === 'glade' ? 4 : 1) * (d.mood() === 'great' ? 1.5 : 1) * (eventOn('meteors') && isNight() ? eventOn('meteors').mult : 1)) { findRare(pos); return; }
     if (!kind && sniffCritter(d)) return;
     if (kind === 'pool' && Math.random() < 0.7) { grantFind(pick(['starfish', 'crabclaw']), pos); return; }
     if (kind && kind.startsWith('hidden:')) {
@@ -7302,14 +8879,14 @@
     addSpec(d, 'sniffer', 1);
     addSpec(d, 'forager', 1);
     const fm = specMult(d, 'forager');
-    const opts = [['coins', L.coins], ['find', L.find * (great ? 1.6 : 1) * evMult('finds') * specMult(d, 'sniffer')], ['ingredient', L.ingredient * fm], ['toy', L.toy * evMult('toys') * fm]];
+    const opts = [['coins', L.coins], ['find', L.find * (great ? 1.6 : 1) * (1 + deep) * evMult('finds') * specMult(d, 'sniffer')], ['ingredient', L.ingredient * fm * (1 + deep * 0.5)], ['toy', L.toy * evMult('toys') * fm * (1 + deep * 0.5)]];
     let r = Math.random() * opts.reduce((s, o) => s + o[1], 0), what = 'coins';
     for (const [k, w] of opts) { r -= w; if (r <= 0) { what = k; break; } }
     if (what === 'find') { const f = (D.SEASONS[clockNow.month] && Math.random() < 0.22 && rollSeason()) || rollFind(loc, kind); if (f) { grantFind(f, pos); return; } what = 'coins'; }
     if (what === 'ingredient') { findIngredient(pos, LOC().ingredients); return; }
     if (what === 'toy') { grantToy(rollToy(), pos); return; }
-    addCoins(Math.round(2 * d.mod('sniffCoins')), pos);
-    spawnEmoji('✨', d.headWorld(0.3), { size: 0.4 });
+    addCoins(Math.round(2 * d.mod('sniffCoins') * (1 + deep * 1.5)), pos);
+    spawnEmoji(deep > 0.6 ? '🌟' : '✨', d.headWorld(0.3), { size: 0.4 + deep * 0.2 });
   }
   // sandy dig spots on the beach (one hides a treasure chest on every walk)
   function beachDig(d, spot) {
@@ -7456,6 +9033,7 @@
     }
     // the museum door, your market stall, the pier and the disc mat come before a chat
     if (!want && !fun) { const r3 = round3Ctx(pp); if (r3 && r3 !== 'favor' && r3 !== 'catch' && r3 !== 'snowman') want = r3; }
+    if (!want && !fun) want = trickSpotCtx(pp);
     if (!want && !talk && nearestWalker(pp) && !fun) want = favorW && favorW.favor && nearestWalker(pp) === favorW ? 'favor' : 'talk';
     if (!want) want = funCtx();
     if (fun && fun.kind !== 'lead' && fun.kind !== 'seek' && fun.kind !== 'hide') want = null;
@@ -7607,7 +9185,7 @@
       case 'talk': startTalk(nearestWalker(player.root.position)); break;
       case 'door': openWorldMap(); break;
       case 'vexit': goHome(); break;
-      default: if (ctxKind && ctxKind.startsWith('v:')) { if (VEN) VEN.runAct(ctxKind.slice(2)); break; } if (!hobbyAction(ctxKind)) round3Action(ctxKind); break;
+      default: if (ctxKind && ctxKind.startsWith('v:')) { if (VEN) VEN.runAct(ctxKind.slice(2)); break; } if (ctxKind && ctxKind.startsWith('ts:')) { useTrickSpot(ctxKind.slice(3)); break; } if (!hobbyAction(ctxKind)) round3Action(ctxKind); break;
       case 'stay': askStay(); break;
       case 'echo': doEcho(); break;
       case 'sled': startSled(); break;
@@ -8819,7 +10397,36 @@
   // =====================================================================
   const camLook = new V3();
   let camDist = 12;
+  // Trick Mode: an over-the-shoulder shot, low and close, so your dog faces the camera while you talk to it
+  const tmCam = { pos: new V3(), look: new V3(), on: false, push: 0 };
+  function trickCamera(dt, snap) {
+    const pp = player.root.position, dp = tm.dog.root.position;
+    let fx = dp.x - pp.x, fz = dp.z - pp.z;
+    const l = Math.hypot(fx, fz) || 1; fx /= l; fz /= l;
+    // which shoulder: the one nearer the normal camera, so the turn into the shot is short
+    const side = (-fz * camOffsetDir.x + fx * camOffsetDir.z) > 0 ? 1 : -1;
+    const px = -fz * side, pz = fx * side;
+    const back = 2.15 - tmCam.push * 0.5, up = 1.95 + (pp.y || 0);
+    const want = new V3(pp.x - fx * back + px * 1.4, up, pp.z - fz * back + pz * 1.4);
+    const look = new V3(dp.x + px * 0.15, (dp.y || 0) + (tm.dog.headBaseY || 0.5) * 0.85, dp.z + pz * 0.15);
+    const k = snap || !tmCam.on ? 1 : damp(0.004, dt);
+    tmCam.on = true;
+    tmCam.pos.lerp(want, k); tmCam.look.lerp(look, k);
+    tmCam.push = Math.max(0, tmCam.push - dt * 1.4);
+    camera.position.copy(tmCam.pos);
+    camera.lookAt(tmCam.look);
+    camLook.copy(tmCam.look);
+    fogPush = 0;
+  }
   function updateCamera(dt, snap) {
+    if (photo) { photoCamera(snap ? 0 : dt); return; }
+    if (mode === 'trick' && tm) {
+      // ease from the game camera into the trick shot
+      if (!tmCam.on) { tmCam.pos.copy(camera.position); tmCam.look.copy(camLook); tmCam.on = true; }
+      trickCamera(dt, snap);
+      return;
+    }
+    if (tmCam.on) { tmCam.on = false; }
     const p = player.root.position;
     let tx, tz, dist;
     if (place === 'home' && mode === 'build') {
@@ -8835,7 +10442,7 @@
     } else if (camFocus) {
       tx = camFocus.dog.root.position.x;
       tz = camFocus.dog.root.position.z;
-      dist = place === 'home' ? 5.5 + CHUNK * 0.75 : 9;
+      dist = camFocus.follow ? 4.4 : place === 'home' ? 5.5 + CHUNK * 0.75 : 9;
     } else if (place === 'home') {
       const cx = (Math.floor(p.x / CHUNK) + 0.5) * CHUNK, cz = (Math.floor(p.z / CHUNK) + 0.5) * CHUNK;
       tx = lerp(cx, p.x, 0.5);
@@ -8849,7 +10456,7 @@
       if (roofOver) dist *= 0.82;
     }
     dist *= clamp(0.8 / camera.aspect, 1, 1.6) * (mode === 'build' ? 1 : zoom);
-    const k = snap ? 1 : damp(camFocus ? 0.005 : 0.02, dt);
+    const k = snap ? 1 : damp(camFocus ? (camFocus.follow ? 0.08 : 0.005) : 0.02, dt);
     let ly = 0.5 + (terrainOn() ? p.y : 0);
     // upstairs: look at the floor above (what's drawn there is slid back over the rooms below)
     if (place === 'home') {
@@ -8956,6 +10563,8 @@
       joyBase.style.display = 'none';
     } else if (ptrs.size === 1) {
       primary = { id: e.pointerId, sx: e.clientX, sy: e.clientY, dragging: false };
+      const pd = mode === 'normal' && !fun ? petDogAt(e.clientX, e.clientY) : null;
+      if (pd) primary.pet = { d: pd, strokes: 0, run: 0, lx: e.clientX, ly: e.clientY, t0: performance.now(), on: false };
     }
   });
   canvas.addEventListener('pointermove', (e) => {
@@ -8969,6 +10578,7 @@
       return;
     }
     if (!primary || e.pointerId !== primary.id || pinch) return;
+    if (primary.pet) { petMove(primary.pet, e); return; }
     const dx = e.clientX - primary.sx, dy = e.clientY - primary.sy;
     if (!primary.dragging && Math.hypot(dx, dy) > 12) {
       primary.dragging = true;
@@ -8997,7 +10607,10 @@
     ptrs.delete(e.pointerId);
     if (fun && fun.kind === 'brush') fun.last = null;
     if (primary && e.pointerId === primary.id) {
-      if (!primary.dragging && e.type === 'pointerup' && !pinch) handleTap(e.clientX, e.clientY);
+      const P = primary.pet;
+      if (P && P.strokes) petEnd(P);
+      else if (!primary.dragging && e.type === 'pointerup' && !pinch) handleTap(e.clientX, e.clientY);
+      if (P) petHand(null);
       primary = null;
       joy.active = false;
       joy.x = joy.y = 0;
@@ -9130,6 +10743,9 @@
     return null;
   }
   function interactDog(d) {
+    const now = performance.now();
+    if (lastDogTap.d === d && now - lastDogTap.t < 650 && d !== sitDog) { lastDogTap = { d: null, t: 0 }; followDog(d); sfx('tap'); return; }
+    lastDogTap = { d, t: now };
     if (d === sitDog) {
       if (state.sitting) state.sitting.petted = (state.sitting.petted || 0) + 1;
       if (d.state === 'sleep') d.wake();
@@ -9138,6 +10754,7 @@
     }
     selected = d;
     updatePack();
+    if (d.carrying && d.carrying.kind === 'sock') { drop(d); d.act = null; d.zoomLeft = 0; d.idle(); startFidget(d, 'bow', 1.6); spawnEmoji('🧦', d.headWorld(0.4), { size: 0.45 }); d.cheer(0.8); return; }
     if (funTapDog(d)) return;
     if (['fetch', 'return', 'towel', 'wait', 'play', 'greet', 'scuffle', 'bath'].includes(d.state)) return;
     if (d.state === 'sleep' || d.state === 'hide') d.wake();
@@ -10310,6 +11927,8 @@
     $('optMusic').checked = prefs.music;
     $('optHaptics').checked = !!prefs.haptics;
     $('optBig').checked = !!prefs.bigui;
+    $('gfxBox').classList.toggle('hidden', !NEW3);
+    showGfx();
     $('replayTut').disabled = !dogs.length;
     setSettingsTab('general');
     $('settings').classList.remove('hidden');
@@ -10318,6 +11937,19 @@
   $('optMusic').addEventListener('change', (e) => { prefs.music = e.target.checked; savePrefs(); wakeAudio(); });
   $('optHaptics').addEventListener('change', (e) => { prefs.haptics = e.target.checked; savePrefs(); haptic(); });
   $('optBig').addEventListener('change', (e) => { prefs.bigui = e.target.checked; savePrefs(); applyBigUI(); });
+  function showGfx() {
+    const g = String(gfxPref());
+    $('optGfx').querySelectorAll('.seg').forEach((b) => b.classList.toggle('sel', b.dataset.gfx === g));
+    const names = ['Light', 'Balanced', 'Full'];
+    $('gfxInfo').textContent = g === 'auto' ? `Shadows and outlines. Automatic turns them down if your phone needs it (now: ${names[gfxLevel()]}).` : ['No shadows or outlines: the smoothest on older phones.', 'Shadows a little softer and less detailed, outlines on.', 'Sharp shadows and outlines on everything.'][+g];
+  }
+  $('optGfx').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-gfx]');
+    if (!b) return;
+    prefs.gfx = b.dataset.gfx === 'auto' ? 'auto' : +b.dataset.gfx;
+    if (prefs.gfx === 'auto') prefs.gfxAuto = 2;   // give automatic a fresh start
+    savePrefs(); sfx('tap'); showGfx();
+  });
   // ----- Updates: phones sometimes keep running an old copy of the game -----
   const GAME_FILES = ['style.css', 'data.js', 'art.js', 'game.js'];
   const upd = { busy: false, found: false, boot: null };
@@ -10510,8 +12142,10 @@
     const top = mode === 'trick' ? window.innerHeight - 100 : bars.length ? Math.min(...bars.map((e) => e.getBoundingClientRect().top)) : window.innerHeight - 20;
     $('toast').style.bottom = Math.max(20, window.innerHeight - top + 12) + 'px';
   }
+  let toastAt = 0;
   function toast(msg) {
     const t = $('toast');
+    toastAt = performance.now();
     t.dataset.raw = msg;
     t.textContent = msg;
     placeToast();
@@ -10644,6 +12278,7 @@
   }
   function doAct(act, b) {
     if (act === 'ball' && ballHeld) { ballHeld = false; return; }
+    if (act === 'ball' && performance.now() - aimThrown < 600) return;
     // out on your own: nobody to throw for or to train
     if (!dogs.length && ['ball', 'tricks', 'leash', 'bowls', 'feed', 'water'].includes(act) && place === 'park') { toast('Just you today. Your dogs are napping at home 🏠'); return; }
     if (act === 'ball') tutEvent('throw');
@@ -11131,7 +12766,9 @@
     if (tipStreak >= 2) {
       const n = tipQ.length;
       while (tipQ.length) inboxAdd(tipQ.shift());
-      toast(`${n} more in Menu → What’s new`);
+      // the summary waits for a message that's still being read
+      const wait = Math.max(0, 2600 - (performance.now() - toastAt));
+      setTimeout(() => toast(`${n} more in Menu → What’s new`), wait);
       save();
       return;
     }
@@ -11170,7 +12807,7 @@
     { id: 'move', title: 'Walk around', text: 'Drag anywhere on the screen to walk. Let go to stop.', icon: 'walk' },
     { id: 'pet', title: 'Say hello', text: 'Tap {dog} to pet them.', icon: 'heart', target: 'dog' },
     { id: 'bowls', title: 'Food and water', text: 'Tap Bowls to fill the food and water bowls.', icon: 'bowl', target: '#actions [data-act=bowls]' },
-    { id: 'throw', title: 'Play fetch', text: 'Tap Throw to toss a toy. Hold the button to pick a different toy.', icon: 'ball', target: '#actions [data-act=ball]' },
+    { id: 'throw', title: 'Play fetch', text: 'Tap Throw to toss a toy, or drag from the button to aim: further drags throw further. Hold the button to pick a different toy.', icon: 'ball', target: '#actions [data-act=ball]' },
     { id: 'card', title: 'How are they doing?', text: 'Tap the bubble in the top left. It shows needs and mood, and has Tricks, Treat, Style, Bath and Towel.', icon: 'dog', target: '.dogPill' },
     { id: 'menu', title: 'The menu', text: 'Shop, decorating, collectibles, challenges and photos all live in the Menu.', icon: 'menu', target: '#actions [data-act=menu]' },
     { id: 'walk', title: 'Off you go', text: 'Tap Walk to pick a place. Walks keep your dog happy, and there is lots to find.', icon: 'walk', target: '#actions [data-act=walk]' },
@@ -11737,16 +13374,24 @@
     const b = e.target.closest && e.target.closest('.dock [data-act=ball]');
     if (!b) { if (!e.target.closest('#toyPicker')) closeToyPicker(); return; }
     clearTimeout(holdTimer);
-    holdTimer = setTimeout(() => { ballHeld = true; openToyPicker(b); }, 430);
+    holdTimer = setTimeout(() => { if (aim && aim.live) return; ballHeld = true; openToyPicker(b); }, 430);
+    aim = !ball.active && mode === 'normal' && !visit ? { x0: e.clientX, y0: e.clientY, id: e.pointerId, live: false, a: null, power: 0 } : null;
+  }, true);
+  document.addEventListener('pointermove', (e) => {
+    if (!aim || e.pointerId !== aim.id || ballHeld) return;
+    const dx = e.clientX - aim.x0, dy = e.clientY - aim.y0;
+    if (!aim.live && Math.hypot(dx, dy) > 16) { aim.live = true; clearTimeout(holdTimer); }
+    if (aim.live) showAim(dx, dy);
   }, true);
   document.addEventListener('pointerup', (e) => {
     clearTimeout(holdTimer);
+    if (aim && e.pointerId === aim.id) endAim(aim.live && !ballHeld);
     if (!ballHeld) return;
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const it = el && el.closest('.tpItem');
     if (it) pickToy(it.dataset.toy);
   }, true);
-  document.addEventListener('pointercancel', () => clearTimeout(holdTimer), true);
+  document.addEventListener('pointercancel', () => { clearTimeout(holdTimer); if (aim) endAim(false); }, true);
   function openToyPicker(btn) {
     const P = $('toyPicker');
     P.innerHTML = `<div class="tpHead">Throw next</div><div class="tpGrid">${state.toys.map((k) => `<button class="tpItem${k === state.toy ? ' sel' : ''}" data-toy="${k}" title="${esc(D.TOYS[k].name)}">${TH('toy', k)}</button>`).join('')}</div>`;
@@ -11771,35 +13416,305 @@
   // Photo mode
   // =====================================================================
   let photo = false, photoURL = null;
+  // the photo camera: it orbits a subject (a dog, you, or a free point you pan to), with a lens, a tilt and focus
+  const pcam = { subject: null, tgt: new V3(), off: new V3(), yaw: 0, pitch: 0.8, dist: 8, fov: 45, roll: 0, lift: 0 };
+  // the look of the photo
+  const pfx = { filter: 'natural', blur: 0.35, vig: 0.2, grain: 0, hour: null, grid: false, border: 'none', stamp: true, freeze: false, tab: 'cam' };
+  const FILTERS = {
+    natural: { name: 'Natural', sat: 1, g: [1, 1, 1], c: 1, mono: 0, sepia: 0, lift: 0, sw: ['#7cc36b', '#f3d9a4'] },
+    warm: { name: 'Warm', sat: 1.06, g: [1.09, 1.0, 0.86], c: 1.02, mono: 0, sepia: 0, lift: 0, sw: ['#f1a95c', '#ffe0a8'] },
+    cool: { name: 'Cool', sat: 0.98, g: [0.9, 0.98, 1.12], c: 1.02, mono: 0, sepia: 0, lift: 0, sw: ['#6aa3d8', '#d6ecff'] },
+    vivid: { name: 'Vivid', sat: 1.32, g: [1, 1, 1], c: 1.12, mono: 0, sepia: 0, lift: 0, sw: ['#2fbf71', '#ff5c8a'] },
+    soft: { name: 'Soft', sat: 0.9, g: [1.02, 1.0, 1.0], c: 0.86, mono: 0, sepia: 0, lift: 0.18, sw: ['#c9d8c2', '#f4e8e1'] },
+    film: { name: 'Film', sat: 0.92, g: [1.04, 1.0, 0.93], c: 1.06, mono: 0, sepia: 0, lift: 0.06, grain: 0.09, sw: ['#c7a36b', '#7a8c6e'] },
+    mono: { name: 'B & W', sat: 1, g: [1, 1, 1], c: 1.12, mono: 1, sepia: 0, lift: 0, sw: ['#3c3c3c', '#d8d8d8'] },
+    sepia: { name: 'Sepia', sat: 1, g: [1, 1, 1], c: 1.05, mono: 0, sepia: 1, lift: 0.04, grain: 0.05, sw: ['#7b5a36', '#e8cfa2'] },
+  };
+  const photoHour = () => (photo && pfx.hour != null ? pfx.hour : null);
+  const photoFrozen = () => photo && pfx.freeze;
+  function photoFX(u, camr) {
+    if (!photo && mode === 'trick' && tm && NEW3 && look.quality > 0) {
+      // the world softens behind your dog, the edges darken a little: all eyes on the trick
+      u.dof.value = 1; u.aper.value = 1.4; u.focusD.value = Math.max(0.8, camr.position.distanceTo(tmCam.look));
+      u.vig.value = 0.42; u.grain.value = 0; u.contrast.value = 1.04; u.mono.value = 0; u.sepia.value = 0; u.lift.value = 0;
+      return;
+    }
+    const on = photo && NEW3;
+    const F = FILTERS[pfx.filter] || FILTERS.natural;
+    u.dof.value = on && pfx.blur > 0.02 ? 1 : 0;
+    u.aper.value = pfx.blur * 5;
+    u.focusD.value = on ? Math.max(0.6, camr.position.distanceTo(pcam.tgt)) : 10;
+    u.vig.value = on ? pfx.vig : 0;
+    u.grain.value = on ? Math.max(pfx.grain, F.grain || 0) : 0;
+    u.contrast.value = on ? F.c : 1;
+    u.mono.value = on ? F.mono : 0;
+    u.sepia.value = on ? F.sepia : 0;
+    u.lift.value = on ? F.lift : 0;
+    if (on) { u.sat.value *= F.sat; u.grade.value.x *= F.g[0]; u.grade.value.y *= F.g[1]; u.grade.value.z *= F.g[2]; }
+  }
+  const photoSubjects = () => [...dogs.filter((d) => d.root.visible), player];
+  function subjectPos(out) {
+    const S2 = pcam.subject;
+    if (S2 && S2.root) {
+      S2.root.getWorldPosition(out);
+      out.y += S2 === player ? 1.0 : (S2.headBaseY || 0.5) * 0.85;
+    } else out.copy(pcam.free || pcam.tgt);
+    return out;
+  }
+  const _pv = new V3();
+  function photoCamera(dt) {
+    const want = subjectPos(_pv).add(pcam.off);
+    want.y += pcam.lift;
+    pcam.tgt.lerp(want, dt > 0 ? damp(0.0005, dt) : 1);
+    const cp = Math.cos(pcam.pitch);
+    camera.position.set(pcam.tgt.x + Math.sin(pcam.yaw) * cp * pcam.dist, pcam.tgt.y + Math.sin(pcam.pitch) * pcam.dist, pcam.tgt.z + Math.cos(pcam.yaw) * cp * pcam.dist);
+    // never below the ground
+    const gy = (place === 'park' && terrainOn() ? groundAt(camera.position.x, camera.position.z) : 0) + 0.25;
+    if (camera.position.y < gy) camera.position.y = gy;
+    camera.lookAt(pcam.tgt);
+    if (pcam.roll) camera.rotateZ(pcam.roll);
+    // with the panel open, the picture slides up so your subject isn't hidden behind it
+    const shift = document.body.classList.contains('phBare') ? 0 : 0.17;
+    pcam.shift = lerp(pcam.shift || 0, shift, dt > 0 ? damp(0.002, dt) : 1);
+    const W = window.innerWidth, H = window.innerHeight;
+    if (camera.setViewOffset) camera.setViewOffset(W, H, 0, H * pcam.shift, W, H);
+    if (camera.fov !== pcam.fov) camera.fov = pcam.fov;
+    camera.updateProjectionMatrix();
+    camLook.copy(pcam.tgt);
+    fogPush = Math.max(0, pcam.dist - 12);
+  }
   function enterPhoto() {
     if (fun && fun.kind !== 'sit' && fun.kind !== 'gaze') endFun('switch');
     photo = true;
     document.body.classList.add('photo');
+    document.body.classList.remove('phBare');
     $('photoBar').classList.remove('hidden');
+    // start from the game camera, looking at the selected dog (or the nearest)
+    const pp = player.root.position;
+    pcam.subject = selected && selected.root.visible ? selected : dogs.filter((d) => d.root.visible).sort((p, q) => p.root.position.distanceTo(pp) - q.root.position.distanceTo(pp))[0] || player;
+    pcam.off.set(0, 0, 0);
+    pcam.lift = 0;
+    pcam.roll = 0;
+    pcam.fov = 45;
+    pcam.yaw = Math.atan2(camOffsetDir.x, camOffsetDir.z);
+    pcam.pitch = Math.asin(clamp(camOffsetDir.y / (camOffsetDir.length() || 1), -1, 1));
+    pcam.dist = clamp(camDist * 0.7, 3, 16);
+    subjectPos(pcam.tgt);
+    pfx.hour = null;
+    pfx.freeze = false;
+    for (const d of dogs) d.photoPose = null;
+    $('photoHint').classList.remove('gone');
+    setTimeout(() => $('photoHint').classList.add('gone'), 4500);
+    renderPhotoPanel();
     updateNameTag();
     hideHint();
-    tip('photo', { title: 'Photo mode', text: 'Pinch to zoom, walk to frame the shot, then tap the shutter. The paw button hides you from the picture.', icon: 'camera' });
+    tip('photo', { title: 'Photo mode', text: 'Drag to move the camera around your dog, pinch to come closer, two fingers to slide. Pick a look, a pose and a frame, then tap the shutter.', icon: 'camera' });
   }
   function exitPhoto() {
     photo = false;
     player.root.visible = true;
-    document.body.classList.remove('photo');
+    for (const d of dogs) { d.photoPose = null; if (d.state === 'act' && d.act && d.act.photo) { d.act = null; d.idle(); } }
+    pfx.hour = null;
+    pfx.freeze = false;
+    document.body.classList.remove('photo', 'phBare');
     $('photoBar').classList.add('hidden');
+    $('photoGrid').classList.add('hidden');
+    camera.fov = 45;
+    if (camera.clearViewOffset) camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+    pcam.shift = 0;
+    updateCamera(0, true);
     updateNameTag();
+  }
+  // ----- the panel -----
+  const pslider = (k, label, min, max, step, val, fmt) => `<label class="phRow"><span>${label}</span><input type="range" data-ps="${k}" min="${min}" max="${max}" step="${step}" value="${val}"><output>${fmt(val)}</output></label>`;
+  const PS_FMT = {
+    dist: (v) => `${(+v).toFixed(1)} m`, fov: (v) => `${Math.round(18 / Math.tan((v * Math.PI / 180) / 2))} mm`, lift: (v) => `${(+v).toFixed(1)}`, roll: (v) => `${Math.round(v)}°`,
+    blur: (v) => (v < 0.02 ? 'Off' : `f/${(8 - v * 6.6).toFixed(1)}`), vig: (v) => `${Math.round(v * 100)}%`, grain: (v) => `${Math.round(v * 100)}%`,
+    hour: (v) => (v < 0 ? 'Now' : `${String(Math.floor(v)).padStart(2, '0')}:${String(Math.round((v % 1) * 60)).padStart(2, '0')}`),
+  };
+  const POSES = [['natural', 'Natural'], ['sit', 'Sit'], ['lie', 'Lie down'], ['bow', 'Play bow'], ['paw', 'Paw'], ['tilt', 'Head tilt'], ['beg', 'Beg'], ['look', 'Look at me']];
+  function renderPhotoPanel() {
+    const T = pfx.tab;
+    $('photoTabs').querySelectorAll('.seg').forEach((b) => b.classList.toggle('sel', b.dataset.pt === T));
+    $('photoTabs').querySelector('[data-pt=look]').classList.toggle('hidden', !NEW3 && false);
+    let h = '';
+    if (T === 'cam') {
+      const subs = photoSubjects();
+      h += `<div class="phChips">${subs.map((o, i) => `<button data-psub="${i}" class="${pcam.subject === o ? 'sel' : ''}">${esc(o === player ? 'You' : o.name)}</button>`).join('')}<button data-psub="free" class="${!pcam.subject ? 'sel' : ''}">Free</button></div>`;
+      h += pslider('dist', 'Distance', 1.2, 22, 0.1, pcam.dist, PS_FMT.dist);
+      h += pslider('fov', 'Lens', 18, 80, 1, pcam.fov, PS_FMT.fov);
+      h += pslider('lift', 'Height', -1.5, 4, 0.05, pcam.lift, PS_FMT.lift);
+      h += pslider('roll', 'Tilt', -30, 30, 1, Math.round(pcam.roll * 180 / Math.PI), PS_FMT.roll);
+      if (NEW3) h += pslider('blur', 'Focus blur', 0, 1, 0.01, pfx.blur, PS_FMT.blur);
+    } else if (T === 'look') {
+      if (NEW3) h += `<div class="phChips filters">${Object.entries(FILTERS).map(([k, F]) => `<button data-pf="${k}" class="${pfx.filter === k ? 'sel' : ''}"><i style="background:linear-gradient(135deg,${F.sw[0]},${F.sw[1]})"></i>${F.name}</button>`).join('')}</div>`;
+      h += pslider('hour', 'Light', -0.5, 23.5, 0.25, pfx.hour == null ? -0.5 : pfx.hour, PS_FMT.hour);
+      if (NEW3) h += pslider('vig', 'Vignette', 0, 0.9, 0.01, pfx.vig, PS_FMT.vig) + pslider('grain', 'Grain', 0, 0.3, 0.01, pfx.grain, PS_FMT.grain);
+    } else if (T === 'pose') {
+      const d = pcam.subject && pcam.subject !== player ? pcam.subject : null;
+      if (!d) h += '<p class="phLabel">Pick a dog under Camera to pose it.</p>';
+      else {
+        h += `<p class="phLabel">${esc(d.name)}</p><div class="phChips">${POSES.map(([k, n]) => `<button data-pp="${k}" class="${(d.photoPose || 'natural') === k ? 'sel' : ''}">${n}</button>`).join('')}</div>`;
+        h += `<p class="phLabel">Everyone</p><div class="phChips"><button data-pall="1">All look at me</button><button data-pfreeze="1" class="${pfx.freeze ? 'sel' : ''}">${pfx.freeze ? 'Frozen in time' : 'Freeze the moment'}</button></div>`;
+      }
+    } else {
+      h += `<div class="phChips"><button data-pg="1" class="${pfx.grid ? 'sel' : ''}">Grid</button><button data-pst="1" class="${pfx.stamp ? 'sel' : ''}">PixelPups stamp</button></div>`;
+      h += `<p class="phLabel">Border</p><div class="phChips">${[['none', 'None'], ['white', 'White'], ['polaroid', 'Instant'], ['film', 'Film strip']].map(([k, n]) => `<button data-pb="${k}" class="${pfx.border === k ? 'sel' : ''}">${n}</button>`).join('')}</div>`;
+    }
+    $('photoBody').innerHTML = h;
+  }
+  $('photoTabs').addEventListener('click', (e) => { const b = e.target.closest('[data-pt]'); if (!b) return; pfx.tab = b.dataset.pt; sfx('tap'); renderPhotoPanel(); });
+  $('photoBody').addEventListener('input', (e) => {
+    const r = e.target.closest('[data-ps]');
+    if (!r) return;
+    const k = r.dataset.ps, v = +r.value;
+    if (k === 'dist') pcam.dist = v;
+    else if (k === 'fov') pcam.fov = v;
+    else if (k === 'lift') pcam.lift = v;
+    else if (k === 'roll') pcam.roll = (v * Math.PI) / 180;
+    else if (k === 'blur') pfx.blur = v;
+    else if (k === 'vig') pfx.vig = v;
+    else if (k === 'grain') pfx.grain = v;
+    else if (k === 'hour') pfx.hour = v < 0 ? null : v;
+    const o = r.parentElement.querySelector('output');
+    if (o) o.textContent = PS_FMT[k](v);
+  });
+  function setPhotoSubject(o) {
+    if (!o) { pcam.free = pcam.tgt.clone(); pcam.free.y -= pcam.lift; pcam.subject = null; pcam.off.set(0, 0, 0); }
+    else { pcam.subject = o; pcam.off.set(0, 0, 0); }
+    renderPhotoPanel();
+  }
+  $('photoBody').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    sfx('tap');
+    if (b.dataset.psub != null) { setPhotoSubject(b.dataset.psub === 'free' ? null : photoSubjects()[+b.dataset.psub]); return; }
+    if (b.dataset.pf) { pfx.filter = b.dataset.pf; renderPhotoPanel(); return; }
+    if (b.dataset.pp) {
+      const d = pcam.subject;
+      if (!d || d === player) return;
+      d.photoPose = b.dataset.pp === 'natural' ? null : b.dataset.pp;
+      if (d.photoPose && d.photoPose !== 'look') { d.faceTo(camera.position); d.root.rotation.y = d.face; }
+      renderPhotoPanel();
+      return;
+    }
+    if (b.dataset.pall) { for (const d of dogs) if (d.root.visible) d.photoPose = 'look'; renderPhotoPanel(); return; }
+    if (b.dataset.pfreeze) { pfx.freeze = !pfx.freeze; renderPhotoPanel(); return; }
+    if (b.dataset.pg) { pfx.grid = !pfx.grid; $('photoGrid').classList.toggle('hidden', !pfx.grid); renderPhotoPanel(); return; }
+    if (b.dataset.pst) { pfx.stamp = !pfx.stamp; renderPhotoPanel(); return; }
+    if (b.dataset.pb) { pfx.border = b.dataset.pb; renderPhotoPanel(); }
+  });
+  $('photoHide').addEventListener('click', () => { document.body.classList.toggle('phBare'); sfx('tap'); });
+  $('photoSubject').addEventListener('click', () => {
+    const subs = photoSubjects(), i = subs.indexOf(pcam.subject);
+    setPhotoSubject(subs[(i + 1) % subs.length]);
+    sfx('tap');
+  });
+  // ----- gestures: drag to orbit, pinch to come closer, two fingers to slide -----
+  const pptr = new Map();
+  let pgest = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!photo || modalOpen()) return;
+    e.stopImmediatePropagation();
+    pptr.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* fine */ }
+    const P = [...pptr.values()];
+    pgest = P.length >= 2 ? { two: true, d: Math.hypot(P[0].x - P[1].x, P[0].y - P[1].y) || 1, mx: (P[0].x + P[1].x) / 2, my: (P[0].y + P[1].y) / 2, dist: pcam.dist } : { two: false };
+  }, true);
+  canvas.addEventListener('pointermove', (e) => {
+    if (!photo || !pptr.has(e.pointerId)) return;
+    e.stopImmediatePropagation();
+    const old = pptr.get(e.pointerId);
+    const dx = e.clientX - old.x, dy = e.clientY - old.y;
+    pptr.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const P = [...pptr.values()];
+    if (P.length >= 2 && pgest && pgest.two) {
+      const d = Math.hypot(P[0].x - P[1].x, P[0].y - P[1].y) || 1, mx = (P[0].x + P[1].x) / 2, my = (P[0].y + P[1].y) / 2;
+      pcam.dist = clamp(pgest.dist * (pgest.d / d), 1.2, 22);
+      // slide the camera sideways and up/down in the picture
+      const k = pcam.dist * 0.0022, ddx = mx - pgest.mx, ddy = my - pgest.my;
+      pgest.mx = mx; pgest.my = my;
+      const rx = Math.cos(pcam.yaw), rz = -Math.sin(pcam.yaw);
+      pcam.off.x -= rx * ddx * k; pcam.off.z -= rz * ddx * k; pcam.lift += ddy * k;
+    } else if (P.length === 1) {
+      pcam.yaw -= dx * 0.008;
+      pcam.pitch = clamp(pcam.pitch + dy * 0.006, -0.05, 1.45);
+    }
+    $('photoHint').classList.add('gone');
+  }, true);
+  const pUp = (e) => {
+    if (!photo || !pptr.has(e.pointerId)) return;
+    e.stopImmediatePropagation();
+    pptr.delete(e.pointerId);
+    if (pptr.size < 2) pgest = { two: false };
+    syncPhotoSliders();
+  };
+  canvas.addEventListener('pointerup', pUp, true);
+  canvas.addEventListener('pointercancel', pUp, true);
+  canvas.addEventListener('wheel', (e) => { if (!photo) return; e.stopImmediatePropagation(); e.preventDefault(); pcam.dist = clamp(pcam.dist * (1 + Math.sign(e.deltaY) * 0.08), 1.2, 22); syncPhotoSliders(); }, { capture: true, passive: false });
+  function syncPhotoSliders() {
+    const set = (k, v) => { const r = $('photoBody').querySelector(`[data-ps=${k}]`); if (r) { r.value = v; r.parentElement.querySelector('output').textContent = PS_FMT[k](v); } };
+    set('dist', pcam.dist); set('lift', pcam.lift);
+  }
+  // a dog holding a pose for the camera
+  function photoHold(d, dt) {
+    const an = d.an || (d.an = newAnim(d));
+    d.moving = false;
+    an.fidCool = 99;
+    an.flair = null;
+    const k = d.photoPose;
+    d.act = null;
+    switch (k) {
+      case 'sit': d.state = 'sit'; d.timer = 99; an.fid = null; break;
+      case 'lie': d.state = 'lounge'; d.timer = 99; an.fid = null; break;
+      case 'bow': d.state = 'idle'; d.stateTime = 5; an.fid = { k: 'bow', t: 0.7, dur: 1.6, side: 1 }; break;
+      case 'tilt': d.state = 'idle'; d.stateTime = 5; an.fid = { k: 'tilt', t: 0.6, dur: 1.4, side: 1 }; an.look.copy(camera.position); an.lookT = 1; break;
+      case 'paw': d.state = 'trick'; d.trickId = 'paw'; d.timer = (ALL_TRICKS.paw ? ALL_TRICKS.paw.dur : 1.4) * 0.48; an.fid = null; break;
+      case 'beg': d.state = 'act'; d.act = { pose: 'beg', photo: true, fn: () => true }; an.fid = null; break;
+      default: d.state = 'idle'; d.stateTime = 0; an.fid = null; an.look.copy(camera.position); an.lookT = 1; break;
+    }
+    if (k !== 'paw') d.trickId = null;
+    d.animate(dt);
+    d.updateBubble();
   }
   function takePhoto() {
     drawWorld();
-    const src = renderer.domElement;
+    const src = renderer.domElement || canvas;
+    const W = src.width, H = src.height;
+    // borders: white, an instant photo with a deep bottom edge, or a film strip
+    const B = pfx.border;
+    const m = B === 'none' ? 0 : Math.round(W * (B === 'film' ? 0.05 : 0.045));
+    const bottom = B === 'polaroid' ? Math.round(W * 0.2) : m;
     const c = document.createElement('canvas');
-    c.width = src.width; c.height = src.height;
+    c.width = W + m * 2; c.height = H + m + bottom;
     const x = c.getContext('2d');
-    x.drawImage(src, 0, 0);
-    const u = c.width / 390;
-    x.font = `800 ${Math.round(13 * u)}px ui-rounded, -apple-system, sans-serif`;
-    x.textAlign = 'right';
-    x.fillStyle = 'rgba(255,255,255,0.85)';
-    x.shadowColor = 'rgba(0,0,0,0.25)'; x.shadowBlur = 6 * u;
-    x.fillText(state.photoName && youName() ? `${youName()} · PixelPups` : 'PixelPups', c.width - 14 * u, c.height - 14 * u);
+    x.fillStyle = B === 'film' ? '#141210' : '#fbfaf6';
+    x.fillRect(0, 0, c.width, c.height);
+    x.drawImage(src, m, m);
+    const u = W / 390;
+    if (B === 'film') {
+      x.fillStyle = '#e9e1cf';
+      for (let yy = m * 0.5; yy < c.height; yy += m * 1.25) { x.fillRect(m * 0.3, yy, m * 0.4, m * 0.55); x.fillRect(c.width - m * 0.7, yy, m * 0.4, m * 0.55); }
+      x.font = `700 ${Math.round(11 * u)}px ui-monospace, monospace`; x.fillStyle = '#ff9a3d'; x.textAlign = 'right';
+      const dd = new Date(); x.fillText(`’${String(dd.getFullYear()).slice(2)} ${String(dd.getMonth() + 1).padStart(2, '0')} ${String(dd.getDate()).padStart(2, '0')}`, m + W - 12 * u, m + H - 12 * u);
+    }
+    if (B === 'polaroid') {
+      x.font = `600 ${Math.round(20 * u)}px "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive`;
+      x.fillStyle = '#3c3550'; x.textAlign = 'center';
+      const names = dogs.filter((d) => d.root.visible).map((d) => d.name);
+      x.fillText(names.length ? G_nameList(names) : 'PixelPups', c.width / 2, H + m + bottom * 0.58);
+    }
+    if (pfx.stamp) {
+      x.font = `800 ${Math.round(13 * u)}px ui-rounded, -apple-system, sans-serif`;
+      x.textAlign = 'right';
+      x.fillStyle = B === 'polaroid' ? 'rgba(60,53,80,0.55)' : 'rgba(255,255,255,0.85)';
+      x.shadowColor = B === 'polaroid' ? 'transparent' : 'rgba(0,0,0,0.25)'; x.shadowBlur = 6 * u;
+      const tx = state.photoName && youName() ? `${youName()} · PixelPups` : 'PixelPups';
+      if (B === 'polaroid') x.fillText(tx, c.width - m - 4 * u, H + m + bottom * 0.86);
+      else x.fillText(tx, m + W - 14 * u, m + H - (B === 'film' ? 30 : 14) * u);
+      x.shadowBlur = 0;
+    }
     photoURL = c.toDataURL('image/jpeg', 0.92);
     sfx('shutter');
     const f = $('photoFlash');
@@ -11810,6 +13725,7 @@
     setTimeout(() => $('photoPreview').classList.remove('hidden'), 260);
     photoFluff();
   }
+  const G_nameList = (a) => (a.length < 2 ? a[0] : `${a.slice(0, -1).join(', ')} & ${a[a.length - 1]}`);
   $('shutter').addEventListener('click', takePhoto);
   $('photoExit').addEventListener('click', exitPhoto);
   $('photoMe').addEventListener('click', () => { player.root.visible = !player.root.visible; $('photoMe').classList.toggle('off', !player.root.visible); updateNameTag(); });
@@ -12108,7 +14024,10 @@
   const clock = new THREE.Clock();
   let hudTimer = 0, saveTimer = 5, slowTimer = 0, encTimer = 1;
 
-  function update(dt) {
+  function update(dt0) {
+    // photo mode can freeze the moment: everything holds still, only the camera moves
+    const dt = photoFrozen() ? 0 : dt0;
+    if (photoFrozen()) updateCamera(dt0);
     animT += dt;
     musicTick();
     if (title) {
@@ -12138,6 +14057,10 @@
     if (tm) updateTrickMode(dt);
     encTimer -= dt;
     if (encTimer <= 0) { encTimer = 0.5; checkEncounters(); }
+    updateMeetScene(dt);
+    updateWishes(dt);
+    if (place === 'park') updateTrickSpots(dt);
+    for (const d of dogs) updateSwirl(d);
     if (place === 'park') {
       updateWalkers(dt);
       updateSniffSpots(dt);
@@ -12151,6 +14074,7 @@
       if (!tiredWarned && dogs.some((d) => d.energy < CRITICAL)) { tiredWarned = true; toast('Your dog is getting tired — time to head home 🏠'); }
     } else {
       for (const r of furnRT.values()) if (r.group.userData.anim) r.group.userData.anim(animT);
+      updateSunbeam(dt);
       updateFillAnims(dt);
       updateDoor(dt);
       if (!visit && state.furniture.some((f) => D.ITEMS[f.type].auto && !f.filled)) autoRefill();
@@ -12187,7 +14111,8 @@
       hlRing.material.opacity = Math.min(1, hlT) * (0.55 + Math.sin(animT * 8) * 0.35);
       hlRing.scale.setScalar(1 + Math.sin(animT * 8) * 0.1);
     } else hlRing.visible = false;
-    if (camFocus) { camFocus.t -= dt; if (camFocus.t <= 0) camFocus = null; }
+    if (camFocus) { camFocus.t -= dt; if (camFocus.t <= 0 || (camFocus.follow && (!camFocus.dog.root.visible || mode !== 'normal'))) camFocus = null; }
+    followTick();
     selRing.visible = !!selected && dogs.length > 1 && mode === 'normal' && !(fun && (fun.kind === 'hide' || fun.kind === 'gaze'));
     if (selRing.visible) selRing.position.set(selected.root.position.x, 0.055, selected.root.position.z);
 
@@ -12209,7 +14134,9 @@
   let loopErr = 0;
   function loop() {
     requestAnimationFrame(loop);
-    const dt = Math.min(clock.getDelta(), 0.05);
+    const rawDt = clock.getDelta();
+    const dt = Math.min(rawDt, 0.05);
+    watchFrames(Math.min(rawDt, 0.2));
     // one bad frame must never freeze the picture: draw anyway, and report the problem once
     try { update(dt); } catch (e) { if (!loopErr++) { console.error(e); toast(`Something went wrong (${String(e && e.message || e).slice(0, 80)}). Please send a screenshot.`); } }
     // inside a player place the world is behind a full-screen picture: no need to draw it
@@ -17525,9 +19452,33 @@
   function liveEntry(full) {
     const p = player.root.position;
     const e = { x: r2(p.x), y: r2(p.y), z: r2(p.z), r: r2(player.root.rotation.y), t: TS(),
-      d: dogs.slice(0, 4).map((d) => [d.breed, d.coat, r2(d.root.position.x), r2(d.root.position.z), r2(d.root.rotation.y), r2(d.root.position.y)].join(',')).join(';').slice(0, 240) };
+      d: dogs.slice(0, 4).map((d) => [d.breed, d.coat, r2(d.root.position.x), r2(d.root.position.z), r2(d.root.rotation.y), r2(d.root.position.y), dogCode(d)].join(',')).join(';').slice(0, 240) };
     if (full) Object.assign(e, { n: safeName(youName() || (dogs[0] ? `${dogs[0].name}’s human` : 'Player')), c: onl().code || '', lk: JSON.stringify(state.look || {}).slice(0, 300) });
     return e;
+  }
+  // what a dog is up to, in a few letters, so other players see the sit, the trick, the belly rub, the play bow
+  function dogCode(d) {
+    switch (d.state) {
+      case 'sit': case 'stay': return 's';
+      case 'lounge': case 'watch': return 'l';
+      case 'sleep': return 'z';
+      case 'happy': case 'playtoy': return 'h';
+      case 'sniff': return 'n';
+      case 'dig': return 'd';
+      case 'splash': return 'w';
+      case 'petted': return d.belly ? 'pb' : 'p';
+      case 'trick': return d.trickId ? 'k:' + d.trickId : '';
+      case 'meet': return d.encPose ? 'm:' + d.encPose : '';
+      case 'act': return d.act && d.act.pose ? 'a:' + d.act.pose : '';
+      case 'return': return 'r:' + (ball.type || 'tennis');
+      case 'pull': return 'u';
+      default: return '';
+    }
+  }
+  // actions: a throw, a meeting... sent once, everyone else plays them out
+  function liveAct(code) {
+    if (!LIVE.me || !NET.ready) return;
+    LIVE.me.update({ ac: String(code).slice(0, 120), at: TS() }).catch(() => {});
   }
   // send your position a few times a second while you move, and a heartbeat now and then
   function liveTick(dt) {
@@ -17539,6 +19490,7 @@
     const e = liveEntry(false);
     const key = [e.x, e.z, e.r, e.d].join('|');
     if (key === LIVE.last && LIVE.beatT > 0) return;
+    // a state change goes out at once (a trick shouldn't wait for the next beat)
     LIVE.last = key;
     LIVE.beatT = 10;
     LIVE.me.update(e).catch(() => {});
@@ -17555,8 +19507,9 @@
       P.m = m;
       P.tx = +m.x || 0; P.ty = +m.y || 0; P.tz = +m.z || 0; P.tr = +m.r || 0;
       const ds = String(m.d || '').split(';').filter(Boolean).map((s) => s.split(','));
-      ds.forEach((a, i) => { const R = P.dogs[i]; if (R) { R.tx = +a[2] || 0; R.tz = +a[3] || 0; R.tr = +a[4] || 0; R.ty = +a[5] || 0; } });
+      ds.forEach((a, i) => { const R = P.dogs[i]; if (R) { R.tx = +a[2] || 0; R.tz = +a[3] || 0; R.tr = +a[4] || 0; R.ty = +a[5] || 0; R.code = a[6] || ''; } });
       if (m.e && m.et && m.et !== P.lastSay && now - m.et < 8000) { P.lastSay = m.et; sayBubble(P.parts.root, m.e, 2.35); }
+      if (m.ac && m.at && m.at !== P.lastAc) { const fresh = P.lastAc !== undefined || now - m.at < 6000; P.lastAc = m.at; if (fresh) remoteAction(P, m.ac); }
     }
     for (const [uid, P] of LIVE.others) if (!seen.has(uid)) { dropRemote(P); LIVE.others.delete(uid); }
     $('mpBtn').classList.toggle('hidden', !LIVE.others.size);
@@ -17574,21 +19527,24 @@
     label.position.y = 2.15;
     parts.root.add(label);
     parts.root.userData.remote = uid;
-    const dogsR = String(m.d || '').split(';').filter(Boolean).slice(0, 4).map((s) => {
+    const dogsR = String(m.d || '').split(';').filter(Boolean).slice(0, 4).map((s, i) => {
       const a = s.split(',');
       const br = D.BREEDS[a[0]] ? a[0] : 'retriever';
-      const P2 = ART.buildDog(br, a[1]);
-      const root = P2.root;
+      const dog = new RemoteDog(br, a[1], uid + ':' + i);
+      const root = dog.root;
       root.position.set(+a[2] || 0, 0, +a[3] || 0);
       root.userData.remote = uid;
+      delete root.userData.dog;
       parkRoot.add(root);
-      return { parts: P2, root, tx: +a[2] || 0, tz: +a[3] || 0, tr: 0, ty: 0, ph: Math.random() * 6 };
+      return { dog, parts: dog, root, tx: +a[2] || 0, tz: +a[3] || 0, tr: 0, ty: 0, ph: Math.random() * 6, code: a[6] || '' };
     });
     return { uid, parts, dogs: dogsR, tx: 0, tz: 0, ty: 0, tr: 0, ph: 0, m };
   }
   function dropRemote(P) {
     P.parts.root.parent && P.parts.root.parent.remove(P.parts.root);
-    for (const R of P.dogs) R.root.parent && R.root.parent.remove(R.root);
+    for (const R of P.dogs) { R.root.parent && R.root.parent.remove(R.root); if (R.dog && R.dog.leash && R.dog.leash.parent) R.dog.leash.parent.remove(R.dog.leash); if (R.dog && R.dog.swirl && R.dog.swirl.parent) R.dog.swirl.parent.remove(R.dog.swirl); }
+    for (const T of P.toys || []) if (T.mesh.parent) T.mesh.parent.remove(T.mesh);
+    if (meetScene && meetScene.b && meetScene.b.remoteUid === P.uid) endMeetScene(false);
   }
   // smooth movement between updates
   function liveAnimate(dt) {
@@ -17607,14 +19563,48 @@
         const q = R.root.position, qx = q.x, qz = q.z;
         if (Math.hypot(R.tx - q.x, R.tz - q.z) > 8) q.set(R.tx, 0, R.tz);
         q.x += (R.tx - q.x) * k; q.z += (R.tz - q.z) * k;
-        q.y = (terrainOn() ? groundAt(q.x, q.z) : 0) + Math.max(0, R.ty - groundAt(q.x, q.z)) * 0;
+        q.y = (terrainOn() ? groundAtY(q.x, q.z, R.ty) : 0);
         R.root.rotation.y = angleLerp(R.root.rotation.y, R.tr, k);
         const mv = Math.hypot(q.x - qx, q.z - qz);
-        R.ph += mv * 9;
-        R.root.position.y += Math.abs(Math.sin(R.ph)) * 0.04 * (mv > 0.002 ? 1 : 0);
-        const L = R.parts.legs;
-        if (L && L.length) L.forEach((leg, i) => { leg.rotation.x = Math.sin(R.ph + (i % 2 ? Math.PI : 0)) * 0.6 * (mv > 0.002 ? 1 : 0); });
+        if (R.dog) R.dog.remoteTick(dt, mv, R.code);
       }
+      // toys this player threw: they fly, bounce and roll here too, until their dog picks them up
+      if (P.toys && P.toys.length) {
+        const holding = P.dogs.some((R) => (R.code || '').startsWith('r:'));
+        for (const T of P.toys.slice()) {
+          T.age += dt;
+          if (holding && T.age > 0.4 || T.age > 25) { if (T.mesh.parent) T.mesh.parent.remove(T.mesh); P.toys.splice(P.toys.indexOf(T), 1); continue; }
+          stepToy(T, D.TOYS[T.type] || D.TOYS.tennis, dt);
+        }
+      }
+    }
+  }
+  // what another player just did
+  function remoteAction(P, code) {
+    const [kind, rest = ''] = String(code).split(/:(.*)/s);
+    const a = rest.split(',');
+    if (kind === 'th') {
+      const type = D.TOYS[a[0]] ? a[0] : 'tennis';
+      const mesh = new THREE.Group();
+      mesh.add(ART.buildToy(type));
+      mesh.position.set(+a[1] || 0, +a[2] || 0, +a[3] || 0);
+      parkRoot.add(mesh);
+      P.toys = P.toys || [];
+      P.toys.push({ mesh, type, vel: new V3(+a[4] || 0, +a[5] || 0, +a[6] || 0), flying: true, rest: false, water: false, bounces: 0, gK: +a[7] || 1, age: 0 });
+      if (P.toys.length > 3) { const T = P.toys.shift(); if (T.mesh.parent) T.mesh.parent.remove(T.mesh); }
+      return;
+    }
+    if (kind === 'mt' && a[1] === NET.uid) {
+      // their dog met one of mine: play the meeting from my side too
+      const mine = dogs[+a[2]] || dogs[0], R = P.dogs[+a[0]];
+      if (!mine || !R || meetScene || !['follow', 'idle', 'roam'].includes(mine.state)) return;
+      R.dog.remoteUid = P.uid;
+      startMeetScene(mine, R.dog, a[3] === 'play' ? 'play' : 'greet', { center: new V3(+a[4] || 0, 0, +a[5] || 0), axis: (+a[6] || 0) + Math.PI, mirror: true });
+      return;
+    }
+    if (kind === 'me' && meetScene && meetScene.b && meetScene.b.remoteUid === P.uid) {
+      if (a[0] === 'play') { meetScene.chosen = 'play'; meetBar(meetScene); }
+      else endMeetScene(a[0] === 'call');
     }
   }
   function sayBubble(root, id, h) {
@@ -17820,7 +19810,7 @@
       grantFind, rollFind, walkLoot, beachDig, askStay, tideLevel, setTide(v) { tideOverride = v; }, openShop, get shopVendor() { return shopVendor; },
       startVendor, tapVendor, ensureDaily, progress, openDaily, openAlbum, bookPage, get albumPage() { return albumPage; }, set albumPage(v) { albumPage = v; },
       noteSeen, mainDirt, addDirt, walkDirt, isSolid, quirkSolid, inPlaza, plazaPerformance, performTrick, spawnWalkers,
-      setZoom(z) { zoom = z; }, snapCam() { updateCamera(0, true); }, get thumbWait() { return [...thumbWait]; }, pumpThumbs,
+      setZoom(z) { zoom = z; }, snapCam() { updateCamera(0, true); }, look, get NEW3() { return NEW3; }, liveSync, remoteAction, LIVE, NET, dogCode, checkEncounters, RemoteDog, petStroke, petEnd, petDogAt, followDog, get camFocus() { return camFocus; }, homeLifeIdea, homeLife, windowSpot, carry, homecoming, interactDog, rejoinDogs, splitDogs, get restDogs() { return restDogs; }, get tspots() { return tspots; }, useTrickSpot, trickSpotNear, strokeShape, get tmCam() { return tmCam; }, pcam, pfx, get photo() { return photo; }, renderPhotoPanel, throwBall, isWaterAt, ballGround, inBounds, get aimArc() { return aimArc; }, showAim, endAim, set aim(v) { aim = v; }, get meetScene() { return meetScene; }, startMeetScene, meetChoice, makeWish, fulfilWish, get sniffSpots() { return sniffSpots; }, leashTug, nearestSpot, get renderer() { return renderer; }, get thumbWait() { return [...thumbWait]; }, pumpThumbs,
       startTalk, talkMore, endTalk, nearestWalker, hintLines, chatLine, get talk() { return talk; }, homeLitShare, litAt, walkLit, nightHidesSpots, rebuildHomeLights, get homeLights() { return homeLights; }, get playerBeam() { return playerBeam; },
       weekKey, vendorSpecials, homeSpecials, rollSeason, checkSets, checkSeasons, spotCritter, sniffCritter, critterOk,
       openHouse, upgradeHouse, houseTier, roomCap, openPeople, renderPeople, storyMeet, storyPlay, storyTrick, storyComplete, storyReady, checkAllowance, get walkersList() { return walkers; },
@@ -17851,7 +19841,7 @@
       rollFavor, startFavor, get favorW() { return favorW; }, weekStat, rollWeek, deliverGazette, openGazette, addRivalry, rivalry, rivalOf, toyPals, round3Ctx, round3Action, nearPier, nearDiscMat, nearMuseum, nearMarket,
     };
   }
-  try { init(); } catch (e) {
+  try { init(); window.PP_READY = true; } catch (e) {
     console.error(e);
     const n = document.createElement('div');
     n.textContent = `PixelPups couldn’t start: ${e && e.message ? e.message : e}. Try reloading. If it keeps happening, send a screenshot of this.`;
