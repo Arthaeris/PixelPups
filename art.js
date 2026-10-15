@@ -1292,6 +1292,14 @@ window.VP_ART = (function () {
       }
       box(head, 0.02, 0.02, 0.01, '#ffffff', s * ex + 0.015, ey + 0.02, ez + 0.014);
     }
+    // eyelids: hinge at the top of each eye, scaled down to nothing while the eye is open
+    const lids = [-1, 1].map((s) => {
+      const p = pivot(head, s * ex, ey + 0.045, ez + 0.02);
+      box(p, 0.085, 0.09, 0.012, C.body, 0, -0.045, 0);
+      p.scale.y = 0.001;
+      p.visible = false;
+      return p;
+    });
     const mkEar = (side) => {
       let p;
       switch (S.ears) {
@@ -1321,34 +1329,46 @@ window.VP_ART = (function () {
       return p;
     };
     const earL = mkEar(-1), earR = mkEar(1);
-    const tongue = box(head, 0.08, 0.02, 0.1, '#f07f8f', 0, muzY - S.muzH / 2 - 0.01, hD / 2 + S.muzD * 0.55);
+    // the lower jaw hides inside the muzzle when closed and swings down to pant, bark or yawn
+    const jaw = pivot(head, 0, muzY - S.muzH / 2 + 0.025, hD / 2 - 0.02);
+    box(jaw, S.muzW * 0.86, 0.045, S.muzD * 0.92, C.light, 0, 0, S.muzD * 0.46);
+    box(jaw, S.muzW * 0.6, 0.012, S.muzD * 0.6, '#b0505e', 0, 0.026, S.muzD * 0.5);
+    const tongue = box(jaw, 0.08, 0.02, 0.1, '#f07f8f', 0, -0.025, S.muzD * 0.55 + 0.02);
     tongue.visible = false;
     const mouth = pivot(head, 0, muzY - S.muzH * 0.45, hD / 2 + S.muzD + 0.02);
 
     // legs
-    const legs = [];
+    // legs: a hip and a knee each, so steps lift the paws and sitting folds the legs
+    const legs = [], knees = [];
     const lx = tW / 2 - S.legW / 2 - 0.02, lz = tL / 2 - 0.12;
+    const up = S.legH * 0.52, lo = S.legH - up;
     for (const [x, z] of [[-lx, lz], [lx, lz], [-lx, -lz], [lx, -lz]]) {
       const p = pivot(body, x, S.legH + 0.04, z);
-      box(p, S.legW, S.legH, S.legW, C.body, 0, -S.legH / 2 + 0.01, 0);
-      if (X.includes('pompaws')) box(p, 0.15, 0.12, 0.15, C.body, 0, -S.legH + 0.04, 0.005);
-      else box(p, S.legW + 0.01, 0.06, S.legW + 0.03, C.light, 0, -S.legH, 0.01);
+      box(p, S.legW, up + 0.02, S.legW, C.body, 0, -up / 2 + 0.01, 0);
+      const kn = pivot(p, 0, -up + 0.01, 0);
+      box(kn, S.legW * 0.94, lo + 0.01, S.legW * 0.94, C.body, 0, -lo / 2, 0);
+      if (X.includes('pompaws')) box(kn, 0.15, 0.12, 0.15, C.body, 0, -lo + 0.03, 0.005);
+      else box(kn, S.legW + 0.01, 0.06, S.legW + 0.03, C.light, 0, -lo - 0.01, 0.01);
       legs.push(p);
+      knees.push(kn);
     }
 
     // tail
     const tail = pivot(body, 0, bodyY + tH * 0.31, -tL / 2);
-    let tailUp = 0.75, tailDown = 0.1, wagAxis = 'y';
+    let tailUp = 0.75, tailDown = 0.1, wagAxis = 'y', tailTip = null;
     switch (S.tail) {
       case 'stub':
         box(tail, 0.1, 0.09, 0.08, C.body, 0, 0, -0.03);
         tailUp = 0.5; tailDown = 0;
         break;
-      case 'thin':
-        box(tail, 0.05, 0.05, 0.3, C.body, 0, 0, -0.15);
-        box(tail, 0.05, 0.05, 0.08, C.dark, 0, 0, -0.32);
+      case 'thin': {
+        box(tail, 0.05, 0.05, 0.17, C.body, 0, 0, -0.08);
+        tailTip = pivot(tail, 0, 0, -0.16);
+        box(tailTip, 0.05, 0.05, 0.15, C.body, 0, 0, -0.07);
+        box(tailTip, 0.05, 0.05, 0.08, C.dark, 0, 0, -0.17);
         tailUp = 0.45; tailDown = 0.05;
         break;
+      }
       case 'curl':
         box(tail, 0.11, 0.24, 0.11, C.body, 0, 0.12, -0.02);
         box(tail, 0.11, 0.11, 0.2, C.light, 0, 0.25, 0.06);
@@ -1360,8 +1380,10 @@ window.VP_ART = (function () {
         tailUp = -0.35; tailDown = -1.25; wagAxis = 'z';
         break;
       default:
-        box(tail, 0.08, 0.08, 0.22, C.body, 0, 0, -0.1);
-        box(tail, 0.09, 0.09, 0.1, C.dark, 0, 0, -0.25);
+        box(tail, 0.08, 0.08, 0.13, C.body, 0, 0, -0.06);
+        tailTip = pivot(tail, 0, 0, -0.12);
+        box(tailTip, 0.08, 0.08, 0.1, C.body, 0, 0, -0.04);
+        box(tailTip, 0.09, 0.09, 0.1, C.dark, 0, 0, -0.13);
     }
     tail.rotation.x = tailUp;
 
@@ -1373,15 +1395,15 @@ window.VP_ART = (function () {
       m.visible = false;
       patches.push(m);
     }
-    for (const leg of legs) {
-      const m = box(leg, S.legW + 0.025, 0.07, S.legW + 0.045, M.mud, 0, -S.legH + 0.05, 0.01);
+    for (const leg of knees) {
+      const m = box(leg, S.legW + 0.025, 0.07, S.legW + 0.045, M.mud, 0, -lo + 0.04, 0.01);
       m.visible = false;
       patches.push(m);
     }
 
     root.add(blob(tW * 1.65, tL * 1.75));
     const dims = { hW, hH, hD, tW, tH, tL, bodyY, collarY, headTop: hH / 2 + (X.includes('topknot') ? 0.21 : 0), eyeY: ey, ears: S.ears };
-    return { root, body, head, earL, earR, legs, tail, tongue, mouth, collar, patches, dims,
+    return { root, body, head, earL, earR, legs, knees, tail, tailTip, tongue, jaw, lids, mouth, collar, patches, dims,
       headBaseY: headY, tailUp, tailDown, wagAxis, earFlap: (S.ears === 'upright' || S.ears === 'pointed') ? 0.25 : 1, scale: S.scale };
   }
 
@@ -6516,6 +6538,10 @@ window.VP_ART = (function () {
     hold: '<circle cx="12" cy="12" r="4.2" fill="currentColor"/><circle cx="12" cy="12" r="8" opacity=".45"/>',
     press: '<circle cx="12" cy="12" r="4.2" fill="currentColor"/><path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5"/>',
     up: '<path d="M12 19.5V5M6 10.5 12 4.5l6 6"/>',
+    arch: '<path d="M3.5 19C5 8 19 8 20.5 19"/><path d="M17.2 17.2l3.3 1.8.9-3.6"/>',
+    dip: '<path d="M3.5 5C5 16 19 16 20.5 5"/><path d="M17.3 6.6l3.2-1.6 1 3.5"/>',
+    zigzag: '<path d="M3 15l4.5-6 4.5 6 4.5-6 4.5 6"/>',
+    lshape: '<path d="M7 3.5V17h12.5"/><path d="M16.5 14l3 3-3 3"/>',
     down: '<path d="M12 4.5V19M6 13.5l6 6 6-6"/>',
     left: '<path d="M19.5 12H5M10.5 6 4.5 12l6 6"/>',
     right: '<path d="M4.5 12H19M13.5 6l6 6-6 6"/>',
@@ -6572,8 +6598,10 @@ window.VP_ART = (function () {
     renderer.setSize(TS, TS, false);
     renderer.setClearColor(0x000000, 0);
     const scene = new THREE.Scene();
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xa89a80, 0.82));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.62);
+    // newer three.js measures light in real units (times pi); keep the icons as bright as before
+    const LX = THREE.NeutralToneMapping !== undefined ? Math.PI * 0.85 : 1;
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xa89a80, 0.82 * LX));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.62 * LX);
     sun.position.set(4, 9, 6);
     scene.add(sun);
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
