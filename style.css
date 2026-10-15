@@ -587,6 +587,8 @@ body.dusk .sheetHead { background: linear-gradient(180deg, rgba(255, 255, 255, 0
 }
 body.dusk .segs { background: rgba(255, 255, 255, 0.07); }
 .segs::-webkit-scrollbar { display: none; }
+.gfxSegs { margin: 4px 0 2px; }
+.gfxSegs .seg { flex: 1 1 0; }
 .seg {
   flex: 0 0 auto;
   border: none;
@@ -841,8 +843,7 @@ body.dusk .soft.danger { color: #ffb3c0; }
   inset: 0;
   z-index: 20;
   touch-action: none;
-  box-shadow: inset 0 0 70px 24px rgba(138, 92, 246, 0.5);
-  animation: tmGlow 2.4s ease-in-out infinite;
+  box-shadow: inset 0 0 120px 20px rgba(40, 24, 80, 0.35);
   padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
 }
 @keyframes tmGlow { 50% { box-shadow: inset 0 0 90px 34px rgba(138, 92, 246, 0.66); } }
@@ -1088,8 +1089,34 @@ body.dusk #fader { background: radial-gradient(circle at 50% 45%, #2b2550, #120f
 
 /* photo mode */
 body.photo #hud, body.photo #toast { display: none; }
-#photoBar { position: fixed; z-index: 30; left: 0; right: 0; bottom: calc(var(--pad-b) + 10px); display: flex; justify-content: center; align-items: center; gap: 28px; pointer-events: none; }
-#photoBar > * { pointer-events: auto; }
+#photoBar { position: fixed; z-index: 30; inset: 0; pointer-events: none; }
+#photoBar .phTop { position: absolute; left: 16px; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 12px); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#photoBar .phTop > button, #photoBar .phShoot > *, #photoBar .phPanel { pointer-events: auto; }
+.phHint { flex: 1; text-align: center; font-size: 12px; font-weight: 700; color: #fff; text-shadow: 0 1px 4px rgba(20, 14, 40, 0.6); opacity: 0.9; transition: opacity 0.4s; }
+.phHint.gone { opacity: 0; }
+#photoBar .phShoot { position: absolute; left: 0; right: 0; bottom: calc(var(--pad-b) + 10px); display: flex; justify-content: center; align-items: center; gap: 22px; pointer-events: none; }
+.phPanel { position: absolute; left: 12px; right: 12px; bottom: calc(var(--pad-b) + 96px); max-width: 460px; margin: 0 auto; border-radius: 24px; padding: 8px 10px 10px; transition: opacity 0.25s, transform 0.25s; }
+.phTabs { margin-bottom: 6px; }
+.phTabs .seg { flex: 1 1 0; }
+.phBody { display: flex; flex-direction: column; gap: 6px; max-height: 34vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.phRow { display: grid; grid-template-columns: 74px 1fr 50px; align-items: center; gap: 8px; font-size: 13px; font-weight: 800; color: var(--ink-2); }
+.phRow output { font-size: 12px; text-align: right; white-space: nowrap; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.phRow input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; }
+.phChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.phChips button { border: none; border-radius: 14px; padding: 7px 11px; font-size: 13px; font-weight: 800; color: var(--ink-2); background: rgba(36, 31, 58, 0.06); }
+.phChips button.sel { background: var(--g-card-hi); color: var(--ink); box-shadow: var(--inner), 0 2px 8px rgba(28, 20, 60, 0.14); }
+.phChips.filters button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 8px; }
+.phChips.filters button i { width: 34px; height: 22px; border-radius: 7px; display: block; }
+.phLabel { font-size: 12px; font-weight: 800; color: var(--ink-3); margin: 2px 2px 0; }
+body.photo.phBare .phPanel, body.photo.phBare .phHint { opacity: 0; transform: translateY(14px); pointer-events: none; }
+body.photo.phBare #photoBar .phShoot > :not(#shutter) { opacity: 0; pointer-events: none; }
+#photoSubject.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+#photoGrid { position: absolute; inset: 0; pointer-events: none; }
+#photoGrid i { position: absolute; background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 2px rgba(0, 0, 0, 0.25); }
+#photoGrid i:nth-child(1) { left: 33.333%; top: 0; bottom: 0; width: 1px; }
+#photoGrid i:nth-child(2) { left: 66.666%; top: 0; bottom: 0; width: 1px; }
+#photoGrid i:nth-child(3) { top: 33.333%; left: 0; right: 0; height: 1px; }
+#photoGrid i:nth-child(4) { top: 66.666%; left: 0; right: 0; height: 1px; }
 #photoMe.off { opacity: 0.45; }
 #shutter { width: 74px; height: 74px; border-radius: 50%; border: none; padding: 0; background: rgba(255, 255, 255, 0.18); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: inset 0 0 0 4px rgba(255, 255, 255, 0.95), 0 8px 24px rgba(20, 12, 40, 0.3); display: grid; place-items: center; }
 #shutter span { width: 56px; height: 56px; border-radius: 50%; background: rgba(255, 255, 255, 0.92); transition: transform 0.12s; }
@@ -1325,7 +1352,7 @@ body.dusk .wxCell.night { color: #c9bfff; }
 .badgeRow .exInfo { display: block; margin-top: 6px; }
 .badgeRow .primary.small { margin-top: 8px; padding: 9px 14px; font-size: 13px; width: auto; }
 .badgeRow .primary.small:disabled { opacity: 0.55; }
-#trickMode.exam { box-shadow: inset 0 0 70px 24px rgba(240, 180, 40, 0.55); animation: none; }
+#trickMode.exam { box-shadow: inset 0 0 90px 24px rgba(240, 180, 40, 0.55); animation: none; }
 #trickMode.exam #tmHint { display: flex; flex-direction: column; align-items: center; gap: 4px; border-radius: 22px; padding: 10px 18px; }
 .exHead { font-size: 11.5px; color: var(--ink-2); }
 .exAsk { display: flex; align-items: center; gap: 8px; font-size: 20px; }
@@ -2012,3 +2039,37 @@ body.navSwap .modal .sheet { animation: none; }
 .sheet { background: rgba(255, 255, 255, 0.3); }
 body.dusk .sheet { background: rgba(22, 18, 44, 0.42); }
 #hub #clockWx { display: none; }
+
+/* a dog meeting on a walk: what you can do */
+.meetBar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 104px); z-index: 30; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; animation: fadeIn 0.25s ease-out; max-width: calc(100vw - 32px); }
+.meetBar small { font-size: 12px; font-weight: 800; color: #fff; text-shadow: 0 1px 3px rgba(20, 14, 40, 0.6); }
+.meetBar > div { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.meetBar button { pointer-events: auto; border: none; border-radius: 16px; padding: 9px 14px; font-size: 14px; font-weight: 800; color: var(--ink); display: inline-flex; align-items: center; gap: 6px; }
+.meetBar button .i { width: 16px; height: 16px; }
+
+/* Trick Mode: letterbox bars, the finger's glowing trail, shapes that pop in, a golden burst on success */
+#trickMode::before, #trickMode::after { content: ''; position: fixed; left: 0; right: 0; height: 9vh; background: #120d1f; pointer-events: none; z-index: -1; transform: scaleY(0); animation: tmBars 0.45s 0.05s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+#trickMode::before { top: 0; transform-origin: top; }
+#trickMode::after { bottom: 0; transform-origin: bottom; }
+@keyframes tmBars { to { transform: scaleY(1); } }
+#tmTrail { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#tmSeq .g { display: inline-flex; }
+#tmSeq .g.pop { animation: tmPop 0.38s cubic-bezier(0.2, 1.6, 0.4, 1); }
+@keyframes tmPop { from { transform: scale(1.9); opacity: 0.2; filter: drop-shadow(0 0 14px #ffe9a8); } to { transform: scale(1); opacity: 1; } }
+#trickMode.win { animation: tmWin 0.9s ease-out; }
+@keyframes tmWin { 0% { box-shadow: inset 0 0 0 0 rgba(255, 214, 102, 0); } 25% { box-shadow: inset 0 0 160px 50px rgba(255, 214, 102, 0.55); } 100% { box-shadow: inset 0 0 120px 20px rgba(40, 24, 80, 0.35); } }
+@media (prefers-reduced-motion: reduce) { #trickMode::before, #trickMode::after { animation: none; transform: scaleY(1); } #trickMode.win, #tmSeq .g.pop { animation: none; } }
+
+/* petting: a soft hand that follows your finger */
+#petHand { position: fixed; left: -26px; top: -26px; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: radial-gradient(circle, rgba(255, 220, 230, 0.55), rgba(255, 220, 230, 0) 70%); pointer-events: none; z-index: 25; opacity: 0; transition: opacity 0.15s; }
+#petHand.on { opacity: 0.6; }
+#petHand.on.touch { opacity: 1; }
+#petHand .i { width: 26px; height: 26px; filter: drop-shadow(0 1px 3px rgba(80, 20, 60, 0.5)); }
+/* watching one dog */
+#followChip { position: fixed; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 64px); z-index: 18; border: none; border-radius: 999px; padding: 7px 10px 7px 14px; font-size: 13px; font-weight: 800; color: var(--ink); display: inline-flex; align-items: center; gap: 6px; }
+#followChip .i { width: 16px; height: 16px; }
+#followChip span { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(36, 31, 58, 0.08); }
+body.photo #followChip, body.sheetOpen #followChip { display: none; }
+
+/* Throw can be dragged to aim: the browser mustn't take the drag for a scroll */
+.dock [data-act=ball] { touch-action: none; }
