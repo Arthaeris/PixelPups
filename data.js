@@ -600,25 +600,27 @@ window.VP_DATA = (function () {
     'Pretzel', 'Juno', 'Toast', 'Sprout', 'Olive', 'Pickle', 'Clover', 'Dumpling', 'Peanut', 'Socks', 'Bubbles', 'Scout'];
 
   // ===================================================================
-  // Tricks. Inputs: T = tap, H = hold & release, S = hold 3 seconds, u d l r = swipe, O = draw a circle.
+  // Tricks. Inputs: T = tap, H = hold & release, S = hold 3 seconds, u d l r = swipe, O = draw a circle,
+  // A = an arch (up and over, like a jump), U = a dip (down and up, like a bow), Z = a zigzag (like shaking off),
+  // L = down then along (like lying down and stretching out). The shapes are meant to look like the trick.
   // needs = tricks the dog must know (level 1+) first. dur = seconds the trick takes.
   // ===================================================================
   const TRICKS = {
     sit:      { name: 'Sit',        icon: '🐕', seq: 'd',   dur: 1.4 },
     paw:      { name: 'Paw',        icon: '🐾', seq: 'T',   dur: 1.4 },
     come:     { name: 'Come',       icon: '📣', seq: 'TT',  dur: 1.2 },
-    jump:     { name: 'Jump',       icon: '⬆️', seq: 'u',   dur: 1.1 },
+    jump:     { name: 'Jump',       icon: '⬆️', seq: 'A',   dur: 1.1 },
     speak:    { name: 'Speak',      icon: '💬', seq: 'TTT', dur: 1.3 },
     spin:     { name: 'Spin',       icon: '🔄', seq: 'O',   dur: 1.3 },
-    shake:    { name: 'Shake off',  icon: '💦', seq: 'lrl', dur: 1.4 },
+    shake:    { name: 'Shake off',  icon: '💦', seq: 'Z', dur: 1.4 },
     stay:     { name: 'Stay',       icon: '✋', seq: 'S',   dur: 1.6, needs: ['sit'] },
-    down:     { name: 'Lie down',   icon: '⬇️', seq: 'dd',  dur: 1.6, needs: ['sit'] },
+    down:     { name: 'Lie down',   icon: '⬇️', seq: 'L',  dur: 1.6, needs: ['sit'] },
     beg:      { name: 'Sit pretty', icon: '🥺', seq: 'du',  dur: 1.7, needs: ['sit'] },
     highfive: { name: 'High five',  icon: '🙌', seq: 'Tu',  dur: 1.4, needs: ['paw'] },
-    wave:     { name: 'Wave',       icon: '👋', seq: 'TH',  dur: 1.8, needs: ['highfive'] },
-    bow:      { name: 'Bow',        icon: '🙇', seq: 'dH',  dur: 1.6, needs: ['down'] },
+    wave:     { name: 'Wave',       icon: '👋', seq: 'uZ',  dur: 1.8, needs: ['highfive'] },
+    bow:      { name: 'Bow',        icon: '🙇', seq: 'U',  dur: 1.6, needs: ['down'] },
     roll:     { name: 'Roll over',  icon: '🌀', seq: 'rl',  dur: 1.8, needs: ['down'] },
-    dead:     { name: 'Play dead',  icon: '😵', seq: 'uH',  dur: 2.4, needs: ['roll'] },
+    dead:     { name: 'Play dead',  icon: '😵', seq: 'Td',  dur: 2.4, needs: ['roll'] },
     sing:     { name: 'Sing along', icon: '🎤', seq: 'Ou',  dur: 2.4, music: true },
   };
   // Five secret tricks, lightly scrambled so they can't be read at a glance. No peeking!
